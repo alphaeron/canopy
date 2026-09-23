@@ -3,7 +3,11 @@ package kit
 import (
 	"errors"
 	"fmt"
-	"log"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/spf13/cobra"
@@ -23,7 +27,10 @@ a file/pattern matching a set of files.
 This way, review requirements can be visualized locally without opening a
 pull request.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		rulesGet()
+		// Each arg in args is a file/regex to get rules for
+		for _, arg := range args {
+			rulesGet(arg)
+		}
 	},
 }
 
@@ -49,70 +56,128 @@ func getRepo() (*gitutil.KitGitRepository, error) {
 	return &kitrepo, nil
 }
 
-func rulesGet() {
+func rulesGet(pattern string) {
 	repo, err := getRepo()
 	if err == nil {
 		// Successfully obtained the repository instance
 		fmt.Println("Successfully opened repository root.")
+	} else {
+		return
 	}
 
-	// Example usage: Print the current HEAD reference
+	repoRoot, err := repo.Root()
+	if err != nil {
+		fmt.Printf("Failed to get repository root.\n")
+		return
+	}
+
+	// Print the current HEAD reference.
 	ref, err := repo.Head()
 	if err == nil {
 		fmt.Printf("Current HEAD: %s\n", ref.Hash())
 	} else {
 		fmt.Println(err)
+		return
 	}
 
 	isAbsolute := false
-	paths, err := repo.FindFiles(".*\\.go", ref, isAbsolute)
+	paths, err := repo.FindFiles(pattern, ref, isAbsolute)
 	if err == nil {
 		for _, path := range paths {
 			fmt.Println(path)
+			rules := rulesForFile(repoRoot, path)
+			for _, rule := range rules {
+				printRule(rule)
+			}
 		}
 	}
+}
 
-	yamlData := []byte(`
-- ".*\\.go":
-  name: "Core Backend Review"
-  ignore_parent_dirs: false
-  combine_strategy: "union"
-  current_directory_only: false
-  self_approve: true
-  approvers:
-    - target: "org/backend-team"
-      required_count: 2
-    - target: "org/security-leads"
-      required_count: 1
-- ".*\\.tf":
-  name: "Infrastructure Review"
-  ignore_parent_dirs: false
-  combine_strategy: "union"
-  current_directory_only: false
-  self_approve: false
-  approvers:
-    - target: "org/cloud-team"
-      required_count: 1
-`)
-
+func rulesForFile(repoRoot string, fileName string) kitfile.Rules {
 	var rules kitfile.Rules
-	parseerr := yaml.Unmarshal(yamlData, &rules)
-	if parseerr != nil {
-		log.Fatalf("error: %v", parseerr)
+
+	subdir, _ := filepath.Split(fileName)
+	subdirParts := strings.Split(subdir, string(os.PathSeparator))
+
+	for i := range subdirParts {
+		f := path.Join(repoRoot, path.Join(subdirParts[:i]...), "KIT")
+		exists, err := fileExistsCaseSensitive(f)
+		if err != nil || !exists {
+			continue
+		}
+		dat, err := os.ReadFile(f)
+		if err != nil {
+			fmt.Printf("Unable to read file '%s'.\nCannot get rules for '%s'.\n", f, fileName)
+			return nil
+		}
+		var tmpRules kitfile.Rules
+		parseerr := yaml.Unmarshal(dat, &tmpRules)
+		if parseerr != nil {
+			fmt.Printf("error while reading '%s': %v\nCannot get rules.\n", fileName, parseerr)
+			return nil
+		}
+		for _, rule := range tmpRules {
+			isMatch, err := regexp.MatchString(rule.Pattern, fileName)
+			if err == nil {
+				if isMatch {
+					rules = append(rules, rule)
+				}
+			} else {
+				fmt.Printf("error while checking rule match for '%s': %v\nCannot get rules.\n", fileName, parseerr)
+				return nil
+			}
+		}
+	}
+	return rules
+}
+
+// Checks if path exists, is a regular file, and matches exact character casing on disk.
+func fileExistsCaseSensitive(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
 	}
 
-	// Verify the results
-	for _, rule := range rules {
-		fmt.Printf("Pattern:              %s\n", rule.Pattern)
-		fmt.Printf("Name:                 %s\n", rule.Name)
-		fmt.Printf("IgnoreParentDirs:     %t\n", rule.IgnoreParentDirs)
-		fmt.Printf("CombineStrategy:      %s\n", rule.CombineStrategy)
-		fmt.Printf("CurrentDirectoryOnly: %t\n", rule.CurrentDirectoryOnly)
-		fmt.Printf("SelfApprove:          %t\n", rule.SelfApprove)
-		fmt.Printf("Approvers:\n")
-		for _, approver := range rule.Approvers {
-			fmt.Printf("\t%s\n", approver)
-		}
-		fmt.Println("")
+	if info.IsDir() {
+		return false, nil
 	}
+
+	// Verify exact casing by reading parent directory
+	dir, expectedFile := filepath.Split(path)
+	if dir == "" {
+		dir = "."
+	} else {
+		dir = filepath.Clean(dir)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() && entry.Name() == expectedFile {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func printRule(rule kitfile.Rule) {
+	// Verify the results
+	fmt.Printf("Pattern:              %s\n", rule.Pattern)
+	fmt.Printf("Name:                 %s\n", rule.Name)
+	fmt.Printf("IgnoreParentDirs:     %t\n", rule.IgnoreParentDirs)
+	fmt.Printf("CombineStrategy:      %s\n", rule.CombineStrategy)
+	fmt.Printf("CurrentDirectoryOnly: %t\n", rule.CurrentDirectoryOnly)
+	fmt.Printf("SelfApprove:          %t\n", rule.SelfApprove)
+	fmt.Printf("Approvers:\n")
+	for _, approver := range rule.Approvers {
+		fmt.Printf("\t%s\n", approver)
+	}
+	fmt.Println("")
 }
