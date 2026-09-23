@@ -2,6 +2,7 @@ package gitutil
 
 import (
 	"errors"
+	"path"
 	"regexp"
 
 	"github.com/go-git/go-git/v6"
@@ -32,8 +33,13 @@ func (r *KitGitRepository) Root() (string, error) {
 	return "", errors.New("underlying filesystem does not expose a local disk root")
 }
 
-func (r *KitGitRepository) FindFiles(pattern string, revision *plumbing.Reference) ([]string, error) {
+func (r *KitGitRepository) FindFiles(pattern string, revision *plumbing.Reference, isAbsolute bool) ([]string, error) {
 	var paths []string
+
+	repoRoot, err := r.Root()
+	if err != nil {
+		return nil, err
+	}
 
 	h, err := r.ResolveRevision(plumbing.Revision(revision.Name().String()))
 	if err != nil {
@@ -54,7 +60,13 @@ func (r *KitGitRepository) FindFiles(pattern string, revision *plumbing.Referenc
 		isMatch, err := regexp.MatchString(pattern, file.Name)
 		if err == nil {
 			if isMatch {
-				paths = append(paths, file.Name)
+				var finalPath string
+				if isAbsolute {
+					finalPath = path.Join(repoRoot, file.Name)
+				} else {
+					finalPath = file.Name
+				}
+				paths = append(paths, finalPath)
 			}
 		} else {
 			return err
