@@ -62,7 +62,7 @@ Each directory in the repository can host a `KIT` file to localize approval ruls
 When evaluating a changed target file (e.g., `/src/api/v1/auth.go`), the engine constructs a chain of rules starting from the repository root.
 
 ```
-[ Root /owners.yaml ]   ──(Union / Override / Intersect)──>  [ /src/owners.yaml ]  ──>  [ Target File ]
+[ Root /KIT ]   ──(Union / Override / Intersect)──>  [ /src/KIT ]  ──>  [ Target File ]
 ```
 
 ### Additional Rules
@@ -93,7 +93,7 @@ The runtime application processes PR approval status utilizing a three-tiered pi
 #### Phase 1: Fetch
 1. Parse the incoming GitHub PR payload to isolate all modified file pathways.
 2. For each unique file path, systematically map the trajectory from its local leaf directory vertically upward to the root repository level.
-3. Read the `owners.yaml` files along the path sequentially.
+3. Read the `KIT` files along the path sequentially.
 4. If a file specifies `settings.ignore_parent_dirs: true`, halt tree traversal immediately.
 
 #### Phase 2: Sift
