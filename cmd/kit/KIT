@@ -1,0 +1,9 @@
+- ".*\\.go":
+  name: "Core Backend Review"
+  ignore_parent_dirs: false
+  combine_strategy: "union"
+  current_directory_only: false
+  self_approve: true
+  approvers:
+    - target: "org/backend-team"
+      required_count: 2
