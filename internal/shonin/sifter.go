@@ -10,6 +10,9 @@ import (
 )
 
 // Get the chain of rules that applies for each specified file.
+// TODO repoRoot is unused since we don't get absolute paths
+//      for the local shonin.  Do we need it for remote, or can we
+//      remove it completely?
 func GetFileRuleChain(
 	repoRoot string,
 	repoRules map[string]kitfile.Rules,
@@ -18,7 +21,8 @@ func GetFileRuleChain(
 	chainMap := make(map[string][]RuleLayer)
 
 	for _, file := range files {
-		chainMap[file] = getFileRuleLayers(repoRoot, repoRules, file)
+		layers := getFileRuleLayers(repoRoot, repoRules, file)
+		chainMap[file] = layers
 	}
 
 	return RuleChain{FileChains: chainMap}
@@ -35,9 +39,9 @@ func getFileRuleLayers(
 	subdirParts := strings.Split(filepath.ToSlash(subdir), "/")
 
 	// Loop down from the repo root to the target file's depth.
-	for i := 0; i <= len(subdirParts); i++ {
+	for i := 0; i < len(subdirParts); i++ {
 		currentSubPath := filepath.Join(subdirParts[:i]...)
-		configFilePath := filepath.Join(repoRoot, currentSubPath, "KIT")
+		configFilePath := filepath.Join(currentSubPath, "KIT")
 
 		// Pull out rules registered exactly at this configuration file node
 		matchedRules, exists := repoRules[configFilePath]
