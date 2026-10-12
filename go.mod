@@ -1,6 +1,6 @@
 module github.com/alphaeron/kit
 
-go 1.26.6
+go 1.27.2
 
 require (
 	github.com/go-git/go-git/v6 v6.0.0-alpha.5
