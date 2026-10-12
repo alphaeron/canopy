@@ -9,13 +9,13 @@ import (
 )
 
 type Rule struct {
-	Pattern string        `yaml:"-"`
-	Name    string        `yaml:"name"`
-	IgnoreParentDirs bool `yaml:"ignore_parent_dirs"`
-	CombineStrategy RuleCombineStrategy `yaml:"combine_strategy"`
-	CurrentDirectoryOnly bool `yaml:"current_directory_only"`
-	SelfApprove bool `yaml:"self_approve"`
-	Approvers ApproverTargets `yaml:"approvers"`
+	Pattern              string              `yaml:"-"`
+	Name                 string              `yaml:"name"`
+	IgnoreParentDirs     bool                `yaml:"ignore_parent_dirs"`
+	CombineStrategy      RuleCombineStrategy `yaml:"combine_strategy"`
+	CurrentDirectoryOnly bool                `yaml:"current_directory_only"`
+	SelfApprove          bool                `yaml:"self_approve"`
+	Approvers            ApproverTargets     `yaml:"approvers"`
 }
 
 type Rules []Rule

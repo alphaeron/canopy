@@ -56,7 +56,7 @@ func (r *KitGitRepository) FindFiles(pattern string, revision *plumbing.Referenc
 		return nil, err
 	}
 
-	itErr := tree.Files().ForEach( func (file *object.File) error {
+	itErr := tree.Files().ForEach(func(file *object.File) error {
 		isMatch, err := regexp.MatchString(pattern, file.Name)
 		if err == nil {
 			if isMatch {

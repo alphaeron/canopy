@@ -12,7 +12,7 @@ import (
 	"github.com/alphaeron/kit/internal/kitfile"
 )
 
-type LocalFetcher struct{
+type LocalFetcher struct {
 	Repo *gitutil.KitGitRepository
 }
 

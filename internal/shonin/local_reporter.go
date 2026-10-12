@@ -19,8 +19,8 @@ func PrintRuleChain(ruleChain RuleChain) {
 			indentCount := len(directoryPathParts) - 1
 			directoryLevelIndent := strings.Repeat("  ", indentCount)
 			fmt.Printf("%s%s/\n", directoryLevelIndent, layer.DirectoryPath)
-			patternLevelIndent := strings.Repeat("  ", indentCount + 1)
-			ruleLevelIndent := strings.Repeat("  ", indentCount + 2)
+			patternLevelIndent := strings.Repeat("  ", indentCount+1)
+			ruleLevelIndent := strings.Repeat("  ", indentCount+2)
 			for _, rule := range layer.Rules {
 				fmt.Printf("%s%s:\n", patternLevelIndent, rule.Pattern)
 				printRule(rule, ruleLevelIndent)

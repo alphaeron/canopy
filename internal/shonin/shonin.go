@@ -23,9 +23,9 @@ func (s *Shonin) Execute(
 	repoRoot, repoRules := s.Fetch.GetRules()
 	ruleChain := GetFileRuleChain(repoRoot, repoRules, files)
 	evaluationContext := EvaluationContext{
-		Author: author,
+		Author:           author,
 		CurrentApprovers: currentApprovers,
-		IsOwnerActive: isOwnerActive,
+		IsOwnerActive:    isOwnerActive,
 		RepositoryOwners: repositoryOwners,
 	}
 	filesToEvaluationResult := ruleChain.Execute(evaluationContext)

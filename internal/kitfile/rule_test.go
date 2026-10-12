@@ -1,19 +1,19 @@
 package kitfile
 
 import (
-	"testing"
 	"reflect"
+	"testing"
 
 	"gopkg.in/yaml.v3"
 )
 
 var rule1 = Rule{
-	Pattern: ".*\\.go",
-	Name: "Core Backend Review",
-	IgnoreParentDirs: false,
-	CombineStrategy: RuleCombineStrategyUnion,
+	Pattern:              ".*\\.go",
+	Name:                 "Core Backend Review",
+	IgnoreParentDirs:     false,
+	CombineStrategy:      RuleCombineStrategyUnion,
 	CurrentDirectoryOnly: false,
-	SelfApprove: true,
+	SelfApprove:          true,
 	Approvers: []ApproverTarget{
 		ApproverTarget{Target: "org/backend-team", RequiredCount: 2},
 		ApproverTarget{Target: "org/security-leads", RequiredCount: 1},
@@ -21,12 +21,12 @@ var rule1 = Rule{
 }
 
 var rule2 = Rule{
-  Pattern: ".*\\.tf",
-  Name: "Infrastructure Review",
-  IgnoreParentDirs: false,
-	CombineStrategy: RuleCombineStrategyIntersect,
-  CurrentDirectoryOnly: false,
-  SelfApprove: false,
+	Pattern:              ".*\\.tf",
+	Name:                 "Infrastructure Review",
+	IgnoreParentDirs:     false,
+	CombineStrategy:      RuleCombineStrategyIntersect,
+	CurrentDirectoryOnly: false,
+	SelfApprove:          false,
 	Approvers: []ApproverTarget{
 		ApproverTarget{Target: "org/cloud-team", RequiredCount: 1},
 	},

@@ -5,8 +5,8 @@ import (
 )
 
 type ApproverTarget struct {
-	Target string `yaml:"target"`
-	RequiredCount int `yaml:"required_count"`
+	Target        string `yaml:"target"`
+	RequiredCount int    `yaml:"required_count"`
 }
 
 type ApproverTargets []ApproverTarget

@@ -74,19 +74,29 @@ func combineRuleSets(strat kitfile.RuleCombineStrategy, currentAccumulated []str
 	case kitfile.RuleCombineStrategyUnion:
 		// Both existing requirements AND this rule's requirements are needed.
 		m := make(map[string]bool)
-		for _, v := range currentAccumulated { m[v] = true }
-		for _, v := range incomingRuleTargets { m[v] = true }
+		for _, v := range currentAccumulated {
+			m[v] = true
+		}
+		for _, v := range incomingRuleTargets {
+			m[v] = true
+		}
 		var res []string
-		for k := range m { res = append(res, k) }
+		for k := range m {
+			res = append(res, k)
+		}
 		return res
 
 	case kitfile.RuleCombineStrategyIntersect:
 		// Only approvers present in BOTH the parent criteria and this rule count.
 		m := make(map[string]bool)
-		for _, v := range currentAccumulated { m[v] = true }
+		for _, v := range currentAccumulated {
+			m[v] = true
+		}
 		var res []string
 		for _, v := range incomingRuleTargets {
-			if m[v] { res = append(res, v) }
+			if m[v] {
+				res = append(res, v)
+			}
 		}
 		return res
 

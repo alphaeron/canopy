@@ -11,8 +11,9 @@ import (
 
 // Get the chain of rules that applies for each specified file.
 // TODO repoRoot is unused since we don't get absolute paths
-//      for the local shonin.  Do we need it for remote, or can we
-//      remove it completely?
+//
+//	for the local shonin.  Do we need it for remote, or can we
+//	remove it completely?
 func GetFileRuleChain(
 	repoRoot string,
 	repoRules map[string]kitfile.Rules,
