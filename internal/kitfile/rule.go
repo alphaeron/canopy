@@ -61,7 +61,7 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	// 2. Determine if the fields are flat or nested.
 	// If there is exactly one key-value pair (len == 2) and that key is NOT a known field,
 	// it means this is a single object root wrapper: `".*\\.go": { name: ... }`
-	var targetNode *yaml.Node = value
+	targetNode := value
 	var dynamicKey string
 
 	if len(value.Content) == 2 && !knownKeys[value.Content[0].Value] {

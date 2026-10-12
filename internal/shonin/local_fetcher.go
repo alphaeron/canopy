@@ -17,7 +17,7 @@ type LocalFetcher struct {
 }
 
 func (lf *LocalFetcher) GetRules() (string, map[string]kitfile.Rules) {
-	var rules map[string]kitfile.Rules = make(map[string]kitfile.Rules)
+	rules := make(map[string]kitfile.Rules)
 
 	repoRoot, err := lf.Repo.Root()
 	if err != nil {

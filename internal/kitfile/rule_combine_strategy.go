@@ -29,7 +29,7 @@ var ruleCombineStrategyNameToValue = map[string]RuleCombineStrategy{
 
 func (rcs RuleCombineStrategy) String() string {
 	if rcs <= 0 || int(rcs) >= len(ruleCombineStrategyNames) {
-		panic(fmt.Errorf("Invalid rule combine strategy: %d", rcs))
+		panic(fmt.Errorf("invalid rule combine strategy: %d", rcs))
 	}
 	return ruleCombineStrategyNames[rcs]
 }
@@ -37,7 +37,7 @@ func (rcs RuleCombineStrategy) String() string {
 func ParseRuleCombineStrategy(text string) (RuleCombineStrategy, error) {
 	i, ok := ruleCombineStrategyNameToValue[strings.ToLower(text)]
 	if !ok {
-		return ruleCombineStrategyUnknown, fmt.Errorf("Invalid rule combine strategy: %s", text)
+		return ruleCombineStrategyUnknown, fmt.Errorf("invalid rule combine strategy: %s", text)
 	}
 	return i, nil
 }

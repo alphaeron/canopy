@@ -74,6 +74,6 @@ func getRepo() (*gitutil.KitGitRepository, error) {
 		return nil, err
 	}
 
-	kitrepo := gitutil.KitGitRepository{*repo}
+	kitrepo := gitutil.KitGitRepository{Repository: *repo}
 	return &kitrepo, nil
 }
