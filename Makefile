@@ -1,4 +1,13 @@
-.PHONY: test
+.PHONY: test fmt lint vulncheck
 
 test:
 	@go test -v ./...
+
+fmt:
+	@go fmt github.com/alphaeron/...
+
+lint:
+	golangci-lint run ./...
+
+vulncheck:
+	govulncheck -show verbose ./...
