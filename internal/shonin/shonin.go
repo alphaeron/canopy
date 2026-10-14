@@ -28,8 +28,10 @@ func (s *Shonin) Execute(
 		IsOwnerActive:    isOwnerActive,
 		RepositoryOwners: repositoryOwners,
 	}
-	filesToEvaluationResult := ruleChain.Execute(evaluationContext)
-	return filesToEvaluationResult
+	reviewState := ruleChain.Execute(evaluationContext)
+
+	// Convert back to the old format for backward compatibility
+	return reviewState.Summarize()
 }
 
 func (s *Shonin) GetRuleChainForFiles(files []string) RuleChain {

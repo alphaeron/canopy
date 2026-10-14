@@ -1,5 +1,7 @@
 package shonin
 
+import "github.com/alphaeron/kit/internal/kitfile"
+
 // RuleChain maps each changed file to its own localized, ordered rule pipeline.
 type RuleChain struct {
 	// Key: File path (e.g., "/src/api/v1/auth.go")
@@ -10,14 +12,24 @@ type RuleChain struct {
 // Execute evaluates the compiled rule chain on a per-file basis, applying
 // rule-specific combination strategies sequentially from the root down to
 // the target directory.
-func (rc *RuleChain) Execute(ctx EvaluationContext) map[string]EvaluationResult {
-	results := make(map[string]EvaluationResult)
+func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
+	builder := NewReviewStateBuilder(&DefaultApproverResolver{})
+
+	// Create initial files map for review state
+	files := make(map[string]FileState)
 
 	for file, layers := range rc.FileChains {
 		// If sifting produced absolutely no valid matching rules, drop to the global
 		// repo owner fallback
 		if len(layers) == 0 {
-			results[file] = rc.evaluateFallback(ctx)
+			builder.AddEvent("approve", file, "", "", StatusUnresolved, "No matching rules found for file")
+			files[file] = FileState{
+				Path:         file,
+				Layers:       []LayerState{},
+				Required:     []ApproverTargetState{},
+				Status:       StatusUnresolved,
+				UsedFallback: true,
+			}
 			continue
 		}
 
@@ -27,23 +39,76 @@ func (rc *RuleChain) Execute(ctx EvaluationContext) map[string]EvaluationResult 
 
 		// Process layers chronologically: from Root (Index 0) down to
 		//                                 Target Directory (Index N)
+		var fileLayers []LayerState
 		for _, layer := range layers {
-			layer.Execute(runningRequiredApprovers, ctx)
+			layerState := LayerState{
+				DirectoryPath:    layer.DirectoryPath,
+				Rules:            []RuleState{},
+				CombinedStrategy: kitfile.RuleCombineStrategyOverride, // Default value
+				ResolvedBy:       []string{},
+				Active:           true,
+				Status:           StatusActive,
+				Reason:           "",
+			}
+
+			// Execute the layer and track its state
+			layer.Execute(runningRequiredApprovers, ctx, builder, file, layer.DirectoryPath)
+
+			// For now, we're not tracking individual rule states in detail
+			// This will be enhanced in later phases of the migration
+
+			// Update running required approvers after processing this layer
+			// (This is a simplified version - full state tracking will be implemented later)
+			builder.AddEvent("approve", file, layer.DirectoryPath, "", StatusActive, "Processing rule layer")
+
+			fileLayers = append(fileLayers, layerState)
 		}
 
 		// Post-repatriation check: If all rules yielded empty sets or combined
 		// into an empty set, trigger the absolute fallback chain to repository owners.
 		if len(runningRequiredApprovers) == 0 {
-			results[file] = rc.evaluateFallback(ctx)
+			builder.AddEvent("approve", file, "", "", StatusUnresolved, "No approvers found after processing all layers")
+			files[file] = FileState{
+				Path:         file,
+				Layers:       fileLayers,
+				Required:     []ApproverTargetState{},
+				Status:       StatusUnresolved,
+				UsedFallback: true,
+			}
 			continue
 		}
 
 		// Calculate if current PR approvals fulfill the remaining targeted
 		// approver lists
-		results[file] = calculateApproval(runningRequiredApprovers, ctx)
+		_ = calculateApproval(runningRequiredApprovers, ctx)
+
+		// Build required approvers state
+		var requiredApprovers []ApproverTargetState
+		for _, approver := range runningRequiredApprovers {
+			requiredApprovers = append(requiredApprovers, ApproverTargetState{
+				Target:         approver,
+				RequiredCount:  1,
+				SatisfiedCount: 0,
+				Satisfied:      false,
+				ResolvedBy:     []string{},
+				Status:         StatusUnresolved,
+				Reason:         "",
+			})
+		}
+
+		files[file] = FileState{
+			Path:         file,
+			Layers:       fileLayers,
+			Required:     requiredApprovers,
+			Status:       StatusSatisfied,
+			UsedFallback: false,
+		}
 	}
 
-	return results
+	// Create a dummy overall status for now
+	overallStatus := StatusActive
+
+	return builder.BuildReviewState("", "", files, overallStatus, nil)
 }
 
 func (rc *RuleChain) evaluateFallback(ctx EvaluationContext) EvaluationResult {

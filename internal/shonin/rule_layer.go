@@ -12,7 +12,7 @@ type RuleLayer struct {
 
 // Execute evaluates an individual rule, to determine whether approval
 // conditions are satisfied or not.
-func (rl *RuleLayer) Execute(runningRequiredApprovers []string, ctx EvaluationContext) {
+func (rl *RuleLayer) Execute(runningRequiredApprovers []string, ctx EvaluationContext, builder *ReviewStateBuilder, file, layer string) {
 	for _, rule := range rl.Rules {
 
 		// 1. Process active and valid approvers specifically for this
@@ -23,18 +23,20 @@ func (rl *RuleLayer) Execute(runningRequiredApprovers []string, ctx EvaluationCo
 		// approvers for this rule, we skip it entirely, which naturally
 		// allows it to fall back to the preceding rules.
 		if len(ruleTargets) == 0 {
+			builder.AddEvent("approve", file, layer, rule.Name, StatusUnresolved, "No active approvers found for rule")
 			continue
 		}
 
 		// 2. Establish the base set if this is the first valid rule we encounter
 		if len(runningRequiredApprovers) == 0 {
+			builder.AddEvent("approve", file, layer, rule.Name, StatusActive, "First rule in layer - establishing base approvers")
 			runningRequiredApprovers = ruleTargets
 			continue
 		}
 
 		// 3. Apply the combination strategy specified by *this unique rule*
 		// relative to the running required approver footprint accumulated so far.
-		runningRequiredApprovers = combineRuleSets(
+		combinedApprovers := combineRuleSets(
 			// The strategy to combine approvers by.
 			rule.CombineStrategy,
 			// The "parent/cumulative" state
@@ -42,6 +44,22 @@ func (rl *RuleLayer) Execute(runningRequiredApprovers []string, ctx EvaluationCo
 			// The "child/incoming" rule state
 			ruleTargets,
 		)
+
+		// Track the combination operation
+		var note string
+		switch rule.CombineStrategy {
+		case kitfile.RuleCombineStrategyOverride:
+			note = "Applied override strategy - existing approvers replaced"
+		case kitfile.RuleCombineStrategyUnion:
+			note = "Applied union strategy - approvers combined with OR logic"
+		case kitfile.RuleCombineStrategyIntersect:
+			note = "Applied intersection strategy - approvers combined with AND logic"
+		default:
+			note = "Applied default strategy"
+		}
+
+		builder.AddEvent("approve", file, layer, rule.Name, StatusActive, note)
+		runningRequiredApprovers = combinedApprovers
 	}
 }
 
@@ -63,7 +81,7 @@ func (rl *RuleLayer) processRuleApprovers(rule kitfile.Rule, ctx EvaluationConte
 	return uniqueStrings(targets)
 }
 
-// Evaluates localized rules for combination math per rule block specification
+// combineRuleSets evaluates localized rules for combination math per rule block specification.
 func combineRuleSets(strat kitfile.RuleCombineStrategy, currentAccumulated []string, incomingRuleTargets []string) []string {
 	switch strat {
 	case kitfile.RuleCombineStrategyOverride:
