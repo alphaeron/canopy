@@ -3,6 +3,7 @@ package kit
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/spf13/cobra"
@@ -33,6 +34,7 @@ func init() {
 }
 
 func rulesGet(pattern string) {
+	log := slog.Default()
 	repo, err := getRepo()
 	if err == nil {
 		// Successfully obtained the repository instance
@@ -46,7 +48,8 @@ func rulesGet(pattern string) {
 	if err == nil {
 		fmt.Printf("Current HEAD: %s\n", ref.Hash())
 	} else {
-		fmt.Println(err)
+		log.Error("rules get: failed to read HEAD",
+			"component", "cmd", "pattern", pattern, "error", err)
 		return
 	}
 
@@ -55,8 +58,16 @@ func rulesGet(pattern string) {
 	if err == nil {
 		fetch := shonin.LocalFetcher{Repo: repo}
 		s := shonin.Shonin{Fetch: &fetch}
-		ruleChain := s.GetRuleChainForFiles(paths)
+		ruleChain, err := s.GetRuleChainForFiles(paths)
+		if err != nil {
+			log.Error("rules get: fetching rules failed",
+				"component", "cmd", "pattern", pattern, "error", err)
+			return
+		}
 		shonin.PrintRuleChain(ruleChain)
+	} else {
+		log.Error("rules get: failed to find files",
+			"component", "cmd", "pattern", pattern, "error", err)
 	}
 }
 

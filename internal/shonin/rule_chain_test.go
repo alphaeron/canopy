@@ -1,6 +1,8 @@
 package shonin
 
 import (
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/kitfile"
@@ -54,6 +56,18 @@ func activeAllOwners() func(string) bool {
 	return func(string) bool { return true }
 }
 
+// testLogger returns a logger that discards all output so tests stay quiet.
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// executeChain runs the chain with a fresh event builder and a quiet logger,
+// mirroring how Shonin.Execute wires the approve phase.
+func executeChain(t *testing.T, rc RuleChain, ctx EvaluationContext) *ReviewState {
+	t.Helper()
+	return rc.Execute(ctx, NewReviewStateBuilder(nil), testLogger(), "/repo")
+}
+
 func inactiveAllOwners() func(string) bool {
 	return func(string) bool { return false }
 }
@@ -71,7 +85,7 @@ func TestUnionRecurringTargetCountsPerOccurrence(t *testing.T) {
 		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
 		buildLayer("/src", "src", kitfile.RuleCombineStrategyUnion, approver("team-a", 2)),
 	)
-	state := rc.Execute(ctx)
+	state := executeChain(t, rc, ctx)
 
 	fs, ok := state.Files["/src/file.go"]
 	if !ok {
@@ -111,7 +125,7 @@ func TestUnionPreservesBothOccurrences(t *testing.T) {
 		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
 		buildLayer("/src", "src", kitfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
 	)
-	state := rc.Execute(ctx)
+	state := executeChain(t, rc, ctx)
 	fs := state.Files["/src/x.go"]
 	if len(fs.Required) != 3 {
 		t.Fatalf("expected 3 target occurrences after union, got %d: %+v", len(fs.Required), fs.Required)
@@ -139,7 +153,7 @@ func TestIntersectKeepsSharedTargetOnly(t *testing.T) {
 		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("a", 1), approver("b", 1)),
 		buildLayer("/src", "src", kitfile.RuleCombineStrategyIntersect, approver("b", 1), approver("c", 1)),
 	)
-	state := rc.Execute(ctx)
+	state := executeChain(t, rc, ctx)
 	fs := state.Files["/src/x.go"]
 	if len(fs.Required) != 1 {
 		t.Fatalf("expected only the shared target b, got %+v", fs.Required)
@@ -160,7 +174,7 @@ func TestOverrideDiscardsParentRules(t *testing.T) {
 		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
 		buildLayer("/src", "src", kitfile.RuleCombineStrategyOverride, approver("team-b", 1)),
 	)
-	state := rc.Execute(ctx)
+	state := executeChain(t, rc, ctx)
 	fs := state.Files["/src/x.go"]
 	if len(fs.Required) != 1 || fs.Required[0].Target != "team-b" {
 		t.Fatalf("override should leave only team-b, got %+v", fs.Required)
@@ -174,7 +188,7 @@ func TestFallbackSatisfiedByActiveOwnerApproval(t *testing.T) {
 	// No matching rules -> repository owner fallback, owner already approved.
 	ctx := buildContext(approverSet("zowner"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain("/orphan.go")
-	state := rc.Execute(ctx)
+	state := executeChain(t, rc, ctx)
 	fs := state.Files["/orphan.go"]
 	if !fs.UsedFallback {
 		t.Errorf("expected UsedFallback=true")
@@ -194,7 +208,7 @@ func TestFallbackUnsatisfiableWithNoActiveOwners(t *testing.T) {
 	// PR can be blocked and a warning posted.
 	ctx := buildContext(approverSet(), activeAllOwners(), []string{}) // no owners at all
 	rc := buildChain("/orphan.go")
-	state := rc.Execute(ctx)
+	state := executeChain(t, rc, ctx)
 	fs := state.Files["/orphan.go"]
 	if fs.Status != StatusError {
 		t.Errorf("file status = %s, want error", fs.Status)
@@ -214,7 +228,7 @@ func TestFallbackUnsatisfiableWhenAllOwnersInactive(t *testing.T) {
 	// Owners exist but are all inactive -> same unsatisfiable terminal state.
 	ctx := buildContext(approverSet(), inactiveAllOwners(), []string{"zowner"})
 	rc := buildChain("/orphan.go")
-	state := rc.Execute(ctx)
+	state := executeChain(t, rc, ctx)
 	if state.Overall != StatusError {
 		t.Errorf("overall status = %s, want error", state.Overall)
 	}
@@ -234,7 +248,7 @@ func TestRulesPrunedToEmptyFallBack(t *testing.T) {
 	rc := buildChain("/src/x.go",
 		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
 	)
-	state := rc.Execute(ctx)
+	state := executeChain(t, rc, ctx)
 	fs := state.Files["/src/x.go"]
 	if !fs.UsedFallback {
 		t.Errorf("expected fallback after rule pruning to empty")
@@ -252,7 +266,7 @@ func TestPerRuleStateTrackingInLayers(t *testing.T) {
 	rc := buildChain("/src/x.go",
 		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
 	)
-	state := rc.Execute(ctx)
+	state := executeChain(t, rc, ctx)
 	fs := state.Files["/src/x.go"]
 	if len(fs.Layers) != 1 {
 		t.Fatalf("expected 1 layer, got %d", len(fs.Layers))
@@ -291,7 +305,7 @@ func TestFallbackUnsatisfiableBeatsSatisfiedFiles(t *testing.T) {
 		"/ok.go":     {buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("owner", 1))},
 		"/orphan.go": {},
 	}}
-	state := rc.Execute(ctx)
+	state := executeChain(t, rc, ctx)
 	// /ok.go: rule pruned (owner inactive by IsOwnerActive) -> fallback ->
 	// owner inactive -> that file is unsatisfiable too. So the overall
 	// status must be unambiguous in error.

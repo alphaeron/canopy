@@ -1,6 +1,8 @@
 package shonin
 
 import (
+	"log/slog"
+
 	"github.com/alphaeron/kit/internal/kitfile"
 )
 
@@ -24,6 +26,7 @@ func (rl *RuleLayer) Execute(
 	builder *ReviewStateBuilder,
 	resolver ApproverResolver,
 	file, layer string,
+	log *slog.Logger,
 ) ([]kitfile.ApproverTarget, []RuleState) {
 	result := runningRequiredApprovers
 	var ruleStates []RuleState
@@ -38,7 +41,10 @@ func (rl *RuleLayer) Execute(
 		// allows it to fall back to the preceding rules.
 		if len(ruleTargets) == 0 {
 			builder.AddEvent("approve", file, layer, rule.Name, StatusUnresolved, "No active approvers found for rule")
-			ruleStates = append(ruleStates, buildRuleState(rule, ctx, resolver))
+			log.Debug("approve: rule has no active approvers",
+				"component", "rule_layer", "phase", "approve",
+				"file", file, "layer", layer, "rule", rule.Name)
+			ruleStates = append(ruleStates, buildRuleState(rule, ctx, resolver, file, layer, log))
 			continue
 		}
 
@@ -46,7 +52,7 @@ func (rl *RuleLayer) Execute(
 		if len(result) == 0 {
 			builder.AddEvent("approve", file, layer, rule.Name, StatusActive, "First rule in layer - establishing base approvers")
 			result = ruleTargets
-			ruleStates = append(ruleStates, buildRuleState(rule, ctx, resolver))
+			ruleStates = append(ruleStates, buildRuleState(rule, ctx, resolver, file, layer, log))
 			continue
 		}
 
@@ -66,7 +72,7 @@ func (rl *RuleLayer) Execute(
 		)
 
 		result = combinedApprovers
-		ruleStates = append(ruleStates, buildRuleState(rule, ctx, resolver))
+		ruleStates = append(ruleStates, buildRuleState(rule, ctx, resolver, file, layer, log))
 	}
 
 	return result, ruleStates
@@ -75,7 +81,7 @@ func (rl *RuleLayer) Execute(
 // buildRuleState constructs a detailed RuleState for a single rule, tracking
 // per-target satisfaction independently. Each approver target's required_count
 // is resolved to its member set and compared against the current approver pool.
-func buildRuleState(rule kitfile.Rule, ctx EvaluationContext, resolver ApproverResolver) RuleState {
+func buildRuleState(rule kitfile.Rule, ctx EvaluationContext, resolver ApproverResolver, file, layer string, log *slog.Logger) RuleState {
 	var approverStates []ApproverTargetState
 	var resolvedBy []string
 
@@ -112,6 +118,10 @@ func buildRuleState(rule kitfile.Rule, ctx EvaluationContext, resolver ApproverR
 		// of those members appear in the current approver set.
 		members, ok := resolver.Resolve(target.Target, ctx)
 		if !ok {
+			log.Error("approve: could not resolve approver target",
+				"component", "rule_layer", "phase", "approve",
+				"file", file, "layer", layer, "rule", rule.Name,
+				"target", target.Target)
 			approverStates = append(approverStates, ApproverTargetState{
 				Target:         target.Target,
 				RequiredCount:  target.RequiredCount,

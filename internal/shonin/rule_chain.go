@@ -2,6 +2,7 @@ package shonin
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/alphaeron/kit/internal/kitfile"
 )
@@ -15,10 +16,18 @@ type RuleChain struct {
 
 // Execute evaluates the compiled rule chain on a per-file basis, applying
 // rule-specific combination strategies sequentially from the root down to
-// the target directory.
-func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
-	resolver := &DefaultApproverResolver{}
-	builder := NewReviewStateBuilder(resolver)
+// the target directory. It records "approve" phase events and every error
+// condition into the supplied builder and assembles the complete review
+// state, including the repository root, for the input files.
+func (rc *RuleChain) Execute(
+	ctx EvaluationContext,
+	events *ReviewStateBuilder,
+	log *slog.Logger,
+	repoRoot string,
+) *ReviewState {
+	log.Info("approve: evaluating rule chain",
+		"component", "rule_chain", "phase", "approve", "files", len(rc.FileChains))
+	resolver := events.Resolver() // always non-nil, defaults to the stub resolver
 
 	// Create initial files map for review state
 	files := make(map[string]FileState)
@@ -28,11 +37,17 @@ func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
 		// If sifting produced absolutely no valid matching rules, drop to the
 		// global repo owner fallback.
 		if len(layers) == 0 {
-			builder.AddEvent("approve", file, "", "", StatusUnresolved, "No matching rules found for file")
-			fallbackStates, unsatisfiable := rc.evaluateFallback(ctx, resolver)
+			events.AddEvent("approve", file, "", "", StatusUnresolved, "No matching rules found for file; falling back to repository owners")
+			fallbackStates, unsatisfiable := rc.evaluateFallback(ctx, resolver, file, events, log)
 			if unsatisfiable {
-				builder.AddEvent("approve", file, "", "", StatusError,
+				events.AddEvent("approve", file, "", "", StatusError,
 					"No active repository owners available; rule is unsatisfiable")
+				fallbackErr := fmt.Errorf(
+					"unsatisfiable rules for %s: no active repository owners", file)
+				events.AddError(fallbackErr)
+				log.Error("approve: fallback unsatisfiable",
+					"component", "rule_chain", "phase", "approve",
+					"file", file, "error", fallbackErr)
 				unsatisfiableFiles = append(unsatisfiableFiles, file)
 				files[file] = FileState{
 					Path:         file,
@@ -65,7 +80,7 @@ func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
 			// Execute the layer: it returns the updated running approvers and
 			// the per-rule state tracking for this layer.
 			newApprovers, ruleStates := layer.Execute(
-				runningRequiredApprovers, ctx, builder, resolver, file, layer.DirectoryPath,
+				runningRequiredApprovers, ctx, events, resolver, file, layer.DirectoryPath, log,
 			)
 			runningRequiredApprovers = newApprovers
 
@@ -93,8 +108,12 @@ func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
 				Reason:        "",
 			}
 
-			builder.AddEvent("approve", file, layer.DirectoryPath, "", layerStatus,
+			events.AddEvent("approve", file, layer.DirectoryPath, "", layerStatus,
 				fmt.Sprintf("Processed %d rule(s) in layer %s", len(ruleStates), layer.DirectoryPath))
+			log.Debug("approve: processed rule layer",
+				"component", "rule_chain", "phase", "approve",
+				"file", file, "layer", layer.DirectoryPath,
+				"rules", len(ruleStates), "status", layerStatus)
 
 			fileLayers = append(fileLayers, layerState)
 		}
@@ -103,12 +122,18 @@ func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
 		// into an empty set, trigger the absolute fallback chain to repository
 		// owners.
 		if len(runningRequiredApprovers) == 0 {
-			builder.AddEvent("approve", file, "", "", StatusUnresolved,
-				"No approvers found after processing all layers")
-			fallbackStates, unsatisfiable := rc.evaluateFallback(ctx, resolver)
+			events.AddEvent("approve", file, "", "", StatusUnresolved,
+				"No approvers found after processing all layers; falling back to repository owners")
+			fallbackStates, unsatisfiable := rc.evaluateFallback(ctx, resolver, file, events, log)
 			if unsatisfiable {
-				builder.AddEvent("approve", file, "", "", StatusError,
+				events.AddEvent("approve", file, "", "", StatusError,
 					"No active repository owners available; rule is unsatisfiable")
+				fallbackErr := fmt.Errorf(
+					"unsatisfiable rules for %s: no active repository owners", file)
+				events.AddError(fallbackErr)
+				log.Error("approve: fallback unsatisfiable",
+					"component", "rule_chain", "phase", "approve",
+					"file", file, "error", fallbackErr)
 				unsatisfiableFiles = append(unsatisfiableFiles, file)
 				files[file] = FileState{
 					Path:         file,
@@ -141,6 +166,13 @@ func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
 		for _, target := range runningRequiredApprovers {
 			members, ok := resolver.Resolve(target.Target, ctx)
 			if !ok {
+				resolveErr := fmt.Errorf(
+					"could not resolve approver target %q for file %q to members",
+					target.Target, file)
+				events.AddError(resolveErr)
+				log.Error("approve: could not resolve approver target",
+					"component", "rule_chain", "phase", "approve",
+					"file", file, "target", target.Target, "error", resolveErr)
 				requiredApprovers = append(requiredApprovers, ApproverTargetState{
 					Target:         target.Target,
 					RequiredCount:  target.RequiredCount,
@@ -184,6 +216,20 @@ func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
 		if !evalResult.IsApproved {
 			fileStatus = StatusMissingApprovers
 		}
+		// A target that could not be resolved at all is worse than a missing
+		// approval: report the file as unresolved so the cause is obvious in
+		// the state (the accumulated error forces the overall status to
+		// StatusError).
+		for _, ats := range requiredApprovers {
+			if ats.Status == StatusUnresolved {
+				fileStatus = StatusUnresolved
+				break
+			}
+		}
+
+		log.Debug("approve: file evaluated",
+			"component", "rule_chain", "phase", "approve",
+			"file", file, "status", fileStatus, "required", len(requiredApprovers))
 
 		files[file] = FileState{
 			Path:         file,
@@ -214,7 +260,9 @@ func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
 			len(unsatisfiableFiles), unsatisfiableFiles)
 	}
 
-	return builder.BuildReviewState("", "", files, overallStatus, overallErr)
+	// The builder forces Overall to StatusError and combines accumulated
+	// errors into Err when anything went wrong.
+	return events.BuildReviewState(repoRoot, "", files, overallStatus, overallErr)
 }
 
 // statusFromApproverStates derives a layer/file status from a slice of
@@ -233,7 +281,13 @@ func statusFromApproverStates(states []ApproverTargetState) Status {
 // to the repository owners. It returns the per-owner ApproverTargetState
 // slice and a boolean indicating whether the fallback itself is unsatisfiable
 // (i.e. no active owners exist at all).
-func (rc *RuleChain) evaluateFallback(ctx EvaluationContext, resolver ApproverResolver) ([]ApproverTargetState, bool) {
+func (rc *RuleChain) evaluateFallback(
+	ctx EvaluationContext,
+	resolver ApproverResolver,
+	file string,
+	events *ReviewStateBuilder,
+	log *slog.Logger,
+) ([]ApproverTargetState, bool) {
 	var activeOwners []string
 	for _, owner := range ctx.RepositoryOwners {
 		if ctx.IsOwnerActive(owner) {
@@ -243,6 +297,9 @@ func (rc *RuleChain) evaluateFallback(ctx EvaluationContext, resolver ApproverRe
 
 	// If no active owners exist the rule is unsatisfiable.
 	if len(activeOwners) == 0 {
+		log.Warn("fallback: no active repository owners available",
+			"component", "rule_chain", "phase", "approve",
+			"file", file, "repository_owners", len(ctx.RepositoryOwners))
 		return nil, true
 	}
 
