@@ -21,6 +21,14 @@ To achieve logical completeness when combining rules from parent and subdirector
 * `override`: Subdirectory rules completely discard parent rules for any matching pattern.
 * `intersect`: If `/` requires `Group A` + `Group B`, and `/src/` requires `Group B` + `Group C`, files inside `/src/` require approval from `Group B`.
 
+### Recurring Approver Targets
+
+When the same approver target recurs across layers (union) or is shared across layers (intersect), the count is tracked per target occurrence and every occurrence must be satisfied independently against the same pool of approvers. If the root rule requires 1 approval from a target and the `/src` rule requires 2 from that same target, a single matching approval satisfies the root requirement while `/src` still needs one more.
+
+### Unsatisfiable Rules and the Fallback Terminal State
+
+If a file's requirement cannot be satisfied — no matching rule at all, or every matching rule prunes down to an empty approver set — the engine falls back to the repository owners. If that fallback is itself empty (no active repository owners exist at all), the rule is **unsatisfiable**: the file and the overall evaluation terminate with an `error` status rather than remaining `unresolved`. The error propagates out of the approval pipeline so the PR can be blocked, and a warning is added to the PR as a comment for visibility.
+
 ### Branch Targets
 
 The review rules for a branch target are determined from the main branch of the repository.
