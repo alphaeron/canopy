@@ -6,8 +6,56 @@ import (
 	"github.com/alphaeron/kit/internal/kitfile"
 )
 
+// --- Test fixtures / builders -------------------------------------------
+//
+// These small helpers centralise the values that were previously duplicated
+// across every test (author, the active-owners predicate, the repository
+// owners, and the boilerplate rule/layer/chain construction). Each test now
+// only describes what makes it unique.
+
+const testAuthor = "user9"
+
+func approver(target string, count int) kitfile.ApproverTarget {
+	return kitfile.ApproverTarget{Target: target, RequiredCount: count}
+}
+
+// buildContext assembles the shared EvaluationContext. Tests pass only the
+// values that differ from the typical case (current approvers, owner
+// activeness, repository owners).
+func buildContext(approvers map[string]bool, isOwnerActive func(string) bool, repoOwners []string) EvaluationContext {
+	return EvaluationContext{
+		Author:           testAuthor,
+		CurrentApprovers: approvers,
+		IsOwnerActive:    isOwnerActive,
+		RepositoryOwners: repoOwners,
+	}
+}
+
+func buildLayer(dir, name string, strategy kitfile.RuleCombineStrategy, targets ...kitfile.ApproverTarget) RuleLayer {
+	return RuleLayer{
+		DirectoryPath: dir,
+		Rules:         []kitfile.Rule{{Name: name, CombineStrategy: strategy, Approvers: targets}},
+	}
+}
+
+func buildChain(file string, layers ...RuleLayer) RuleChain {
+	return RuleChain{FileChains: map[string][]RuleLayer{file: layers}}
+}
+
+func approverSet(names ...string) map[string]bool {
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return set
+}
+
 func activeAllOwners() func(string) bool {
 	return func(string) bool { return true }
+}
+
+func inactiveAllOwners() func(string) bool {
+	return func(string) bool { return false }
 }
 
 func TestUnionRecurringTargetCountsPerOccurrence(t *testing.T) {
@@ -17,24 +65,12 @@ func TestUnionRecurringTargetCountsPerOccurrence(t *testing.T) {
 	// CurrentApprovers. With one matching approval, root is satisfied and
 	// /src still needs one more. Each target occurrence is counted once
 	// per occurrence.
-	ctx := EvaluationContext{
-		Author:           "user9",
-		CurrentApprovers: map[string]bool{"team-a": true},
-		IsOwnerActive:    activeAllOwners(),
-		RepositoryOwners: []string{"zowner"},
-	}
-	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/file.go": {
-			{DirectoryPath: "/", Rules: []kitfile.Rule{
-				{Name: "root", CombineStrategy: kitfile.RuleCombineStrategyUnion,
-					Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}},
-			}},
-			{DirectoryPath: "/src", Rules: []kitfile.Rule{
-				{Name: "src", CombineStrategy: kitfile.RuleCombineStrategyUnion,
-					Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 2}}},
-			}},
-		},
-	}}
+	ctx := buildContext(approverSet("team-a"), activeAllOwners(), []string{"zowner"})
+	rc := buildChain(
+		"/src/file.go",
+		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("/src", "src", kitfile.RuleCombineStrategyUnion, approver("team-a", 2)),
+	)
 	state := rc.Execute(ctx)
 
 	fs, ok := state.Files["/src/file.go"]
@@ -69,24 +105,12 @@ func TestUnionRecurringTargetCountsPerOccurrence(t *testing.T) {
 func TestUnionPreservesBothOccurrences(t *testing.T) {
 	// Union must not dedupe by target name: the same target in two layers
 	// yields two required entries with their respective counts.
-	ctx := EvaluationContext{
-		Author:           "user9",
-		CurrentApprovers: map[string]bool{"team-a": true, "team-b": true},
-		IsOwnerActive:    activeAllOwners(),
-		RepositoryOwners: []string{"zowner"},
-	}
-	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {
-			{DirectoryPath: "/", Rules: []kitfile.Rule{
-				{Name: "root", CombineStrategy: kitfile.RuleCombineStrategyUnion,
-					Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}},
-			}},
-			{DirectoryPath: "/src", Rules: []kitfile.Rule{
-				{Name: "src", CombineStrategy: kitfile.RuleCombineStrategyUnion,
-					Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}, {Target: "team-b", RequiredCount: 1}}},
-			}},
-		},
-	}}
+	ctx := buildContext(approverSet("team-a", "team-b"), activeAllOwners(), []string{"zowner"})
+	rc := buildChain(
+		"/src/x.go",
+		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("/src", "src", kitfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
+	)
 	state := rc.Execute(ctx)
 	fs := state.Files["/src/x.go"]
 	if len(fs.Required) != 3 {
@@ -109,30 +133,12 @@ func TestUnionPreservesBothOccurrences(t *testing.T) {
 
 func TestIntersectKeepsSharedTargetOnly(t *testing.T) {
 	// README: root requires A+B, /src (intersect) requires B+C -> only B.
-	ctx := EvaluationContext{
-		Author:           "user9",
-		CurrentApprovers: map[string]bool{"b": true},
-		IsOwnerActive:    activeAllOwners(),
-		RepositoryOwners: []string{"zowner"},
-	}
-	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {
-			{DirectoryPath: "/", Rules: []kitfile.Rule{
-				{Name: "root", CombineStrategy: kitfile.RuleCombineStrategyUnion,
-					Approvers: []kitfile.ApproverTarget{
-						{Target: "a", RequiredCount: 1},
-						{Target: "b", RequiredCount: 1},
-					}},
-			}},
-			{DirectoryPath: "/src", Rules: []kitfile.Rule{
-				{Name: "src", CombineStrategy: kitfile.RuleCombineStrategyIntersect,
-					Approvers: []kitfile.ApproverTarget{
-						{Target: "b", RequiredCount: 1},
-						{Target: "c", RequiredCount: 1},
-					}},
-			}},
-		},
-	}}
+	ctx := buildContext(approverSet("b"), activeAllOwners(), []string{"zowner"})
+	rc := buildChain(
+		"/src/x.go",
+		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("a", 1), approver("b", 1)),
+		buildLayer("/src", "src", kitfile.RuleCombineStrategyIntersect, approver("b", 1), approver("c", 1)),
+	)
 	state := rc.Execute(ctx)
 	fs := state.Files["/src/x.go"]
 	if len(fs.Required) != 1 {
@@ -148,24 +154,12 @@ func TestIntersectKeepsSharedTargetOnly(t *testing.T) {
 
 func TestOverrideDiscardsParentRules(t *testing.T) {
 	// README: override -> subdirectory rules completely replace parent.
-	ctx := EvaluationContext{
-		Author:           "user9",
-		CurrentApprovers: map[string]bool{"team-b": true},
-		IsOwnerActive:    activeAllOwners(),
-		RepositoryOwners: []string{"zowner"},
-	}
-	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {
-			{DirectoryPath: "/", Rules: []kitfile.Rule{
-				{Name: "root", CombineStrategy: kitfile.RuleCombineStrategyUnion,
-					Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}},
-			}},
-			{DirectoryPath: "/src", Rules: []kitfile.Rule{
-				{Name: "src", CombineStrategy: kitfile.RuleCombineStrategyOverride,
-					Approvers: []kitfile.ApproverTarget{{Target: "team-b", RequiredCount: 1}}},
-			}},
-		},
-	}}
+	ctx := buildContext(approverSet("team-b"), activeAllOwners(), []string{"zowner"})
+	rc := buildChain(
+		"/src/x.go",
+		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("/src", "src", kitfile.RuleCombineStrategyOverride, approver("team-b", 1)),
+	)
 	state := rc.Execute(ctx)
 	fs := state.Files["/src/x.go"]
 	if len(fs.Required) != 1 || fs.Required[0].Target != "team-b" {
@@ -178,13 +172,8 @@ func TestOverrideDiscardsParentRules(t *testing.T) {
 
 func TestFallbackSatisfiedByActiveOwnerApproval(t *testing.T) {
 	// No matching rules -> repository owner fallback, owner already approved.
-	ctx := EvaluationContext{
-		Author:           "user9",
-		CurrentApprovers: map[string]bool{"zowner": true},
-		IsOwnerActive:    activeAllOwners(),
-		RepositoryOwners: []string{"zowner"},
-	}
-	rc := RuleChain{FileChains: map[string][]RuleLayer{"/orphan.go": {}}}
+	ctx := buildContext(approverSet("zowner"), activeAllOwners(), []string{"zowner"})
+	rc := buildChain("/orphan.go")
 	state := rc.Execute(ctx)
 	fs := state.Files["/orphan.go"]
 	if !fs.UsedFallback {
@@ -203,13 +192,8 @@ func TestFallbackUnsatisfiableWithNoActiveOwners(t *testing.T) {
 	// file has no matching rules -> the rule is unsatisfiable: status error,
 	// overall error, and a non-nil error propagates back to the caller so the
 	// PR can be blocked and a warning posted.
-	ctx := EvaluationContext{
-		Author:           "user9",
-		CurrentApprovers: map[string]bool{},
-		IsOwnerActive:    activeAllOwners(),
-		RepositoryOwners: []string{}, // no owners at all
-	}
-	rc := RuleChain{FileChains: map[string][]RuleLayer{"/orphan.go": {}}}
+	ctx := buildContext(approverSet(), activeAllOwners(), []string{}) // no owners at all
+	rc := buildChain("/orphan.go")
 	state := rc.Execute(ctx)
 	fs := state.Files["/orphan.go"]
 	if fs.Status != StatusError {
@@ -228,13 +212,8 @@ func TestFallbackUnsatisfiableWithNoActiveOwners(t *testing.T) {
 
 func TestFallbackUnsatisfiableWhenAllOwnersInactive(t *testing.T) {
 	// Owners exist but are all inactive -> same unsatisfiable terminal state.
-	ctx := EvaluationContext{
-		Author:           "user9",
-		CurrentApprovers: map[string]bool{},
-		IsOwnerActive:    func(string) bool { return false },
-		RepositoryOwners: []string{"zowner"},
-	}
-	rc := RuleChain{FileChains: map[string][]RuleLayer{"/orphan.go": {}}}
+	ctx := buildContext(approverSet(), inactiveAllOwners(), []string{"zowner"})
+	rc := buildChain("/orphan.go")
 	state := rc.Execute(ctx)
 	if state.Overall != StatusError {
 		t.Errorf("overall status = %s, want error", state.Overall)
@@ -251,20 +230,10 @@ func TestFallbackUnsatisfiableWhenAllOwnersInactive(t *testing.T) {
 func TestRulesPrunedToEmptyFallBack(t *testing.T) {
 	// Existing rules prune out (inactive target + self-approval) -> empty set
 	// -> fallback kicks in and owner approval satisfies the file.
-	ctx := EvaluationContext{
-		Author:           "user9",
-		CurrentApprovers: map[string]bool{"zowner": true},
-		IsOwnerActive:    func(s string) bool { return s == "zowner" }, // team-a inactive
-		RepositoryOwners: []string{"zowner"},
-	}
-	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {
-			{DirectoryPath: "/", Rules: []kitfile.Rule{
-				{Name: "root", CombineStrategy: kitfile.RuleCombineStrategyUnion,
-					Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}},
-			}},
-		},
-	}}
+	ctx := buildContext(approverSet("zowner"), func(s string) bool { return s == "zowner" }, []string{"zowner"}) // team-a inactive
+	rc := buildChain("/src/x.go",
+		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+	)
 	state := rc.Execute(ctx)
 	fs := state.Files["/src/x.go"]
 	if !fs.UsedFallback {
@@ -279,23 +248,10 @@ func TestPerRuleStateTrackingInLayers(t *testing.T) {
 	// rule_chain.go previously carried the comment "we're not tracking
 	// individual rule states in detail"; each LayerState must now expose its
 	// per-rule / per-target satisfaction breakdown.
-	ctx := EvaluationContext{
-		Author:           "user9",
-		CurrentApprovers: map[string]bool{"team-b": true},
-		IsOwnerActive:    activeAllOwners(),
-		RepositoryOwners: []string{"zowner"},
-	}
-	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {
-			{DirectoryPath: "/", Rules: []kitfile.Rule{
-				{Name: "root", CombineStrategy: kitfile.RuleCombineStrategyUnion,
-					Approvers: []kitfile.ApproverTarget{
-						{Target: "team-a", RequiredCount: 1},
-						{Target: "team-b", RequiredCount: 1},
-					}},
-			}},
-		},
-	}}
+	ctx := buildContext(approverSet("team-b"), activeAllOwners(), []string{"zowner"})
+	rc := buildChain("/src/x.go",
+		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
+	)
 	state := rc.Execute(ctx)
 	fs := state.Files["/src/x.go"]
 	if len(fs.Layers) != 1 {
@@ -330,19 +286,9 @@ func TestPerRuleStateTrackingInLayers(t *testing.T) {
 func TestFallbackUnsatisfiableBeatsSatisfiedFiles(t *testing.T) {
 	// An unsatisfiable file must force the overall status to the error
 	// terminal state even when other files are fully satisfied.
-	ctx := EvaluationContext{
-		Author:           "user9",
-		CurrentApprovers: map[string]bool{"owner": true},
-		IsOwnerActive:    func(string) bool { return false }, // everyone inactive
-		RepositoryOwners: []string{"owner"},
-	}
+	ctx := buildContext(approverSet("owner"), inactiveAllOwners(), []string{"owner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/ok.go": {
-			{DirectoryPath: "/", Rules: []kitfile.Rule{
-				{Name: "root", CombineStrategy: kitfile.RuleCombineStrategyUnion,
-					Approvers: []kitfile.ApproverTarget{{Target: "owner", RequiredCount: 1}}},
-			}},
-		},
+		"/ok.go":     {buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("owner", 1))},
 		"/orphan.go": {},
 	}}
 	state := rc.Execute(ctx)
