@@ -69,12 +69,6 @@ func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
 			)
 			runningRequiredApprovers = newApprovers
 
-			// Determine the layer's combined strategy from its rules.
-			layerStrategy := kitfile.RuleCombineStrategyUnion
-			if len(layer.Rules) > 0 {
-				layerStrategy = layer.Rules[len(layer.Rules)-1].CombineStrategy
-			}
-
 			// Collect resolvedBy from all rule states in this layer.
 			var layerResolvedBy []string
 			for _, rs := range ruleStates {
@@ -91,13 +85,12 @@ func (rc *RuleChain) Execute(ctx EvaluationContext) *ReviewState {
 			}
 
 			layerState := LayerState{
-				DirectoryPath:    layer.DirectoryPath,
-				Rules:            ruleStates,
-				CombinedStrategy: layerStrategy,
-				ResolvedBy:       layerResolvedBy,
-				Active:           true,
-				Status:           layerStatus,
-				Reason:           "",
+				DirectoryPath: layer.DirectoryPath,
+				Rules:         ruleStates,
+				ResolvedBy:    layerResolvedBy,
+				Active:        true,
+				Status:        layerStatus,
+				Reason:        "",
 			}
 
 			builder.AddEvent("approve", file, layer.DirectoryPath, "", layerStatus,

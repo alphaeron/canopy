@@ -43,12 +43,12 @@ func (s Status) String() string {
 
 // ReviewState is the complete, renderable outcome of one review run.
 type ReviewState struct {
-	RepoRoot    string
-	HeadRef     string
-	Files       map[string]FileState
-	Overall     Status
-	Events      []Event // chronological trace
-	Err         error   // surfaced, not swallowed
+	RepoRoot string
+	HeadRef  string
+	Files    map[string]FileState
+	Overall  Status
+	Events   []Event // chronological trace
+	Err      error   // surfaced, not swallowed
 }
 
 // FileState represents the state of a single file in the review.
@@ -62,13 +62,12 @@ type FileState struct {
 
 // LayerState represents the state of a rule layer in the review.
 type LayerState struct {
-	DirectoryPath     string
-	Rules             []RuleState
-	CombinedStrategy  kitfile.RuleCombineStrategy
-	ResolvedBy        []string   // active individuals/teams that contributed
-	Active            bool
-	Status            Status
-	Reason            string
+	DirectoryPath string
+	Rules         []RuleState
+	ResolvedBy    []string // active individuals/teams that contributed
+	Active        bool
+	Status        Status
+	Reason        string
 }
 
 // RuleState represents the state of a single rule in the review.
@@ -87,13 +86,13 @@ type RuleState struct {
 
 // ApproverTargetState represents the state of an approver target in the review.
 type ApproverTargetState struct {
-	Target        string
-	RequiredCount int
+	Target         string
+	RequiredCount  int
 	SatisfiedCount int
-	Satisfied     bool
-	ResolvedBy    []string // individuals/teams that contributed to satisfaction
-	Status        Status
-	Reason        string
+	Satisfied      bool
+	ResolvedBy     []string // individuals/teams that contributed to satisfaction
+	Status         Status
+	Reason         string
 }
 
 // Event represents a step in the review process for auditability.
