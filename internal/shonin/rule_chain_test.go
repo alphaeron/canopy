@@ -274,6 +274,132 @@ func TestFallbackUnresolvableOwnerIsUnresolved(t *testing.T) {
 	}
 }
 
+// groupResolver models a remote resolver that expands group targets to
+// individual members, while passing other targets through unchanged like
+// the default local resolver.
+type groupResolver struct{}
+
+// Resolve maps "team-x" and "team-y" to their members, ignoring the supplied
+// context; every other target resolves to itself, mirroring the default
+// local resolver.
+func (groupResolver) Resolve(target string, _ EvaluationContext) ([]string, bool) {
+	switch target {
+	case "team-x":
+		return []string{"al", "bo"}, true
+	case "team-y":
+		return []string{testAuthor, "bo"}, true
+	}
+	return []string{target}, true
+}
+
+func TestGroupTargetResolvedAgainstMembers(t *testing.T) {
+	// team-x resolves to [al, bo]; bo is active and approving, so the group
+	// is satisfied even though the group name never appears in
+	// CurrentApprovers.
+	ctx := buildContext(approverSet("bo"), activeAllOwners(), []string{"zowner"})
+	rc := buildChain("/src/x.go",
+		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-x", 1)),
+	)
+	state := executeChainWithResolver(t, rc, ctx, groupResolver{})
+	fs := state.Files["/src/x.go"]
+	if fs.UsedFallback {
+		t.Errorf("expected the group rule to satisfy the file, got fallback")
+	}
+	if fs.Status != StatusSatisfied {
+		t.Errorf("file status = %s, want satisfied", fs.Status)
+	}
+	if len(fs.Layers) != 1 || len(fs.Layers[0].Rules) != 1 {
+		t.Fatalf("expected one tracked rule layer state, got %+v", fs.Layers)
+	}
+	ts := fs.Layers[0].Rules[0].Approvers[0]
+	if !ts.Satisfied || ts.Status != StatusSatisfied {
+		t.Errorf("group target should be satisfied, got %+v", ts)
+	}
+	if len(ts.ResolvedBy) != 1 || ts.ResolvedBy[0] != "bo" {
+		t.Errorf("expected resolved member bo, got %v", ts.ResolvedBy)
+	}
+}
+
+func TestGroupTargetEligibleOnlyThroughAuthorIsPruned(t *testing.T) {
+	// team-y resolves to [author, bo] with bo inactive: the only active
+	// member is the author, which cannot count under the default
+	// self-approval ban, so the rule prunes to empty and the fallback
+	// applies.
+	ctx := buildContext(approverSet(testAuthor),
+		func(s string) bool { return s == testAuthor }, []string{"zowner"})
+	rc := buildChain("/src/x.go",
+		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-y", 1)),
+	)
+	state := executeChainWithResolver(t, rc, ctx, groupResolver{})
+	fs := state.Files["/src/x.go"]
+	if !fs.UsedFallback {
+		t.Errorf("expected fallback after the group rule pruned to empty")
+	}
+	// The fallback owner (zowner) is inactive in the context, so nothing
+	// can satisfy the file and the run is unsatisfiable.
+	if fs.Status != StatusError {
+		t.Errorf("file status = %s, want error from unsatisfiable fallback", fs.Status)
+	}
+	if state.Overall != StatusError {
+		t.Errorf("overall status = %s, want error", state.Overall)
+	}
+	if state.Err == nil {
+		t.Errorf("expected an accumulated error for the unsatisfiable fallback")
+	}
+}
+
+func TestAuthorApprovalIgnoredWhenSelfApproveDisallowed(t *testing.T) {
+	// team-y resolves to [author, bo]. With the default self-approval ban,
+	// only the author has approved: the group must stay unsatisfied and the
+	// author must not appear in the resolved members.
+	ctx := buildContext(approverSet(testAuthor), activeAllOwners(), []string{"zowner"})
+	rc := RuleChain{FileChains: map[string][]RuleLayer{
+		"/src/x.go": {{DirectoryPath: "/", Rules: []kitfile.Rule{{
+			Name:            "root",
+			CombineStrategy: kitfile.RuleCombineStrategyUnion,
+			SelfApprove:     false,
+			Approvers:       []kitfile.ApproverTarget{approver("team-y", 1)},
+		}}}},
+	}}
+	state := executeChainWithResolver(t, rc, ctx, groupResolver{})
+	fs := state.Files["/src/x.go"]
+	if fs.Status != StatusMissingApprovers {
+		t.Errorf("file status = %s, want missing_approvers despite author approval", fs.Status)
+	}
+	if len(fs.Required) != 1 {
+		t.Fatalf("expected 1 required target, got %+v", fs.Required)
+	}
+	s := fs.Required[0]
+	if s.Satisfied || s.SatisfiedCount != 0 {
+		t.Errorf("expected the author's approval to be excluded, got %+v", s)
+	}
+	if len(s.ResolvedBy) != 0 {
+		t.Errorf("expected empty resolved members, got %v", s.ResolvedBy)
+	}
+}
+
+func TestAuthorApprovalCountedWhenSelfApproveAllowed(t *testing.T) {
+	// Same group, but the rule allows self-approval: the author's own
+	// approval now satisfies the target.
+	ctx := buildContext(approverSet(testAuthor), activeAllOwners(), []string{"zowner"})
+	rc := RuleChain{FileChains: map[string][]RuleLayer{
+		"/src/x.go": {{DirectoryPath: "/", Rules: []kitfile.Rule{{
+			Name:            "root",
+			CombineStrategy: kitfile.RuleCombineStrategyUnion,
+			SelfApprove:     true,
+			Approvers:       []kitfile.ApproverTarget{approver("team-y", 1)},
+		}}}},
+	}}
+	state := executeChainWithResolver(t, rc, ctx, groupResolver{})
+	fs := state.Files["/src/x.go"]
+	if fs.Status != StatusSatisfied {
+		t.Errorf("file status = %s, want satisfied via author self-approval", fs.Status)
+	}
+	if len(fs.Required) != 1 || fs.Required[0].SatisfiedCount != 1 {
+		t.Errorf("expected the author to be counted once, got %+v", fs.Required)
+	}
+}
+
 func TestRulesPrunedToEmptyFallBack(t *testing.T) {
 	// Existing rules prune out (inactive target + self-approval) -> empty set
 	// -> fallback kicks in and owner approval satisfies the file.

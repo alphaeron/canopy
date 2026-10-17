@@ -23,13 +23,13 @@ type RuleLayer struct {
 // same pool of current approvers, so a recurring target across layers is
 // counted once per target occurrence.
 func (rl *RuleLayer) Execute(
-	runningRequiredApprovers []kitfile.ApproverTarget,
+	runningRequiredApprovers RuleTargets,
 	ctx EvaluationContext,
 	builder *ReviewStateBuilder,
 	resolver ApproverResolver,
 	file, layer string,
 	log *slog.Logger,
-) ([]kitfile.ApproverTarget, LayerState) {
+) (RuleTargets, LayerState) {
 	result := runningRequiredApprovers
 	state := LayerState{
 		DirectoryPath: rl.DirectoryPath,
@@ -39,7 +39,7 @@ func (rl *RuleLayer) Execute(
 	for _, rule := range rl.Rules {
 		// 1. Process active and valid approvers specifically for this
 		// individual rule - now working with approver targets that preserve required counts
-		ruleTargets := rl.processRuleApproversWithRequiredCount(rule, ctx)
+		ruleTargets := rl.processRuleApproversWithRequiredCount(rule, ctx, resolver)
 
 		// Rule Fallback Logic: If pruning or an empty config yields 0 active
 		// approvers for this rule, we skip it entirely, which naturally
@@ -67,20 +67,17 @@ func (rl *RuleLayer) Execute(
 
 		// 3. Apply the combination strategy specified by *this unique rule*
 		// relative to the running required approver footprint accumulated so far.
-		combinedApprovers := combineRuleSets(
+		result = result.Combine(
+			// The "child/incoming" rule state.
+			ruleTargets,
 			// The strategy to combine approvers by.
 			rule.CombineStrategy,
-			// The "parent/cumulative" state
-			result,
-			// The "child/incoming" rule state
-			ruleTargets,
 			builder,
 			file,
 			layer,
 			rule.Name,
 		)
 
-		result = combinedApprovers
 		ruleState := buildRuleState(rule, ctx, resolver, file, layer, log)
 		state.Rules = append(state.Rules, ruleState)
 		state.ResolvedBy = append(state.ResolvedBy, ruleState.ResolvedBy...)
@@ -106,82 +103,22 @@ func buildRuleState(rule kitfile.Rule, ctx EvaluationContext, resolver ApproverR
 	var approverStates []ApproverTargetState
 	var resolvedBy []string
 
-	for _, target := range rule.Approvers {
-		// Prune inactive targets early.
-		if !ctx.IsOwnerActive(target.Target) {
-			approverStates = append(approverStates, ApproverTargetState{
-				Target:         target.Target,
-				RequiredCount:  target.RequiredCount,
-				SatisfiedCount: 0,
-				Satisfied:      false,
-				ResolvedBy:     []string{},
-				Status:         StatusInactive,
-				Reason:         "Target is inactive",
-			})
-			continue
-		}
-
-		// Enforce self-approval constraint.
-		if target.Target == ctx.Author && !rule.SelfApprove {
-			approverStates = append(approverStates, ApproverTargetState{
-				Target:         target.Target,
-				RequiredCount:  target.RequiredCount,
-				SatisfiedCount: 0,
-				Satisfied:      false,
-				ResolvedBy:     []string{},
-				Status:         StatusInactive,
-				Reason:         "Self-approval not allowed for this rule",
-			})
-			continue
-		}
-
-		// Resolve the target to individual members and count how many
-		// of those members appear in the current approver set.
-		members, ok := resolver.Resolve(target.Target, ctx)
-		if !ok {
+	for _, approver := range rule.Approvers {
+		// The rule target carries the rule's self-approval policy with the target
+		// so rule-specific state stays with the rule-target type.
+		rt := RuleTarget{ApproverTarget: approver, SelfApprove: rule.SelfApprove}
+		// Resolve the target to its member set and count eligible approvals
+		// through the rule-target's own Execute.
+		state := rt.Execute(ctx, resolver)
+		if state.Status == StatusUnresolved {
 			log.Error("approve: could not resolve approver target",
 				"component", "rule_layer", "phase", "approve",
 				"file", file, "layer", layer, "rule", rule.Name,
-				"target", target.Target)
-			approverStates = append(approverStates, ApproverTargetState{
-				Target:         target.Target,
-				RequiredCount:  target.RequiredCount,
-				SatisfiedCount: 0,
-				Satisfied:      false,
-				ResolvedBy:     []string{},
-				Status:         StatusUnresolved,
-				Reason:         "Could not resolve target to members",
-			})
-			continue
+				"target", rt.Target)
 		}
-
-		satisfiedCount := 0
-		var resolved []string
-		for _, member := range members {
-			if ctx.CurrentApprovers[member] {
-				satisfiedCount++
-				resolved = append(resolved, member)
-			}
-		}
-
-		satisfied := satisfiedCount >= target.RequiredCount
-		st := StatusSatisfied
-		if !satisfied {
-			st = StatusMissingApprovers
-		}
-
-		approverStates = append(approverStates, ApproverTargetState{
-			Target:         target.Target,
-			RequiredCount:  target.RequiredCount,
-			SatisfiedCount: satisfiedCount,
-			Satisfied:      satisfied,
-			ResolvedBy:     resolved,
-			Status:         st,
-			Reason:         "",
-		})
-
-		if len(resolved) > 0 {
-			resolvedBy = append(resolvedBy, resolved...)
+		approverStates = append(approverStates, *state)
+		if len(state.ResolvedBy) > 0 {
+			resolvedBy = append(resolvedBy, state.ResolvedBy...)
 		}
 	}
 
@@ -207,67 +144,28 @@ func buildRuleState(rule kitfile.Rule, ctx EvaluationContext, resolver ApproverR
 	}
 }
 
-// Filters rule approvers based on active states and self-approval flags, preserving RequiredCount
-func (rl *RuleLayer) processRuleApproversWithRequiredCount(rule kitfile.Rule, ctx EvaluationContext) []kitfile.ApproverTarget {
-	var targets []kitfile.ApproverTarget
-	for _, approverTarget := range rule.Approvers {
-		// Rule Constraint: Prune inactive accounts early
-		// TODO Handle group vs. individual users.
-		if !ctx.IsOwnerActive(approverTarget.Target) {
+// processRuleApproversWithRequiredCount filters rule approvers by membership
+// activity and self-approval constraints, preserving RequiredCount. Targets
+// are resolved to their member set via the ApproverResolver, so group targets
+// are eligible when any of their resolved members can count toward the rule,
+// while individual targets (the default resolver's 1:1 mapping) keep the
+// traditional direct activity check.
+func (rl *RuleLayer) processRuleApproversWithRequiredCount(rule kitfile.Rule, ctx EvaluationContext, resolver ApproverResolver) RuleTargets {
+	var targets RuleTargets
+	for _, approver := range rule.Approvers {
+		rt := RuleTarget{ApproverTarget: approver, SelfApprove: rule.SelfApprove}
+		// A target that cannot be resolved to any member can never satisfy
+		// the rule, so it is pruned entirely.
+		members, ok := resolver.Resolve(rt.Target, ctx)
+		if !ok {
 			continue
 		}
-		// Rule Constraint: Handle self-approval checks
-		if approverTarget.Target == ctx.Author && !rule.SelfApprove {
+		// Rule Constraints: prune inactive members and enforce the
+		// self-approval constraint against the author.
+		if !rt.HasAnyEligibleMember(members, ctx) {
 			continue
 		}
-		targets = append(targets, approverTarget)
+		targets = append(targets, rt)
 	}
 	return targets
-}
-
-// combineRuleSets evaluates localized rules for combination math per rule block specification,
-// working with approver targets that include required counts.
-func combineRuleSets(strat kitfile.RuleCombineStrategy, currentAccumulated []kitfile.ApproverTarget, incomingRuleTargets []kitfile.ApproverTarget, builder *ReviewStateBuilder, file, layer, ruleName string) []kitfile.ApproverTarget {
-	var note string
-
-	switch strat {
-	case kitfile.RuleCombineStrategyOverride:
-		// Discard everything accumulated from higher levels.
-		// This rule takes total priority.
-		note = "Applied override strategy - existing approvers replaced"
-		builder.AddEvent("approve", file, layer, ruleName, StatusActive, note)
-		return incomingRuleTargets
-
-	case kitfile.RuleCombineStrategyUnion:
-		// Union keeps every target occurrence from every layer so each
-		// per-layer required_count is satisfied independently. A recurring
-		// target (e.g. root wants 1, /src wants 2) is counted once per
-		// target occurrence against the same approver pool: root would be
-		// satisfied while /src still needs one more.
-		note := "Applied union strategy - approvers combined with OR logic"
-		builder.AddEvent("approve", file, layer, ruleName, StatusActive, note)
-		return append(append([]kitfile.ApproverTarget{}, currentAccumulated...), incomingRuleTargets...)
-
-	case kitfile.RuleCombineStrategyIntersect:
-		// Only approvers present in BOTH the parent criteria and this rule count.
-		m := make(map[string]bool)
-		for _, v := range currentAccumulated {
-			m[v.Target] = true
-		}
-		var res []kitfile.ApproverTarget
-		for _, v := range incomingRuleTargets {
-			if m[v.Target] {
-				res = append(res, v)
-			}
-		}
-		note = "Applied intersection strategy - approvers combined with AND logic"
-		builder.AddEvent("approve", file, layer, ruleName, StatusActive, note)
-		return res
-
-	default:
-		// Defaulting to override if a strategy is corrupt or omitted.
-		note = "Applied default strategy"
-		builder.AddEvent("approve", file, layer, ruleName, StatusActive, note)
-		return incomingRuleTargets
-	}
 }

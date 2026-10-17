@@ -3,8 +3,6 @@ package shonin
 import (
 	"fmt"
 	"log/slog"
-
-	"github.com/alphaeron/kit/internal/kitfile"
 )
 
 // RuleChain maps each changed file to its own localized, ordered rule pipeline.
@@ -71,7 +69,7 @@ func (rc *RuleChain) Execute(
 
 		// This slice tracks the cumulative list of required approvers as we
 		// descend the tree.
-		var runningRequiredApprovers []kitfile.ApproverTarget
+		var runningRequiredApprovers RuleTargets
 
 		// Process layers chronologically: from Root (Index 0) down to
 		//                                 Target Directory (Index N).
@@ -139,52 +137,21 @@ func (rc *RuleChain) Execute(
 		// Build required approver states with proper per-target satisfaction
 		// tracking.
 		var requiredApprovers []ApproverTargetState
-		for _, target := range runningRequiredApprovers {
-			members, ok := resolver.Resolve(target.Target, ctx)
-			if !ok {
+		for _, rt := range runningRequiredApprovers {
+			// The rule target carries its own rule-specific state;
+			// resolution, counting, and the author / self-approval rule all
+			// live on the rule-target type.
+			state := rt.Execute(ctx, resolver)
+			if state.Status == StatusUnresolved {
 				resolveErr := fmt.Errorf(
 					"could not resolve approver target %q for file %q to members",
-					target.Target, file)
+					rt.Target, file)
 				events.AddError(resolveErr)
 				log.Error("approve: could not resolve approver target",
 					"component", "rule_chain", "phase", "approve",
-					"file", file, "target", target.Target, "error", resolveErr)
-				requiredApprovers = append(requiredApprovers, ApproverTargetState{
-					Target:         target.Target,
-					RequiredCount:  target.RequiredCount,
-					SatisfiedCount: 0,
-					Satisfied:      false,
-					ResolvedBy:     []string{},
-					Status:         StatusUnresolved,
-					Reason:         "Could not resolve target to members",
-				})
-				continue
+					"file", file, "target", rt.Target, "error", resolveErr)
 			}
-
-			satisfiedCount := 0
-			var resolved []string
-			for _, member := range members {
-				if ctx.CurrentApprovers[member] {
-					satisfiedCount++
-					resolved = append(resolved, member)
-				}
-			}
-
-			satisfied := satisfiedCount >= target.RequiredCount
-			st := StatusSatisfied
-			if !satisfied {
-				st = StatusMissingApprovers
-			}
-
-			requiredApprovers = append(requiredApprovers, ApproverTargetState{
-				Target:         target.Target,
-				RequiredCount:  target.RequiredCount,
-				SatisfiedCount: satisfiedCount,
-				Satisfied:      satisfied,
-				ResolvedBy:     resolved,
-				Status:         st,
-				Reason:         "",
-			})
+			requiredApprovers = append(requiredApprovers, *state)
 		}
 
 		// Determine file-level status.
@@ -345,24 +312,15 @@ func (rc *RuleChain) evaluateFallback(
 // in the current approver list, and compares against RequiredCount. Each
 // target is evaluated independently so that a recurring target across layers
 // is counted once per target occurrence.
-func calculateApprovalFromTargets(required []kitfile.ApproverTarget, ctx EvaluationContext, resolver ApproverResolver) EvaluationResult {
+func calculateApprovalFromTargets(required RuleTargets, ctx EvaluationContext, resolver ApproverResolver) EvaluationResult {
 	var missing []string
-	for _, req := range required {
-		members, ok := resolver.Resolve(req.Target, ctx)
-		if !ok {
-			missing = append(missing, req.Target)
-			continue
-		}
-
-		satisfiedCount := 0
-		for _, member := range members {
-			if ctx.CurrentApprovers[member] {
-				satisfiedCount++
-			}
-		}
-
-		if satisfiedCount < req.RequiredCount {
-			missing = append(missing, req.Target)
+	for _, rt := range required {
+		// Rule-specific state lives on the rule-target type: Execute is its own
+		// evaluation step. Anything that did not evaluate to satisfied (not
+		// resolvable, no eligible members, or missing member approvals) keeps
+		// the file blocked.
+		if !rt.Execute(ctx, resolver).Satisfied {
+			missing = append(missing, rt.Target)
 		}
 	}
 	return EvaluationResult{

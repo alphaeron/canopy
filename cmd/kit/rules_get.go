@@ -57,7 +57,11 @@ func rulesGet(pattern string) {
 	paths, err := repo.FindFiles(pattern, ref, isAbsolute)
 	if err == nil {
 		fetch := shonin.LocalFetcher{Repo: repo}
-		s := shonin.Shonin{Fetch: &fetch}
+		// Local execution uses the default pass-through resolver.
+		s := shonin.Shonin{
+			Fetch:    &fetch,
+			Resolver: &shonin.DefaultApproverResolver{},
+		}
 		ruleChain, err := s.GetRuleChainForFiles(paths)
 		if err != nil {
 			log.Error("rules get: fetching rules failed",

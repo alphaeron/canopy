@@ -109,19 +109,6 @@ type Event struct {
 	Note   string // e.g. "rule .*\.go combined via union; required += backend-team"
 }
 
-// ApproverResolver resolves approver targets to actual users/teams.
-type ApproverResolver interface {
-	Resolve(target string, ctx EvaluationContext) ([]string, bool) // target → active members, ok
-}
-
-// DefaultApproverResolver is a stub resolver that returns the target as-is.
-// This preserves current behavior during migration.
-type DefaultApproverResolver struct{}
-
-func (r *DefaultApproverResolver) Resolve(target string, ctx EvaluationContext) ([]string, bool) {
-	return []string{target}, true
-}
-
 // ReviewStateBuilder builds the complete review state from the algorithm
 // execution. It accumulates the chronological event trace and every error
 // encountered during fetch, sift, and approve so that the resulting
