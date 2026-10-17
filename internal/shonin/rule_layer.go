@@ -12,10 +12,12 @@ type RuleLayer struct {
 	Rules         kitfile.Rules
 }
 
-// Execute evaluates an individual rule, to determine whether approval
-// conditions are satisfied or not. It also builds detailed per-rule state
-// tracking (RuleState / ApproverTargetState) so that each layer exposes its
-// own satisfaction breakdown for auditability and PR comment rendering.
+// Execute evaluates the rules in this layer, to determine whether approval
+// conditions are satisfied or not. It builds the complete LayerState, including
+// its per-rule state tracking (RuleState / ApproverTargetState), so that each
+// layer exposes its own satisfaction breakdown for auditability and PR comment
+// rendering. Callers consume the LayerState directly rather than assembling
+// it themselves.
 //
 // Each approver target's required_count is checked independently against the
 // same pool of current approvers, so a recurring target across layers is
@@ -27,9 +29,12 @@ func (rl *RuleLayer) Execute(
 	resolver ApproverResolver,
 	file, layer string,
 	log *slog.Logger,
-) ([]kitfile.ApproverTarget, []RuleState) {
+) ([]kitfile.ApproverTarget, LayerState) {
 	result := runningRequiredApprovers
-	var ruleStates []RuleState
+	state := LayerState{
+		DirectoryPath: rl.DirectoryPath,
+		Active:        true,
+	}
 
 	for _, rule := range rl.Rules {
 		// 1. Process active and valid approvers specifically for this
@@ -44,7 +49,9 @@ func (rl *RuleLayer) Execute(
 			log.Debug("approve: rule has no active approvers",
 				"component", "rule_layer", "phase", "approve",
 				"file", file, "layer", layer, "rule", rule.Name)
-			ruleStates = append(ruleStates, buildRuleState(rule, ctx, resolver, file, layer, log))
+			ruleState := buildRuleState(rule, ctx, resolver, file, layer, log)
+			state.Rules = append(state.Rules, ruleState)
+			state.ResolvedBy = append(state.ResolvedBy, ruleState.ResolvedBy...)
 			continue
 		}
 
@@ -52,7 +59,9 @@ func (rl *RuleLayer) Execute(
 		if len(result) == 0 {
 			builder.AddEvent("approve", file, layer, rule.Name, StatusActive, "First rule in layer - establishing base approvers")
 			result = ruleTargets
-			ruleStates = append(ruleStates, buildRuleState(rule, ctx, resolver, file, layer, log))
+			ruleState := buildRuleState(rule, ctx, resolver, file, layer, log)
+			state.Rules = append(state.Rules, ruleState)
+			state.ResolvedBy = append(state.ResolvedBy, ruleState.ResolvedBy...)
 			continue
 		}
 
@@ -72,10 +81,22 @@ func (rl *RuleLayer) Execute(
 		)
 
 		result = combinedApprovers
-		ruleStates = append(ruleStates, buildRuleState(rule, ctx, resolver, file, layer, log))
+		ruleState := buildRuleState(rule, ctx, resolver, file, layer, log)
+		state.Rules = append(state.Rules, ruleState)
+		state.ResolvedBy = append(state.ResolvedBy, ruleState.ResolvedBy...)
 	}
 
-	return result, ruleStates
+	// Determine layer-level status from its rule states.
+	status := StatusSatisfied
+	for _, rs := range state.Rules {
+		if rs.Status != StatusSatisfied {
+			status = rs.Status
+			break
+		}
+	}
+	state.Status = status
+
+	return result, state
 }
 
 // buildRuleState constructs a detailed RuleState for a single rule, tracking

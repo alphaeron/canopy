@@ -78,42 +78,18 @@ func (rc *RuleChain) Execute(
 		var fileLayers []LayerState
 		for _, layer := range layers {
 			// Execute the layer: it returns the updated running approvers and
-			// the per-rule state tracking for this layer.
-			newApprovers, ruleStates := layer.Execute(
+			// the complete LayerState, including its per-rule state tracking.
+			newApprovers, layerState := layer.Execute(
 				runningRequiredApprovers, ctx, events, resolver, file, layer.DirectoryPath, log,
 			)
 			runningRequiredApprovers = newApprovers
 
-			// Collect resolvedBy from all rule states in this layer.
-			var layerResolvedBy []string
-			for _, rs := range ruleStates {
-				layerResolvedBy = append(layerResolvedBy, rs.ResolvedBy...)
-			}
-
-			// Determine layer-level status from its rule states.
-			layerStatus := StatusSatisfied
-			for _, rs := range ruleStates {
-				if rs.Status != StatusSatisfied {
-					layerStatus = rs.Status
-					break
-				}
-			}
-
-			layerState := LayerState{
-				DirectoryPath: layer.DirectoryPath,
-				Rules:         ruleStates,
-				ResolvedBy:    layerResolvedBy,
-				Active:        true,
-				Status:        layerStatus,
-				Reason:        "",
-			}
-
-			events.AddEvent("approve", file, layer.DirectoryPath, "", layerStatus,
-				fmt.Sprintf("Processed %d rule(s) in layer %s", len(ruleStates), layer.DirectoryPath))
+			events.AddEvent("approve", file, layer.DirectoryPath, "", layerState.Status,
+				fmt.Sprintf("Processed %d rule(s) in layer %s", len(layerState.Rules), layer.DirectoryPath))
 			log.Debug("approve: processed rule layer",
 				"component", "rule_chain", "phase", "approve",
 				"file", file, "layer", layer.DirectoryPath,
-				"rules", len(ruleStates), "status", layerStatus)
+				"rules", len(layerState.Rules), "status", layerState.Status)
 
 			fileLayers = append(fileLayers, layerState)
 		}
