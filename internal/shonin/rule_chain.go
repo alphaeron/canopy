@@ -266,15 +266,25 @@ func (rc *RuleChain) Execute(
 }
 
 // statusFromApproverStates derives a layer/file status from a slice of
-// ApproverTargetState. If any target is unsatisfied the status is
-// StatusMissingApprovers; otherwise StatusSatisfied.
+// ApproverTargetState. A target that could not be resolved at all
+// (StatusUnresolved) escalates the status to StatusUnresolved; otherwise any
+// unsatisfied target yields StatusMissingApprovers; otherwise
+// StatusSatisfied.
 func statusFromApproverStates(states []ApproverTargetState) Status {
+	fileStatus := StatusSatisfied
 	for _, s := range states {
 		if !s.Satisfied {
-			return StatusMissingApprovers
+			fileStatus = StatusMissingApprovers
 		}
 	}
-	return StatusSatisfied
+	// An unresolvable target is worse than a missing approval: surface it so
+	// the cause is obvious in the state, mirroring the non-fallback branch.
+	for _, s := range states {
+		if s.Status == StatusUnresolved {
+			return StatusUnresolved
+		}
+	}
+	return fileStatus
 }
 
 // evaluateFallback attempts to satisfy a file's requirements by falling back
@@ -307,6 +317,12 @@ func (rc *RuleChain) evaluateFallback(
 	for _, owner := range activeOwners {
 		members, ok := resolver.Resolve(owner, ctx)
 		if !ok {
+			resolveErr := fmt.Errorf(
+				"could not resolve repository owner %q to members", owner)
+			events.AddError(resolveErr)
+			log.Error("fallback: could not resolve repository owner",
+				"component", "rule_chain", "phase", "approve",
+				"file", file, "owner", owner, "error", resolveErr)
 			states = append(states, ApproverTargetState{
 				Target:         owner,
 				RequiredCount:  1,

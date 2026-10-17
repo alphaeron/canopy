@@ -241,6 +241,39 @@ func TestFallbackUnsatisfiableWhenAllOwnersInactive(t *testing.T) {
 	}
 }
 
+// executeChainWithResolver runs the chain with the given resolver so tests can
+// exercise resolution failures.
+func executeChainWithResolver(t *testing.T, rc RuleChain, ctx EvaluationContext, resolver ApproverResolver) *ReviewState {
+	t.Helper()
+	return rc.Execute(ctx, NewReviewStateBuilder(resolver), testLogger(), "/repo")
+}
+
+func TestFallbackUnresolvableOwnerIsUnresolved(t *testing.T) {
+	// No matching rules -> fallback to repository owners, but the owners
+	// cannot be resolved to members. The file must surface StatusUnresolved
+	// and the accumulated error must force the overall status to
+	// StatusError, mirroring the non-fallback resolution-failure path.
+	ctx := buildContext(approverSet(), activeAllOwners(), []string{"zowner"})
+	rc := buildChain("/orphan.go")
+	state := executeChainWithResolver(t, rc, ctx, failingResolver{})
+	fs := state.Files["/orphan.go"]
+	if !fs.UsedFallback {
+		t.Errorf("expected UsedFallback=true")
+	}
+	if fs.Status != StatusUnresolved {
+		t.Errorf("file status = %s, want unresolved", fs.Status)
+	}
+	if len(fs.Required) != 1 || fs.Required[0].Status != StatusUnresolved {
+		t.Errorf("expected target state with StatusUnresolved, got %+v", fs.Required)
+	}
+	if state.Overall != StatusError {
+		t.Errorf("overall status = %s, want error", state.Overall)
+	}
+	if state.Err == nil {
+		t.Errorf("expected non-nil error from unresolvable fallback owner")
+	}
+}
+
 func TestRulesPrunedToEmptyFallBack(t *testing.T) {
 	// Existing rules prune out (inactive target + self-approval) -> empty set
 	// -> fallback kicks in and owner approval satisfies the file.
