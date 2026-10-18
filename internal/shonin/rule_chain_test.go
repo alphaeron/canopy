@@ -36,7 +36,7 @@ func buildContext(approvers map[string]bool, isOwnerActive func(string) bool, re
 func buildLayer(dir, name string, strategy kitfile.RuleCombineStrategy, targets ...kitfile.ApproverTarget) RuleLayer {
 	return RuleLayer{
 		DirectoryPath: dir,
-		Rules:         []kitfile.Rule{{Name: name, CombineStrategy: strategy, Approvers: targets}},
+		Rules:         []Rule{newRule(kitfile.Rule{Name: name, CombineStrategy: strategy, Approvers: targets})},
 	}
 }
 
@@ -354,12 +354,12 @@ func TestAuthorApprovalIgnoredWhenSelfApproveDisallowed(t *testing.T) {
 	// author must not appear in the resolved members.
 	ctx := buildContext(approverSet(testAuthor), activeAllOwners(), []string{"zowner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {{DirectoryPath: "/", Rules: []kitfile.Rule{{
+		"/src/x.go": {{DirectoryPath: "/", Rules: []Rule{newRule(kitfile.Rule{
 			Name:            "root",
 			CombineStrategy: kitfile.RuleCombineStrategyUnion,
 			SelfApprove:     false,
 			Approvers:       []kitfile.ApproverTarget{approver("team-y", 1)},
-		}}}},
+		})}}},
 	}}
 	state := executeChainWithResolver(t, rc, ctx, groupResolver{})
 	fs := state.Files["/src/x.go"]
@@ -383,12 +383,12 @@ func TestAuthorApprovalCountedWhenSelfApproveAllowed(t *testing.T) {
 	// approval now satisfies the target.
 	ctx := buildContext(approverSet(testAuthor), activeAllOwners(), []string{"zowner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {{DirectoryPath: "/", Rules: []kitfile.Rule{{
+		"/src/x.go": {{DirectoryPath: "/", Rules: []Rule{newRule(kitfile.Rule{
 			Name:            "root",
 			CombineStrategy: kitfile.RuleCombineStrategyUnion,
 			SelfApprove:     true,
 			Approvers:       []kitfile.ApproverTarget{approver("team-y", 1)},
-		}}}},
+		})}}},
 	}}
 	state := executeChainWithResolver(t, rc, ctx, groupResolver{})
 	fs := state.Files["/src/x.go"]
@@ -400,9 +400,10 @@ func TestAuthorApprovalCountedWhenSelfApproveAllowed(t *testing.T) {
 	}
 }
 
-func TestRulesPrunedToEmptyFallBack(t *testing.T) {
-	// Existing rules prune out (inactive target + self-approval) -> empty set
-	// -> fallback kicks in and owner approval satisfies the file.
+func TestRulesPrunedToEmptyFallBackButStillErrors(t *testing.T) {
+	// Existing rules prune out (inactive target + self-approval): the rule
+	// is skipped - an error condition - and the owner fallback satisfies the
+	// file, but the final state still terminates error.
 	ctx := buildContext(approverSet("zowner"), func(s string) bool { return s == "zowner" }, []string{"zowner"}) // team-a inactive
 	rc := buildChain("/src/x.go",
 		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
@@ -413,7 +414,50 @@ func TestRulesPrunedToEmptyFallBack(t *testing.T) {
 		t.Errorf("expected fallback after rule pruning to empty")
 	}
 	if fs.Status != StatusSatisfied {
-		t.Errorf("file status = %s, want satisfied", fs.Status)
+		t.Errorf("file status = %s, want satisfied via the owner fallback", fs.Status)
+	}
+	// The skipped rule is an error condition: accumulated in Errors and
+	// forcing the overall terminal state to error.
+	if len(state.Errors) == 0 || state.Err == nil {
+		t.Errorf("expected the skipped rule to be accumulated as a review error, got %v / %v", state.Errors, state.Err)
+	}
+	if state.Overall != StatusError {
+		t.Errorf("overall status = %s, want error after a rule is skipped", state.Overall)
+	}
+	// The rule's own state surfaces the skip in the hierarchical breakdown.
+	if len(fs.Layers) != 1 || len(fs.Layers[0].Rules) != 1 {
+		t.Fatalf("expected one tracked rule layer state, got %+v", fs.Layers)
+	}
+	rs := fs.Layers[0].Rules[0]
+	if rs.Status != StatusError || rs.Reason == "" {
+		t.Errorf("expected the skipped rule state to be an error with a reason, got %+v", rs)
+	}
+}
+
+func TestPrunedRuleErrorsEvenWhenLaterRuleSatisfies(t *testing.T) {
+	// Root rule prunes to empty (team-a inactive); the /src union rule then
+	// satisfies the file by team-b. The skip is still an error condition:
+	// the final state terminates error.
+	ctx := buildContext(
+		approverSet("team-b"),
+		func(s string) bool { return s != "team-a" }, // team-a inactive, others active
+		[]string{"zowner"},
+	)
+	rc := buildChain(
+		"/src/x.go",
+		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("/src", "src", kitfile.RuleCombineStrategyUnion, approver("team-b", 1)),
+	)
+	state := executeChain(t, rc, ctx)
+	fs := state.Files["/src/x.go"]
+	if fs.Status != StatusSatisfied {
+		t.Errorf("file status = %s, want satisfied by the later rule", fs.Status)
+	}
+	if len(state.Errors) == 0 || state.Err == nil {
+		t.Errorf("expected the skipped root rule to be accumulated as a review error")
+	}
+	if state.Overall != StatusError {
+		t.Errorf("overall status = %s, want error after a rule is skipped", state.Overall)
 	}
 }
 

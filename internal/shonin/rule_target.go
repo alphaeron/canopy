@@ -35,8 +35,11 @@ func (rt *RuleTarget) Execute(ctx EvaluationContext, resolver ApproverResolver) 
 		}
 	}
 
-	// Enforce self-approval constraint against the target identity.
-	if rt.Target == ctx.Author && !rt.SelfApprove {
+	// Enforce self-approval constraint against the target identity: when
+	// the rule forbids self-approval, a target that IS the author can
+	// never be satisfied. The policy decision is the single contributes
+	// predicate shared with member-level counting.
+	if !rt.contributes(rt.Target, ctx) {
 		return &ApproverTargetState{
 			Target:        rt.Target,
 			RequiredCount: rt.RequiredCount,
@@ -93,10 +96,18 @@ func (rt *RuleTarget) approveMembers(members []string, ctx EvaluationContext) []
 // target. When the producing rule forbids self-approval, the author never
 // contributes, even when they are a member of a resolved group.
 func (rt *RuleTarget) approves(member string, ctx EvaluationContext) bool {
-	if member == ctx.Author && !rt.SelfApprove {
-		return false
-	}
-	return ctx.CurrentApprovers[member]
+	return rt.contributes(member, ctx) && ctx.CurrentApprovers[member]
+}
+
+// contributes is the single implementation of the rule's self-approval
+// requirement: it reports whether this author-approved member may count
+// toward this target. When the rule forbids self-approval (the default),
+// the author's approval never counts, whether the author is the target
+// itself or a member of a resolved group. Every self-approval decision in
+// the algorithm funnels through this predicate, so the requirement and its
+// implementation live on one type - the RuleTarget carrying the policy.
+func (rt *RuleTarget) contributes(member string, ctx EvaluationContext) bool {
+	return rt.SelfApprove || member != ctx.Author
 }
 
 // HasAnyEligibleMember reports whether at least one resolved member can
@@ -105,7 +116,7 @@ func (rt *RuleTarget) approves(member string, ctx EvaluationContext) bool {
 // member is eligible the target is pruned from the rule.
 func (rt *RuleTarget) HasAnyEligibleMember(members []string, ctx EvaluationContext) bool {
 	for _, member := range members {
-		if member == ctx.Author && !rt.SelfApprove {
+		if !rt.contributes(member, ctx) {
 			continue
 		}
 		if ctx.IsOwnerActive(member) {
@@ -115,61 +126,18 @@ func (rt *RuleTarget) HasAnyEligibleMember(members []string, ctx EvaluationConte
 	return false
 }
 
-// Combine applies the rule's combination strategy to this (accumulated) set
-// by merging in the incoming target set. It always returns a slice with its
-// own backing array so later appends by the caller can never mutate the
-// accumulated footprint.
+// Combine merges this (accumulated) footprint with the set of rule targets
+// coming in from this rule using the supplied strategy, and records the
+// strategy application in the event trace. Data and its trace stay on this
+// state holder; the merging algorithm itself belongs to the CombineStrategy
+// implementation so each combining strategy is a standalone, testable
+// behavior.
 func (current *RuleTargets) Combine(
 	incoming RuleTargets,
-	strat kitfile.RuleCombineStrategy,
+	strat CombineStrategy,
 	builder *ReviewStateBuilder,
 	file, layer, ruleName string,
 ) RuleTargets {
-	var note string
-
-	switch strat {
-	case kitfile.RuleCombineStrategyOverride:
-		// Discard everything accumulated from higher levels.
-		// This rule takes total priority.
-		note = "Applied override strategy - existing approvers replaced"
-		builder.AddEvent("approve", file, layer, ruleName, StatusActive, note)
-		return incoming
-
-	case kitfile.RuleCombineStrategyUnion:
-		// Union keeps every target occurrence from every layer so each
-		// per-layer required_count is satisfied independently. A recurring
-		// target (e.g. root wants 1, /src wants 2) is counted once per
-		// target occurrence against the same approver pool: root would be
-		// satisfied while /src still needs one more.
-		note := "Applied union strategy - approvers combined with OR logic"
-		builder.AddEvent("approve", file, layer, ruleName, StatusActive, note)
-		// Allocate a fresh backing array explicitly. *current and incoming
-		// may both hold views with spare capacity, so an append-based
-		// concatenation must never write into either caller's array.
-		combined := make(RuleTargets, 0, len(*current)+len(incoming))
-		combined = append(combined, *current...)
-		return append(combined, incoming...)
-
-	case kitfile.RuleCombineStrategyIntersect:
-		// Only approvers present in BOTH the parent criteria and this rule count.
-		m := make(map[string]bool)
-		for _, v := range *current {
-			m[v.Target] = true
-		}
-		var res RuleTargets
-		for _, v := range incoming {
-			if m[v.Target] {
-				res = append(res, v)
-			}
-		}
-		note = "Applied intersection strategy - approvers combined with AND logic"
-		builder.AddEvent("approve", file, layer, ruleName, StatusActive, note)
-		return res
-
-	default:
-		// Defaulting to override if a strategy is corrupt or omitted.
-		note = "Applied default strategy"
-		builder.AddEvent("approve", file, layer, ruleName, StatusActive, note)
-		return incoming
-	}
+	builder.AddEvent("approve", file, layer, ruleName, StatusActive, "Applied "+strat.note())
+	return strat.apply(*current, incoming)
 }

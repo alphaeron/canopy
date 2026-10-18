@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-
-	"github.com/alphaeron/kit/internal/kitfile"
 )
 
 func PrintRuleChain(ruleChain RuleChain) {
@@ -29,7 +27,7 @@ func PrintRuleChain(ruleChain RuleChain) {
 	}
 }
 
-func printRule(rule kitfile.Rule, indent string) {
+func printRule(rule Rule, indent string) {
 	// Verify the results
 	fmt.Printf("%sName:                 %s\n", indent, rule.Name)
 	fmt.Printf("%sIgnoreParentDirs:     %t\n", indent, rule.IgnoreParentDirs)

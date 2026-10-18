@@ -45,13 +45,16 @@ func (s *Shonin) Execute(
 
 	// Fetch phase: retrieve the repository root and all KIT rules.
 	log.Info("kit review starting", "component", "shonin", "phase", "fetch", "files", len(files))
-	repoRoot, repoRules, err := s.Fetch.GetRules()
+	repoRoot, repoRules, err := s.Fetch.Execute()
 	if err != nil {
 		log.Error("kit review: fetching rules failed",
 			"component", "shonin", "phase", "fetch", "repo_root", repoRoot, "error", err)
 		events.AddEvent("fetch", repoRoot, "", "", StatusError, err.Error())
 		events.AddError(err)
-		return events.BuildReviewState(repoRoot, "", map[string]FileState{}, StatusError, err)
+		return events.WithRepoRoot(repoRoot).
+			WithFiles(map[string]FileState{}).
+			WithOverall(StatusError).
+			Build(err)
 	}
 	events.AddEvent("fetch", repoRoot, "", "", StatusDone,
 		fmt.Sprintf("fetched rules from %d KIT file(s)", len(repoRules)))
@@ -84,7 +87,7 @@ func (s *Shonin) Execute(
 // an error rather than silently producing an empty result.
 func (s *Shonin) GetRuleChainForFiles(files []string) (RuleChain, error) {
 	log := s.log()
-	repoRoot, repoRules, err := s.Fetch.GetRules()
+	repoRoot, repoRules, err := s.Fetch.Execute()
 	if err != nil {
 		log.Error("kit: fetching rules failed",
 			"component", "shonin", "phase", "fetch", "repo_root", repoRoot, "error", err)

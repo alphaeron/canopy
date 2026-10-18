@@ -73,14 +73,16 @@ func (rc *RuleChain) Execute(
 
 		// Process layers chronologically: from Root (Index 0) down to
 		//                                 Target Directory (Index N).
+		// Each layer consumes the downstream target state and returns only
+		// its own LayerState; the chain reads Required from that state to
+		// feed the next layer, so it never reaches into the rule or target
+		// levels itself.
 		var fileLayers []LayerState
 		for _, layer := range layers {
-			// Execute the layer: it returns the updated running approvers and
-			// the complete LayerState, including its per-rule state tracking.
-			newApprovers, layerState := layer.Execute(
-				runningRequiredApprovers, ctx, events, resolver, file, layer.DirectoryPath, log,
+			layerState := layer.Execute(
+				runningRequiredApprovers, ctx, events, resolver, file, log,
 			)
-			runningRequiredApprovers = newApprovers
+			runningRequiredApprovers = layerState.Required
 
 			events.AddEvent("approve", file, layer.DirectoryPath, "", layerState.Status,
 				fmt.Sprintf("Processed %d rule(s) in layer %s", len(layerState.Rules), layer.DirectoryPath))
@@ -129,11 +131,6 @@ func (rc *RuleChain) Execute(
 			continue
 		}
 
-		// Calculate whether current PR approvals fulfil the remaining targeted
-		// approver lists. Each target is resolved to its member set and the
-		// count of matching current approvers is compared against RequiredCount.
-		evalResult := calculateApprovalFromTargets(runningRequiredApprovers, ctx, resolver)
-
 		// Build required approver states with proper per-target satisfaction
 		// tracking.
 		var requiredApprovers []ApproverTargetState
@@ -154,21 +151,11 @@ func (rc *RuleChain) Execute(
 			requiredApprovers = append(requiredApprovers, *state)
 		}
 
-		// Determine file-level status.
-		fileStatus := StatusSatisfied
-		if !evalResult.IsApproved {
-			fileStatus = StatusMissingApprovers
-		}
-		// A target that could not be resolved at all is worse than a missing
-		// approval: report the file as unresolved so the cause is obvious in
-		// the state (the accumulated error forces the overall status to
-		// StatusError).
-		for _, ats := range requiredApprovers {
-			if ats.Status == StatusUnresolved {
-				fileStatus = StatusUnresolved
-				break
-			}
-		}
+		// Determine file-level status from the per-target states the chain
+		// just assembled. An unresolvable target escalates the file to
+		// StatusUnresolved; any unsatisfied target yields
+		// StatusMissingApprovers.
+		fileStatus := statusFromApproverStates(requiredApprovers)
 
 		log.Debug("approve: file evaluated",
 			"component", "rule_chain", "phase", "approve",
@@ -205,7 +192,10 @@ func (rc *RuleChain) Execute(
 
 	// The builder forces Overall to StatusError and combines accumulated
 	// errors into Err when anything went wrong.
-	return events.BuildReviewState(repoRoot, "", files, overallStatus, overallErr)
+	return events.WithRepoRoot(repoRoot).
+		WithFiles(files).
+		WithOverall(overallStatus).
+		Build(overallErr)
 }
 
 // statusFromApproverStates derives a layer/file status from a slice of
@@ -307,24 +297,4 @@ func (rc *RuleChain) evaluateFallback(
 	return states, false
 }
 
-// calculateApprovalFromTargets resolves each approver target to its member set
-// via the supplied ApproverResolver, counts how many resolved members appear
-// in the current approver list, and compares against RequiredCount. Each
-// target is evaluated independently so that a recurring target across layers
-// is counted once per target occurrence.
-func calculateApprovalFromTargets(required RuleTargets, ctx EvaluationContext, resolver ApproverResolver) EvaluationResult {
-	var missing []string
-	for _, rt := range required {
-		// Rule-specific state lives on the rule-target type: Execute is its own
-		// evaluation step. Anything that did not evaluate to satisfied (not
-		// resolvable, no eligible members, or missing member approvals) keeps
-		// the file blocked.
-		if !rt.Execute(ctx, resolver).Satisfied {
-			missing = append(missing, rt.Target)
-		}
-	}
-	return EvaluationResult{
-		IsApproved:        len(missing) == 0,
-		RequiredApprovers: missing,
-	}
-}
+// statusFromApproverStates derives

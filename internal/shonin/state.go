@@ -68,10 +68,15 @@ type FileState struct {
 type LayerState struct {
 	DirectoryPath string
 	Rules         []RuleState
-	ResolvedBy    []string // active individuals/teams that contributed
-	Active        bool
-	Status        Status
-	Reason        string
+	// Required is the combined rule-target footprint that results from
+	// applying this layer's rules to the incoming footprint. The chain
+	// consumes it to feed the next layer down, so the layer's downstream
+	// target state travels through the layer state only.
+	Required   RuleTargets
+	ResolvedBy []string // active individuals/teams that contributed
+	Active     bool
+	Status     Status
+	Reason     string
 }
 
 // RuleState represents the state of a single rule in the review.
@@ -117,6 +122,9 @@ type ReviewStateBuilder struct {
 	resolver ApproverResolver
 	events   []Event
 	errors   []string
+	repoRoot string
+	files    map[string]FileState
+	overall  Status
 }
 
 // NewReviewStateBuilder creates a new review state builder.
@@ -158,26 +166,50 @@ func (b *ReviewStateBuilder) AddError(err error) {
 	b.errors = append(b.errors, err.Error())
 }
 
-// BuildReviewState builds a complete review state from the current execution.
-// When any errors were accumulated, the overall approval status is forced to
-// StatusError and Err is set to a combined error so callers can always tell
-// that the review did not run cleanly.
-func (b *ReviewStateBuilder) BuildReviewState(repoRoot, headRef string, files map[string]FileState, overall Status, err error) *ReviewState {
+// WithRepoRoot sets the repository root on the state being built. It is a no-op on a nil builder, mirroring AddEvent, and returns the receiver so the remaining steps chain together.
+func (b *ReviewStateBuilder) WithRepoRoot(repoRoot string) *ReviewStateBuilder {
+	if b == nil {
+		return b
+	}
+	b.repoRoot = repoRoot
+	return b
+}
+
+// WithFiles sets the per-file states on the state being built. It returns the receiver so the remaining steps chain together.
+func (b *ReviewStateBuilder) WithFiles(files map[string]FileState) *ReviewStateBuilder {
+	if b == nil {
+		return b
+	}
+	b.files = files
+	return b
+}
+
+// WithOverall sets the overall approval status computed by the algorithm on the state being built. It returns the receiver so the remaining steps chain together.
+func (b *ReviewStateBuilder) WithOverall(overall Status) *ReviewStateBuilder {
+	if b == nil {
+		return b
+	}
+	b.overall = overall
+	return b
+}
+
+// Build assembles the full review state from the accumulated events, errors, and steps. When errors have accumulated, the overall approval status is forced to StatusError and Err is set to a combined error so callers can always tell that the review did not run cleanly. This is the only step that reads back the state; all earlier steps only write into it.
+func (b *ReviewStateBuilder) Build(baseErr error) *ReviewState {
 	errors := b.errors
+	overall := b.overall
 	if len(errors) > 0 {
 		overall = StatusError
-		if err == nil {
-			err = fmt.Errorf("%d error(s) during review: %s", len(errors), strings.Join(errors, "; "))
+		if baseErr == nil {
+			baseErr = fmt.Errorf("%d error(s) during review: %s", len(errors), strings.Join(errors, "; "))
 		}
 	}
 	return &ReviewState{
-		RepoRoot: repoRoot,
-		HeadRef:  headRef,
-		Files:    files,
+		RepoRoot: b.repoRoot,
+		Files:    b.files,
 		Overall:  overall,
 		Events:   b.events,
 		Errors:   errors,
-		Err:      err,
+		Err:      baseErr,
 	}
 }
 

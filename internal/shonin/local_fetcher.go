@@ -23,11 +23,12 @@ type LocalFetcher struct {
 	Log *slog.Logger
 }
 
-// GetRules locates every KIT file at HEAD and parses its rules. Any failure
-// to get the repository root, read HEAD, or locate files is returned as an
-// error; per-file read/parse errors are accumulated into the returned error
-// while the successful rules are still provided to the caller.
-func (lf *LocalFetcher) GetRules() (string, map[string]kitfile.Rules, error) {
+// Execute runs the fetch phase for a local checkout: it locates every KIT
+// file at HEAD and parses its rules. Any failure to get the repository
+// root, read HEAD, or locate files is returned as an error; per-file
+// read/parse errors are accumulated into the returned error while the
+// successful rules are still provided to the caller.
+func (lf *LocalFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 	log := lf.log()
 	rules := make(map[string]kitfile.Rules)
 

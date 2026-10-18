@@ -6,13 +6,13 @@
 
 A rule defined at the repository root directory (`/`) naturally acts globally because rules cascade downwards by default.
 
-In the case that a file fails to meet any of the exitsing rules specified at the repository root, we still do not need a "global" configuration as we can reliably request the repository owner for review.
+In the case that a file fails to meet any of the existing rules specified at the repository root, we still do not need a "global" configuration as we can reliably request the repository owner for review.
 
 In the case an owner is inactive, the owner is removed from the list of possible approvers for a given rule.
 
-If the resulting set of approvers for a given rule is empty, we will fall back to the parent directory rules.  If those recursively are not matched up until and including the repository root rules, we will request a review from the repository owner.
+If the resulting set of approvers for a given rule is empty, that rule is **skipped** — an error condition that records the skip in the review error list and forces the final review state to `error` — and evaluation falls back to the parent directory rules. If those recursively are not matched up until and including the repository root rules, we will request a review from the repository owner.
 
-Warnings for these failed matches, ... will be added to the PR as a comment for visibility.
+Warnings for these failed matches, ... will be added to the PR as a comment for visibility, and the accumulated error propagates out of the pipeline so the PR can be blocked even when a later rule or the owner fallback satisfies the file.
 
 ### Combination Strategies
 To achieve logical completeness when combining rules from parent and subdirectories, the following combination operations are supported:
@@ -35,7 +35,7 @@ The review rules for a branch target are determined from the main branch of the 
 
 ## Configuration File Schema
 
-Each directory in the repository can host a `KIT` file to localize approval ruls.
+Each directory in the repository can host a `KIT` file to localize approval rules.
 
 ```yaml
 # RegEx matching relative to the CURRENT directory location
@@ -79,6 +79,42 @@ When evaluating a changed target file (e.g., `/src/api/v1/auth.go`), the engine 
 
 ---
 
+## Review Algorithm
+
+The approve phase is a chain of independent layers. Each layer consumes only the state of the layer below it and returns only its own state, so every requirement can be traced to exactly one type and one `Execute` command:
+
+| Layer | Type | Command | State it returns |
+|---|---|---|---|
+| Fetch | `Fetcher` (interface), `LocalFetcher` | `Execute()` | repository root + parsed `KIT` rules |
+| Sift | `RuleChain` builder | `GetFileRuleChain` | per-file ordered rule layers |
+| Chain | `RuleChain` | `Execute` | `ReviewState` (consumes only `LayerState`) |
+| Layer | `RuleLayer` | `Execute` | `LayerState` incl. per-rule states and the combined target footprint (`Required`) for the next layer |
+| Rule | `Rule` | `Execute` | `RuleState` (consumes only target states) |
+| Target | `RuleTarget` | `Execute` | `ApproverTargetState` |
+
+State flows upward in one direction only: chain status derives from file status, file status derives from per-target states, layer status derives from its rule states, and rule status derives from its approver target states. No layer reads a state "above" itself.
+
+### Author Self-Approval (`self_approve`)
+The self-approval policy is a requirement of the rule and travels with every approver target that the rule produces. Every self-approval decision in the algorithm funnels through one predicate, `RuleTarget.contributes`, and only two edge cases exist:
+
+* **The target is the author themselves.** If `self_approve: false` and a rule directly targets the PR author, the target is `inactive` and never satisfiable, even if the author has approved.
+* **The author is a member of a resolved group.** Inactive members are ignored. If `self_approve: false`, the author's approval is sliced out of the group's eligible members: the group can still be satisfied by every other member, and the author never appears in `ResolvedBy`. If the group's only active member is the author, the whole target prunes away with the rule.
+* Setting `self_approve: true` counts the author's approval exactly like any other member's, in both cases (one approval, counted once).
+* The default is `false`: authors can never fulfill their own requirements unless a rule explicitly allows it.
+
+### Approver Targets, Resolution, and Pruning
+Every target occurrence is evaluated independently against the same pool of current approvers. Targets resolve to a member set through the configured `ApproverResolver` (individual targets: 1:1 by default; group targets: expanded to their members):
+
+* A target whose members are all inactive prunes away; the rule then falls back to earlier rules or the parent directory (see above).
+* A target that cannot be resolved to any member at all is `unresolved`, which escalates the containing rule, layer, and file to `unresolved` and forces the overall status to `error`.
+* A group is `satisfied` once `required_count` of its eligible, active resolved members appear among current approvers.
+* Because each occurrence is independent, recurring targets under `union` are counted once per occurrence (see Recurring Approver Targets).
+
+### Rule Fallback
+Pruning drops a target only when *zero* active eligible members remain. A rule left with zero active targets is **skipped** — an error condition: the skip is marked on the rule's own state so the hierarchical breakdown remains a complete trace, and a review error is accumulated, which forces the final review state to `error` even when preceding rules, parent rules, or the repository-owner fallback afterwards still satisfy the file.
+
+---
+
 ## PR Evaluation
 
 The runtime application processes PR approval status utilizing a three-tiered pipeline:
@@ -112,12 +148,14 @@ The runtime application processes PR approval status utilizing a three-tiered pi
 3. If a pattern matches, reference the file's `combine_strategy`:
    * If `override`, purge all rule criteria accumulated from higher ancestral folders for this pattern space and insert the current criteria.
    * If `union`, append the rule constraints directly into the active evaluation array.
+   * If `intersect`, keep only the criteria present in both the parent accumulation and the current rule.
 
 #### Phase 3: Approve
 1. Extract the unique GitHub usernames of the PR Author and all users who submitted an explicit "Approved" state review.
 2. For each final rule block tied to an asset:
-   * Validate self-approval rules: If `can_author_self_approve` is `false`, slice the PR Author out of the valid approver matching array.
-   * Cross-reference the active approved user list against the designated `approvers` targets (querying live organization team memberships if applicable).
-   * Increment counts when an active approver matches an identity target.
-3. Mark a rule block as **Satisfied** once its internal `actual_count >= required_count`.
+   * Resolve each `approvers` target to its member set (querying live organization team memberships if applicable).
+   * Apply the self-approval policy: if `self_approve` is `false`, slice the PR Author out of the eligible approver matching array.
+   * Increment counts when an active approver matches a member identity target.
+   * If a rule's targets have all been pruned away (inactive members, excluded author, or unresolvable targets), the rule is **skipped and the skip is recorded as an error**; it still falls back to the preceding rule's criteria, but the final overall state terminates `error` regardless of that fallback.
+3. Mark a rule block as **Satisfied** once each target's internal `actual_count >= required_count`.
 4. Fire a passing green status payload back to the GitHub Status API if all rules across all files resolve to a **Satisfied** state.

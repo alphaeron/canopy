@@ -69,7 +69,7 @@ func getFileRuleLayers(
 			continue
 		}
 
-		var activeLayerRules kitfile.Rules
+		var activeLayerRules []Rule
 		var truncateChain = false
 
 		for _, rule := range matchedRules {
@@ -107,7 +107,10 @@ func getFileRuleLayers(
 				truncateChain = true
 			}
 
-			activeLayerRules = append(activeLayerRules, rule)
+			// Wrap the configured rule at the sifter boundary: from this
+			// point on the pipeline only sees the algorithm-level Rule
+			// type.
+			activeLayerRules = append(activeLayerRules, newRule(rule))
 		}
 
 		// If a rule dictates truncation, discard all higher rules accumulated so far.

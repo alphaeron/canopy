@@ -1,6 +1,6 @@
 package shonin
 
-// func GetRules() (string, map[string]kitfile.Rules) {
+// func Execute() (string, map[string]kitfile.Rules) {
 // 	// TODO Get rule files from cache?
 // 	isAbsolute := false
 // 	paths, err := repo.FindFiles(pattern, ref, isAbsolute)

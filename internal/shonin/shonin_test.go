@@ -15,7 +15,7 @@ type stubFetcher struct {
 	err   error
 }
 
-func (f *stubFetcher) GetRules() (string, map[string]kitfile.Rules, error) {
+func (f *stubFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 	return f.root, f.rules, f.err
 }
 
