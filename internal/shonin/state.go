@@ -102,6 +102,13 @@ type RuleState struct {
 // ApproverTargetState represents the state of an approver target in the
 // review. It embeds the approver target's configuration by value,
 // preserving the historical snapshot semantics of RuleState.
+//
+// Satisfied is a convenience boolean for rendering and test assertions; the
+// canonical fact of satisfaction is Status == StatusSatisfied, and every
+// constructor of this type keeps the two in sync. All status escalation in
+// the hierarchy (rule, layer, file status) therefore reads Status, never the
+// boolean, so the algorithm has exactly one definition of "unsatisfied":
+// Status != StatusSatisfied.
 type ApproverTargetState struct {
 	kitfile.ApproverTarget
 	SatisfiedCount int
@@ -225,25 +232,22 @@ func (b *ReviewStateBuilder) Resolver() ApproverResolver {
 	return b.resolver
 }
 
-// Summarize converts the review state back to the original evaluation result format for backward compatibility.
-func (rs *ReviewState) Summarize() map[string]EvaluationResult {
-	out := make(map[string]EvaluationResult, len(rs.Files))
-	for file, fs := range rs.Files {
-		var missing []string
-		for _, t := range fs.Required {
-			if !t.IsSatisfied() {
-				missing = append(missing, t.Target)
-			}
-		}
-		out[file] = EvaluationResult{
-			IsApproved:        len(missing) == 0,
-			RequiredApprovers: missing,
+// firstMatching returns the first element of items for which pred holds, or
+// the zero value and false when none do. It is a generic first-match
+// predicate over any state type the hierarchy holds (rules, layers, files,
+// approver targets), so the per-level status escalation and any other
+// "find the first item that matches this test" walk share one helper and
+// one definition of what "matching" means. The canonical unsatisfied test
+// across state levels is Status != StatusSatisfied; a site that looks for a
+// strictly-worse status (for example Unresolved, which beats
+// StatusMissingApprovers) is a severity query and passes its own predicate
+// instead of the canonical one.
+func firstMatching[T any](items []T, pred func(T) bool) (T, bool) {
+	for _, item := range items {
+		if pred(item) {
+			return item, true
 		}
 	}
-	return out
-}
-
-// IsSatisfied returns true if the approver target is satisfied.
-func (ats *ApproverTargetState) IsSatisfied() bool {
-	return ats.SatisfiedCount >= ats.RequiredCount
+	var zero T
+	return zero, false
 }

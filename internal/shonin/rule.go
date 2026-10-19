@@ -87,13 +87,12 @@ func (r *Rule) Execute(
 		}
 	}
 
-	// Determine rule-level status from its approver target states.
+	// Determine rule-level status from its approver target states: the first
+	// unsatisfied target (any status that is not StatusSatisfied) escalates the
+	// rule to the target's own status.
 	ruleStatus := StatusSatisfied
-	for _, at := range approverStates {
-		if !at.Satisfied {
-			ruleStatus = at.Status
-			break
-		}
+	if unsat, ok := firstMatching(approverStates, func(at ApproverTargetState) bool { return at.Status != StatusSatisfied }); ok {
+		ruleStatus = unsat.Status
 	}
 
 	// The snapshot of the configuration captures what was effectively

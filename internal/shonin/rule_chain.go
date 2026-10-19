@@ -208,16 +208,15 @@ func (rc *RuleChain) Execute(
 func statusFromApproverStates(states []ApproverTargetState) Status {
 	fileStatus := StatusSatisfied
 	for _, s := range states {
-		if !s.Satisfied {
+		if s.Status != StatusSatisfied {
 			fileStatus = StatusMissingApprovers
 		}
 	}
-	// An unresolvable target is worse than a missing approval: surface it so
-	// the cause is obvious in the state, mirroring the non-fallback branch.
-	for _, s := range states {
-		if s.Status == StatusUnresolved {
-			return StatusUnresolved
-		}
+	// An unresolved target is worse than a missing approval: the first one
+	// present escalates the state to StatusUnresolved so the cause stays
+	// obvious in the state tree, mirroring the non-fallback branch.
+	if _, ok := firstMatching(states, func(s ApproverTargetState) bool { return s.Status == StatusUnresolved }); ok {
+		return StatusUnresolved
 	}
 	return fileStatus
 }

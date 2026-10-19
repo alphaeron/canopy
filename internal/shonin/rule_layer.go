@@ -93,13 +93,11 @@ func (rl *RuleLayer) Execute(
 		)
 	}
 
-	// Determine layer-level status from its rule states only.
+	// Determine layer-level status from its rule states: the first non-satisfied
+	// rule escalates the layer to that rule's own status.
 	status := StatusSatisfied
-	for _, rs := range state.Rules {
-		if rs.Status != StatusSatisfied {
-			status = rs.Status
-			break
-		}
+	if unsat, ok := firstMatching(state.Rules, func(rs RuleState) bool { return rs.Status != StatusSatisfied }); ok {
+		status = unsat.Status
 	}
 	state.Status = status
 
