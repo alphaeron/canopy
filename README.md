@@ -63,8 +63,6 @@ Each directory in the repository can host a `KIT` file to localize approval rule
         required_count: 1
 ```
 
----
-
 ## Rule Combination
 
 When evaluating a changed target file (e.g., `/src/api/v1/auth.go`), the engine constructs a chain of rules starting from the repository root.
@@ -76,8 +74,6 @@ When evaluating a changed target file (e.g., `/src/api/v1/auth.go`), the engine 
 ### Additional Rules
 * **Scope Exclusion:** A rule block is entirely discarded if `current_directory_only: true` and the evaluated file resides deeper in a nested subdirectory.
 * **The Break Signal:** If any configuration file along the vertical path contains `ignore_parent_dirs: true`, the evaluation chain truncates instantly, throwing away all parent settings above that directory level.
-
----
 
 ## Review Algorithm
 
@@ -112,8 +108,6 @@ Every target occurrence is evaluated independently against the same pool of curr
 
 ### Rule Fallback
 Pruning drops a target only when *zero* active eligible members remain. A rule left with zero active targets is **skipped** — an error condition: the skip is marked on the rule's own state so the hierarchical breakdown remains a complete trace, and a review error is accumulated, which forces the final review state to `error` even when preceding rules, parent rules, or the repository-owner fallback afterwards still satisfy the file.
-
----
 
 ## PR Evaluation
 
