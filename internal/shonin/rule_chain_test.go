@@ -348,6 +348,33 @@ func TestGroupTargetEligibleOnlyThroughAuthorIsPruned(t *testing.T) {
 	}
 }
 
+func TestRuleStateSnapshotsEffectiveCombineStrategy(t *testing.T) {
+	// A corrupt or omitted combine_strategy is remapped to the default
+	// (override) by the algorithm. The historical review state must report
+	// what actually ran, so that rule state snapshots the effective strategy,
+	// never the raw config value.
+	rule := newRule(kitfile.Rule{
+		Name:            "root",
+		CombineStrategy: kitfile.RuleCombineStrategy(0), // invalid sentinel
+		Approvers:       []kitfile.ApproverTarget{approver("team-a", 1)},
+	})
+	ctx := buildContext(approverSet("team-a"), activeAllOwners(), []string{"zowner"})
+	rs := rule.Execute(ctx, &DefaultApproverResolver{}, "/src/x.go", "/", testLogger())
+	if rs.CombineStrategy != kitfile.RuleCombineStrategyOverride {
+		t.Errorf("snapshot combine strategy = %s, want override for an invalid config value", rs.CombineStrategy)
+	}
+	// Raw config values pass through unchanged.
+	valid := newRule(kitfile.Rule{
+		Name:            "src",
+		CombineStrategy: kitfile.RuleCombineStrategyIntersect,
+		Approvers:       []kitfile.ApproverTarget{approver("team-a", 1)},
+	})
+	rs = valid.Execute(ctx, &DefaultApproverResolver{}, "/src/x.go", "/src", testLogger())
+	if rs.CombineStrategy != kitfile.RuleCombineStrategyIntersect {
+		t.Errorf("snapshot combine strategy = %s, want intersect pass-through", rs.CombineStrategy)
+	}
+}
+
 func TestAuthorApprovalIgnoredWhenSelfApproveDisallowed(t *testing.T) {
 	// team-y resolves to [author, bo]. With the default self-approval ban,
 	// only the author has approved: the group must stay unsatisfied and the

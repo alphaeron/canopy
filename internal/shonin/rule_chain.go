@@ -3,6 +3,8 @@ package shonin
 import (
 	"fmt"
 	"log/slog"
+
+	"github.com/alphaeron/kit/internal/kitfile"
 )
 
 // RuleChain maps each changed file to its own localized, ordered rule pipeline.
@@ -257,8 +259,7 @@ func (rc *RuleChain) evaluateFallback(
 				"component", "rule_chain", "phase", "approve",
 				"file", file, "owner", owner, "error", resolveErr)
 			states = append(states, ApproverTargetState{
-				Target:         owner,
-				RequiredCount:  1,
+				ApproverTarget: kitfile.ApproverTarget{Target: owner, RequiredCount: 1},
 				SatisfiedCount: 0,
 				Satisfied:      false,
 				ResolvedBy:     []string{},
@@ -284,8 +285,7 @@ func (rc *RuleChain) evaluateFallback(
 		}
 
 		states = append(states, ApproverTargetState{
-			Target:         owner,
-			RequiredCount:  1,
+			ApproverTarget: kitfile.ApproverTarget{Target: owner, RequiredCount: 1},
 			SatisfiedCount: satisfiedCount,
 			Satisfied:      satisfied,
 			ResolvedBy:     resolved,

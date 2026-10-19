@@ -27,11 +27,10 @@ func (rt *RuleTarget) Execute(ctx EvaluationContext, resolver ApproverResolver) 
 	members, ok := resolver.Resolve(rt.Target, ctx)
 	if !ok {
 		return &ApproverTargetState{
-			Target:        rt.Target,
-			RequiredCount: rt.RequiredCount,
-			ResolvedBy:    []string{},
-			Status:        StatusUnresolved,
-			Reason:        "Could not resolve target to members",
+			ApproverTarget: rt.ApproverTarget,
+			ResolvedBy:     []string{},
+			Status:         StatusUnresolved,
+			Reason:         "Could not resolve target to members",
 		}
 	}
 
@@ -41,11 +40,10 @@ func (rt *RuleTarget) Execute(ctx EvaluationContext, resolver ApproverResolver) 
 	// predicate shared with member-level counting.
 	if !rt.contributes(rt.Target, ctx) {
 		return &ApproverTargetState{
-			Target:        rt.Target,
-			RequiredCount: rt.RequiredCount,
-			ResolvedBy:    []string{},
-			Status:        StatusInactive,
-			Reason:        "Self-approval not allowed for this rule",
+			ApproverTarget: rt.ApproverTarget,
+			ResolvedBy:     []string{},
+			Status:         StatusInactive,
+			Reason:         "Self-approval not allowed for this rule",
 		}
 	}
 
@@ -54,11 +52,10 @@ func (rt *RuleTarget) Execute(ctx EvaluationContext, resolver ApproverResolver) 
 	// only active member is the author under a non-self-approve rule.
 	if !rt.HasAnyEligibleMember(members, ctx) {
 		return &ApproverTargetState{
-			Target:        rt.Target,
-			RequiredCount: rt.RequiredCount,
-			ResolvedBy:    []string{},
-			Status:        StatusInactive,
-			Reason:        "Target is inactive",
+			ApproverTarget: rt.ApproverTarget,
+			ResolvedBy:     []string{},
+			Status:         StatusInactive,
+			Reason:         "Target is inactive",
 		}
 	}
 
@@ -69,8 +66,7 @@ func (rt *RuleTarget) Execute(ctx EvaluationContext, resolver ApproverResolver) 
 		st = StatusMissingApprovers
 	}
 	return &ApproverTargetState{
-		Target:         rt.Target,
-		RequiredCount:  rt.RequiredCount,
+		ApproverTarget: rt.ApproverTarget,
 		SatisfiedCount: count,
 		Satisfied:      count >= rt.RequiredCount,
 		ResolvedBy:     resolved,

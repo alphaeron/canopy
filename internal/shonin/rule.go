@@ -96,15 +96,17 @@ func (r *Rule) Execute(
 		}
 	}
 
+	// The snapshot of the configuration captures what was effectively
+	// applied for this iteration: a corrupt or omitted combine_strategy is
+	// rewritten to the default (override) behavior so the state always
+	// reports what actually ran.
+	appliedRule := r.Rule
+	appliedRule.CombineStrategy = effectiveCombineStrategy(appliedRule.CombineStrategy)
+
 	return RuleState{
-		Pattern:              r.Pattern,
-		Name:                 r.Name,
-		IgnoreParentDirs:     r.IgnoreParentDirs,
-		CombineStrategy:      r.CombineStrategy,
-		CurrentDirectoryOnly: r.CurrentDirectoryOnly,
-		SelfApprove:          r.SelfApprove,
-		Approvers:            approverStates,
-		ResolvedBy:           resolvedBy,
-		Status:               ruleStatus,
+		Rule:       appliedRule,
+		Approvers:  approverStates,
+		ResolvedBy: resolvedBy,
+		Status:     ruleStatus,
 	}
 }

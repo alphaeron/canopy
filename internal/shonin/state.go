@@ -80,23 +80,30 @@ type LayerState struct {
 }
 
 // RuleState represents the state of a single rule in the review.
+// It embeds the rule's configuration by value - a historical snapshot of the
+// rule at the time the algorithm ran for this iteration - so a review state
+// can be traced back to the rule that produced it without duplicating fields.
+// The embedded copy captures the effective configuration that was actually
+// applied, not the raw config: a corrupt or omitted combine_strategy is
+// rewritten to the default (override) so the state is accurate about what
+// ran, even if the config file later changes.
+//
+// The Approvers field shadows the embedded config's approver list; where the
+// type differs (state, not config), read it directly, and the raw
+// configuration target list is still available on Rule.Approvers.
 type RuleState struct {
-	Pattern              string
-	Name                 string
-	IgnoreParentDirs     bool
-	CombineStrategy      kitfile.RuleCombineStrategy
-	CurrentDirectoryOnly bool
-	SelfApprove          bool
-	Approvers            []ApproverTargetState
-	ResolvedBy           []string // individuals/teams that satisfied this rule
-	Status               Status
-	Reason               string
+	kitfile.Rule
+	Approvers  []ApproverTargetState
+	ResolvedBy []string // individuals/teams that satisfied this rule
+	Status     Status
+	Reason     string
 }
 
-// ApproverTargetState represents the state of an approver target in the review.
+// ApproverTargetState represents the state of an approver target in the
+// review. It embeds the approver target's configuration by value,
+// preserving the historical snapshot semantics of RuleState.
 type ApproverTargetState struct {
-	Target         string
-	RequiredCount  int
+	kitfile.ApproverTarget
 	SatisfiedCount int
 	Satisfied      bool
 	ResolvedBy     []string // individuals/teams that contributed to satisfaction
