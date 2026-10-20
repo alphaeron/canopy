@@ -91,3 +91,45 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 
 	return nil
 }
+
+// MarshalYAML serializes the rule dynamically in the format {pattern: { name: ..., ... }}.
+// It automatically handles new fields added to the Rule struct without needing code updates.
+func (r Rule) MarshalYAML() (interface{}, error) {
+	// 1. Create a local type alias to bypass this custom MarshalYAML method
+	// and avoid infinite recursive calling loops.
+	type alias Rule
+
+	// 2. Marshal the aliased struct. The `yaml:"-"` on the Pattern field
+	// will automatically prevent it from leaking into the child node fields.
+	content, err := yaml.Marshal(alias(r))
+	if err != nil {
+		return nil, fmt.Errorf("marshal rule %q fields: %w", r.Pattern, err)
+	}
+
+	// 3. Unmarshal the generated YAML payload into a generic node tree
+	var docNode yaml.Node
+	if err := yaml.Unmarshal(content, &docNode); err != nil {
+		return nil, fmt.Errorf("decode rule %q fields node: %w", r.Pattern, err)
+	}
+
+	// 4. Pivot from the DocumentNode wrapper down to the underlying MappingNode
+	var fieldsNode *yaml.Node
+	if docNode.Kind == yaml.DocumentNode && len(docNode.Content) == 1 {
+		fieldsNode = docNode.Content[0]
+	} else {
+		fieldsNode = &docNode
+	}
+
+	if fieldsNode.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("rule %q did not marshal to a mapping", r.Pattern)
+	}
+
+	// 5. Build and return the wrapper map mapping [Pattern -> Fields]
+	return &yaml.Node{
+		Kind: yaml.MappingNode,
+		Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: r.Pattern},
+			fieldsNode,
+		},
+	}, nil
+}
