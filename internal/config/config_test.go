@@ -15,11 +15,21 @@ func withEnv(t *testing.T, kv map[string]string) {
 	for k, v := range kv {
 		prev, ok := os.LookupEnv(k)
 		if ok {
-			t.Cleanup(func() { os.Setenv(k, prev) })
+			t.Cleanup(func() {
+				if err := os.Setenv(k, prev); err != nil {
+					t.Errorf("restore %s: %v", k, err)
+				}
+			})
 		} else {
-			t.Cleanup(func() { os.Unsetenv(k) })
+			t.Cleanup(func() {
+				if err := os.Unsetenv(k); err != nil {
+					t.Errorf("unset %s: %v", k, err)
+				}
+			})
 		}
-		os.Setenv(k, v)
+		if err := os.Setenv(k, v); err != nil {
+			t.Fatalf("set %s: %v", k, err)
+		}
 	}
 }
 

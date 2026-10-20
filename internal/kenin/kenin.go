@@ -2,7 +2,6 @@ package kenin
 
 import (
 	"log/slog"
-	"regexp"
 	"sort"
 )
 
@@ -25,13 +24,6 @@ func New(src Source, log *slog.Logger) *Engine {
 	return &Engine{Source: src, Log: log}
 }
 
-func (e *Engine) log() *slog.Logger {
-	if e.Log == nil {
-		return slog.Default()
-	}
-	return e.Log
-}
-
 // fileUniverse resolves the file set for the current option state:
 // ChangedFiles when Options.ChangedOnly is true, AllFiles otherwise.
 // Both are sorted before being returned.
@@ -48,10 +40,4 @@ func (e *Engine) fileUniverse(opts Options) ([]string, error) {
 	}
 	sort.Strings(files)
 	return files, nil
-}
-
-// compileRegex caches the regex used to match rule patterns against the
-// user's filter.
-func compileRegex(pattern string) (*regexp.Regexp, error) {
-	return regexp.Compile(pattern)
 }

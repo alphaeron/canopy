@@ -1,18 +1,19 @@
-package kit
+package main
 
 import (
-	"errors"
 	"fmt"
-	"log/slog"
+	"os"
 
-	"github.com/go-git/go-git/v6"
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/gitutil"
 	"github.com/alphaeron/kit/internal/shonin"
+	"github.com/alphaeron/kit/internal/tui"
 )
 
-// rulesGetCmd represents the "rules get" command
+// rulesGetCmd resolves the review rule chain for every file/regex argument.
+// Each arg is the regular expression of the files to analyze, matched
+// against the repository at HEAD exactly as the match/coverage engine
+// consumes it — this is the pure "which rules apply where" projection.
 var rulesGetCmd = &cobra.Command{
 	Use:   "get",
 	Short: "Get review rules for a file/regex",
@@ -21,11 +22,61 @@ a file/pattern matching a set of files.
 
 This way, review requirements can be visualized locally without opening a
 pull request.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		// Each arg in args is a file/regex to get rules for
-		for _, arg := range args {
-			rulesGet(arg)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			args = []string{`.*`}
 		}
+		repo, err := getRepo()
+		if err != nil {
+			return err
+		}
+		ref, err := repo.Head()
+		if err != nil {
+			if repo.HasCommits() {
+				return fmt.Errorf("read HEAD: %w", err)
+			}
+			// No commit yet: no tracked files exist, so the rule chain over
+			// any file set is simply empty.
+			return renderEmptyMatch(cmd)
+		}
+		fetch := shonin.LocalFetcher{Repo: repo}
+		s := shonin.Shonin{
+			Fetch:    &fetch,
+			Resolver: &shonin.DefaultApproverResolver{},
+		}
+
+		mode, _ := resolveOutputMode(cmd)
+		for _, arg := range args {
+			paths, err := repo.FindFiles(arg, ref, false)
+			if err != nil {
+				return fmt.Errorf("find files for %q: %w", arg, err)
+			}
+			ruleChain, err := s.GetRuleChainForFiles(paths)
+			if err != nil {
+				return fmt.Errorf("fetch rules for %q: %w", arg, err)
+			}
+			switch mode {
+			case modeJSON:
+				m := map[string][]string{}
+				for _, file := range paths {
+					for _, layer := range ruleChain.FileChains[file] {
+						for _, rule := range layer.Rules {
+							m[file] = append(m[file], rule.Pattern)
+						}
+					}
+				}
+				if err := tui.JSONEncoder(os.Stdout, m); err != nil {
+					return err
+				}
+			case modeTUI:
+				if err := tui.RunTree(tui.NewTreeFromScopes(scopesByRule(ruleChain))); err != nil {
+					return fmt.Errorf("run tree view: %w", err)
+				}
+			default:
+				shonin.PrintRuleChain(ruleChain)
+			}
+		}
+		return nil
 	},
 }
 
@@ -33,62 +84,13 @@ func init() {
 	rulesCmd.AddCommand(rulesGetCmd)
 }
 
-func rulesGet(pattern string) {
-	log := slog.Default()
-	repo, err := getRepo()
-	if err == nil {
-		// Successfully obtained the repository instance
-		fmt.Println("Successfully opened repository root.")
-	} else {
-		return
+// renderEmptyMatch outputs the current command's canonical "nothing matched"
+// payload for a repository that has no commit yet, where no file exists to
+// carry a rule. The JSON form is an empty mapping and the table form is no
+// rows, matching what shonin produces for a rule-less tree.
+func renderEmptyMatch(cmd *cobra.Command) error {
+	if m, _ := resolveOutputMode(cmd); m == modeJSON {
+		return tui.JSONEncoder(os.Stdout, map[string][]string{})
 	}
-
-	// Print the current HEAD reference.
-	ref, err := repo.Head()
-	if err == nil {
-		fmt.Printf("Current HEAD: %s\n", ref.Hash())
-	} else {
-		log.Error("rules get: failed to read HEAD",
-			"component", "cmd", "pattern", pattern, "error", err)
-		return
-	}
-
-	isAbsolute := false
-	paths, err := repo.FindFiles(pattern, ref, isAbsolute)
-	if err == nil {
-		fetch := shonin.LocalFetcher{Repo: repo}
-		// Local execution uses the default pass-through resolver.
-		s := shonin.Shonin{
-			Fetch:    &fetch,
-			Resolver: &shonin.DefaultApproverResolver{},
-		}
-		ruleChain, err := s.GetRuleChainForFiles(paths)
-		if err != nil {
-			log.Error("rules get: fetching rules failed",
-				"component", "cmd", "pattern", pattern, "error", err)
-			return
-		}
-		shonin.PrintRuleChain(ruleChain)
-	} else {
-		log.Error("rules get: failed to find files",
-			"component", "cmd", "pattern", pattern, "error", err)
-	}
-}
-
-func getRepo() (*gitutil.KitGitRepository, error) {
-	// "." targets the current working directory command is run from
-	repo, err := git.PlainOpenWithOptions(".", &git.PlainOpenOptions{
-		DetectDotGit: true,
-	})
-
-	if err != nil {
-		if errors.Is(err, git.ErrRepositoryNotExists) {
-			fmt.Println("Not a git repository (or any of the parent directories).")
-		}
-		fmt.Printf("Failed to open repository: %v\n", err)
-		return nil, err
-	}
-
-	kitrepo := gitutil.KitGitRepository{Repository: *repo}
-	return &kitrepo, nil
+	return nil
 }

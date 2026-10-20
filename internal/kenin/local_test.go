@@ -46,6 +46,34 @@ func newScratchRepo(t *testing.T, files map[string]string) (string, *gitutil.Kit
 	return dir, &gitutil.KitGitRepository{Repository: *repo}
 }
 
+// TestLocalNoCommitYieldsEmptyUniverses pins the no-commit UX: a plain-init
+// repository with no commit reports an empty AllFiles and ChangedFiles, with
+// no error, so `kit match` and `kit coverage` run cleanly right after `git
+// init` rather than failing on the unborn HEAD.
+func TestLocalNoCommitYieldsEmptyUniverses(t *testing.T) {
+	repo, err := git.PlainInit(t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("PlainInit: %v", err)
+	}
+	src := NewLocalSource(&gitutil.KitGitRepository{Repository: *repo}, nil, nil)
+
+	got, err := src.AllFiles()
+	if err != nil {
+		t.Fatalf("AllFiles (no commit): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("AllFiles (no commit) = %v, want empty", got)
+	}
+
+	changed, err := src.ChangedFiles()
+	if err != nil {
+		t.Fatalf("ChangedFiles (no commit): %v", err)
+	}
+	if len(changed) != 0 {
+		t.Errorf("ChangedFiles (no commit) = %v, want empty", changed)
+	}
+}
+
 func TestLocalAllFilesMatchesCommittedSet(t *testing.T) {
 	_, repo := newScratchRepo(t, map[string]string{
 		"a.go":     "one",

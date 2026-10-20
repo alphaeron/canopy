@@ -45,7 +45,9 @@ func (f *fakeGitHubAPI) serve(t *testing.T) *httptest.Server {
 				Type string `json:"type"`
 			}{e.Path, e.Sha, e.Type})
 		}
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode tree: %v", err)
+		}
 	})
 	mux.HandleFunc("/repos/o/r/git/blobs/", func(w http.ResponseWriter, r *http.Request) {
 		sha := r.URL.Path[len("/repos/o/r/git/blobs/"):]
@@ -55,11 +57,13 @@ func (f *fakeGitHubAPI) serve(t *testing.T) *httptest.Server {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"content":  base64.StdEncoding.EncodeToString(data),
 			"encoding": "base64",
 			"sha":      sha,
-		})
+		}); err != nil {
+			t.Errorf("encode blob: %v", err)
+		}
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

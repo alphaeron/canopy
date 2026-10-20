@@ -114,9 +114,7 @@ func (e *Engine) Coverage(opts Options) (*CoverageReport, error) {
 	return report, nil
 }
 
-// setKeys returns the key set of a boolean-keyed map.
-func setKeys(set map[string]bool) []string { return sortedKeys(set) }
-
+// coveredKeys returns the key set of a boolean-keyed map.
 func coveredKeys(b map[string]bool) []string {
 	var out []string
 	for k := range b {

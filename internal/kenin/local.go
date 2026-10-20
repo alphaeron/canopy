@@ -1,6 +1,7 @@
 package kenin
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"sort"
@@ -57,6 +58,12 @@ func (l *LocalSource) KitFiles() (map[string]kitfile.Rules, error) {
 // for matching and coverage. The ".*" regex matches every path: the list is
 // sorted for deterministic traversal downstream.
 func (l *LocalSource) AllFiles() ([]string, error) {
+	// A repository with no commit yet has no tracked files: report an empty
+	// universe rather than a missing-HEAD error, so `kit match` is usable
+	// right after `git init`.
+	if !l.Repo.HasCommits() {
+		return []string{}, nil
+	}
 	ref, err := l.Repo.Head()
 	if err != nil {
 		return nil, err
@@ -73,6 +80,13 @@ func (l *LocalSource) AllFiles() ([]string, error) {
 // to HEAD: added, modified, deleted, and untracked files, per go-git's
 // status codes. This is the universe for `match --changed`.
 func (l *LocalSource) ChangedFiles() ([]string, error) {
+	// The worktree's diff is against HEAD specifically, and `wt.Status()`
+	// errors rather than returning an empty result when HEAD does not exist
+	// yet. Treat that as "nothing has changed": there is no tracked revision
+	// to be different from, so the changed-file set is empty by definition.
+	if !l.Repo.HasCommits() {
+		return []string{}, nil
+	}
 	wt, err := l.Repo.Worktree()
 	if err != nil {
 		return nil, err
@@ -123,10 +137,13 @@ func (l *LocalSource) worktreeContent(path string) (string, error) {
 		}
 		return "", gitutil.WrapReadError(path, err)
 	}
-	defer f.Close()
 	dat, err := io.ReadAll(f)
+	closeErr := f.Close()
 	if err != nil {
 		return "", gitutil.WrapReadError(path, err)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("close %s: %w", path, closeErr)
 	}
 	return string(dat), nil
 }
