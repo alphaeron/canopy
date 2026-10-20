@@ -53,9 +53,13 @@ func getFileRuleLayers(
 	// A leading "/" (absolute input paths) would visit the root layer twice
 	// through filepath.Join's empty-element handling, duplicating the root
 	// requirements. Trailing empty segments are kept: they name the file's
-	// own directory layer.
+	// own directory layer. A relative root-level file (e.g. "main.go") would
+	// leave an empty part and skip every layer; keep its single empty
+	// element so the root layer is visited exactly once.
 	if len(subdirParts) > 0 && subdirParts[0] == "" {
-		subdirParts = subdirParts[1:]
+		if len(subdirParts) > 1 {
+			subdirParts = subdirParts[1:]
+		}
 	}
 
 	// Loop down from the repo root to the target file's depth.
@@ -95,8 +99,9 @@ func getFileRuleLayers(
 
 			// Constraint: Scope Exclusion (current_directory_only)
 			// Discard the rule if it is scoped locally, but this current loop layer
-			// is a parent folder higher up than the file's literal folder layer.
-			if rule.CurrentDirectoryOnly && i < len(subdirParts) {
+			// is a strict ancestor of the file's own directory — the layer for
+			// the file's immediate directory itself still applies.
+			if rule.CurrentDirectoryOnly && i < len(subdirParts)-1 {
 				continue
 			}
 

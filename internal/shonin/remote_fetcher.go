@@ -1,105 +1,124 @@
 package shonin
 
-// func Execute() (string, map[string]kitfile.Rules) {
-// 	// TODO Get rule files from cache?
-// 	isAbsolute := false
-// 	paths, err := repo.FindFiles(pattern, ref, isAbsolute)
-// 	if err == nil {
-// 		for _, path := range paths {
-// 			fmt.Println(path)
-// 			rules := rulesForFile(repoRoot, path)
-// 			for _, rule := range rules {
-// 				printRule(rule)
-// 			}
-// 		}
-// 	}
-// }
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"log/slog"
+	"regexp"
 
-// func rulesForFile(repoRoot string, fileName string) kitfile.Rules {
-// 	var rules kitfile.Rules
+	"github.com/google/go-github/v71/github"
+	"gopkg.in/yaml.v3"
 
-// 	subdir, _ := filepath.Split(fileName)
-// 	subdirParts := strings.Split(subdir, string(os.PathSeparator))
+	"github.com/alphaeron/kit/internal/kitfile"
+)
 
-// 	for i := range subdirParts {
-// 		f := path.Join(repoRoot, path.Join(subdirParts[:i]...), "KIT")
-// 		exists, err := fileExistsCaseSensitive(f)
-// 		if err != nil || !exists {
-// 			continue
-// 		}
-// 		dat, err := os.ReadFile(f)
-// 		if err != nil {
-// 			fmt.Printf("Unable to read file '%s'.\nCannot get rules for '%s'.\n", f, fileName)
-// 			return nil
-// 		}
-// 		var tmpRules kitfile.Rules
-// 		parseerr := yaml.Unmarshal(dat, &tmpRules)
-// 		if parseerr != nil {
-// 			fmt.Printf("error while reading '%s': %v\nCannot get rules.\n", fileName, parseerr)
-// 			return nil
-// 		}
-// 		for _, rule := range tmpRules {
-// 			isMatch, err := regexp.MatchString(rule.Pattern, fileName)
-// 			if err == nil {
-// 				if isMatch {
-// 					rules = append(rules, rule)
-// 				}
-// 			} else {
-// 				fmt.Printf("error while checking rule match for '%s': %v\nCannot get rules.\n", fileName, parseerr)
-// 				return nil
-// 			}
-// 		}
-// 	}
-// 	return rules
-// }
+// RemoteFetcher fetches KIT rules for a remote repository through the GitHub
+// REST API by listing the tree at the pull request's base revision and reading
+// each KIT file as a blob. It is the remote counterpart of LocalFetcher on the
+// same Fetcher seam, so the sift and approve phases run the same regardless of
+// whether the rules came from a local worktree or a GitHub tree.
+type RemoteFetcher struct {
+	// Client is the authenticated GitHub client. The caller owns the token
+	// wiring (installation token, bot token, or a plain bearer): this type
+	// only consumes whatever is wired in, so the fetcher stays
+	// transport-agnostic.
+	Client *github.Client
+	// Owner and name of the remote repository.
+	Owner string
+	Repo  string
+	// BaseSHA is the tree to fetch, normally the pull request's base revision
+	// so rules are evaluated against what the reviewers will merge, not what
+	// the author is currently pushing.
+	BaseSHA string
+	// Log receives structured diagnostic output; defaults to slog.Default().
+	Log *slog.Logger
+}
 
-// // Checks if path exists, is a regular file, and matches exact character casing on disk.
-// func fileExistsCaseSensitive(path string) (bool, error) {
-// 	info, err := os.Stat(path)
-// 	if err != nil {
-// 		if os.IsNotExist(err) {
-// 			return false, nil
-// 		}
-// 		return false, err
-// 	}
+// Execute runs the fetch phase for a remote repository: it lists the tree at
+// BaseSHA, locates every KIT file (same "KIT" pattern match as LocalFetcher),
+// reads each file's contents as a single blob, and parses it into a rule list.
+// Any per-file read or parse error is accumulated into the returned error;
+// the partial result is still provided so callers can report which files
+// failed rather than dropping the entire fetch.
+func (rf *RemoteFetcher) Execute() (string, map[string]kitfile.Rules, error) {
+	log := rf.log()
+	rules := make(map[string]kitfile.Rules)
+	ctx := context.Background()
 
-// 	if info.IsDir() {
-// 		return false, nil
-// 	}
+	tree, _, err := rf.Client.Git.GetTree(ctx, rf.Owner, rf.Repo, rf.BaseSHA, true)
+	if err != nil {
+		log.Error("kit: failed to list base tree",
+			"component", "fetcher", "phase", "fetch", "owner", rf.Owner,
+			"repo", rf.Repo, "base_sha", rf.BaseSHA, "error", err)
+		return "", rules, fmt.Errorf("list base tree %s: %w", rf.BaseSHA, err)
+	}
 
-// 	// Verify exact casing by reading parent directory
-// 	dir, expectedFile := filepath.Split(path)
-// 	if dir == "" {
-// 		dir = "."
-// 	} else {
-// 		dir = filepath.Clean(dir)
-// 	}
+	kitFilePattern := regexp.MustCompile("KIT")
+	var fetchErrors []error
+	kitFileCount := 0
+	for _, entry := range tree.Entries {
+		if entry.GetType() != "blob" {
+			continue
+		}
+		path := entry.GetPath()
+		if !kitFilePattern.MatchString(path) {
+			continue
+		}
+		kitFileCount++
+		data, err := rf.fetchBlobContents(ctx, entry.GetSHA())
+		if err != nil {
+			fetchErrors = append(fetchErrors, fmt.Errorf("fetch %s: %w", path, err))
+			continue
+		}
+		fileRules := kitfile.Rules{}
+		if err := yaml.Unmarshal(data, &fileRules); err != nil {
+			fetchErrors = append(fetchErrors, fmt.Errorf("parse KIT file %s: %w", path, err))
+			continue
+		}
+		rules[path] = fileRules
+		log.Info("kit: loaded rules from remote KIT file",
+			"component", "fetcher", "phase", "fetch", "repo", rf.Repo, "path", path)
+	}
 
-// 	entries, err := os.ReadDir(dir)
-// 	if err != nil {
-// 		return false, err
-// 	}
+	if kitFileCount == 0 {
+		log.Error("kit: no KIT files found at base revision",
+			"component", "fetcher", "phase", "fetch", "repo", rf.Repo, "base_sha", rf.BaseSHA)
+	}
 
-// 	for _, entry := range entries {
-// 		if !entry.IsDir() && entry.Name() == expectedFile {
-// 			return true, nil
-// 		}
-// 	}
+	return "", rules, errors.Join(fetchErrors...)
+}
 
-// 	return false, nil
-// }
+// fetchBlobContents reads a single git blob from the repository and returns
+// its raw bytes for parsing. The git blob endpoint returns contents
+// base64-encoded under the "base64" encoding; the empty-encoding field is the
+// raw passthrough some API variants use.
+func (rf *RemoteFetcher) fetchBlobContents(ctx context.Context, sha string) ([]byte, error) {
+	blob, _, err := rf.Client.Git.GetBlob(ctx, rf.Owner, rf.Repo, sha)
+	if err != nil {
+		return nil, fmt.Errorf("get blob %s: %w", sha, err)
+	}
+	switch blob.GetEncoding() {
+	case "base64":
+		data, err := base64.StdEncoding.DecodeString(blob.GetContent())
+		if err != nil {
+			return nil, fmt.Errorf("decode blob %s: %w", sha, err)
+		}
+		return data, nil
+	case "":
+		return []byte(blob.GetContent()), nil
+	default:
+		return nil, fmt.Errorf("unsupported blob %s encoding %q", sha, blob.GetEncoding())
+	}
+}
 
-// func printRule(rule kitfile.Rule) {
-// 	// Verify the results
-// 	fmt.Printf("Pattern:              %s\n", rule.Pattern)
-// 	fmt.Printf("Name:                 %s\n", rule.Name)
-// 	fmt.Printf("IgnoreParentDirs:     %t\n", rule.IgnoreParentDirs)
-// 	fmt.Printf("CombineStrategy:      %s\n", rule.CombineStrategy)
-// 	fmt.Printf("CurrentDirectoryOnly: %t\n", rule.CurrentDirectoryOnly)
-// 	fmt.Printf("SelfApprove:          %t\n", rule.SelfApprove)
-// 	fmt.Printf("Approvers:\n")
-// 	for _, approver := range rule.Approvers {
-// 		fmt.Printf("\t%s\n", approver)
-// 	}
-// 	fmt.Println("")
-// }
+// log returns the configured logger or the default one.
+func (rf *RemoteFetcher) log() *slog.Logger {
+	if rf.Log != nil {
+		return rf.Log
+	}
+	return slog.Default()
+}
+
+var _ Fetcher = (*RemoteFetcher)(nil)
