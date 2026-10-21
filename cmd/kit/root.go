@@ -42,7 +42,7 @@ separate binary, not a subcommand here).`,
 			config.SetVerbose(true)
 		}
 		if cfg.Path != "" {
-			slog.Info("using config file", "component", "config", "path", cfg.Path)
+			slog.Debug("using config file", "component", "config", "path", cfg.Path)
 		}
 		// The kit CLI is a local tool: it does not need the GitHub app
 		// credentials, but loading them is harmless and keeps the two

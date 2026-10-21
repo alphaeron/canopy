@@ -88,7 +88,7 @@ func (rc *RuleChain) Execute(
 
 			events.AddEvent("approve", file, layer.DirectoryPath, "", layerState.Status,
 				fmt.Sprintf("Processed %d rule(s) in layer %s", len(layerState.Rules), layer.DirectoryPath))
-			log.Debug("approve: processed rule layer",
+			log.Info("approve: processed rule layer",
 				"component", "rule_chain", "phase", "approve",
 				"file", file, "layer", layer.DirectoryPath,
 				"rules", len(layerState.Rules), "status", layerState.Status)
@@ -159,7 +159,7 @@ func (rc *RuleChain) Execute(
 		// StatusMissingApprovers.
 		fileStatus := statusFromApproverStates(requiredApprovers)
 
-		log.Debug("approve: file evaluated",
+		log.Info("approve: file evaluated",
 			"component", "rule_chain", "phase", "approve",
 			"file", file, "status", fileStatus, "required", len(requiredApprovers))
 

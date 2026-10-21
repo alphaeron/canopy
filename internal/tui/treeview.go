@@ -4,120 +4,87 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tree "charm.land/bubbles/v2/tree"
+	tea "charm.land/bubbletea/v2"
 )
 
-// TreeView renders a hierarchy as a text tree and wraps it in a scrollable
-// viewport. It is the default view for anything that is a tree, such as a
-// rule chain (rules get) and the grouped scope tree (match --by-scope).
+// TreeView renders a scope → files hierarchy through the shared frame: a bold
+// header strip, the tree inside a rounded padded panel, and a status strip
+// whose hotkeys drive the tree. The tree itself has no border of its own —
+// the frame supplies it, so the ruled edges always span the terminal and
+// track resizes. The title is the owning command's name.
 type TreeView struct {
-	vp    viewport.Model
-	lines []string
+	model  tree.Model
+	title  string
+	scopes int
+	files  int
+	width  int
+	height int
 }
 
-// ScopeNode is one node in a tree. Title is the label for that node; Kids is
-// a map of child name to node. The map is sorted before rendering so the
-// tree is deterministic.
-type ScopeNode struct {
-	Title string
-	Kids  map[string]*ScopeNode
-}
-
-// NewTreeFromScopes builds the two-level tree the commands need: at the top
-// are scopes (rules), and under each scope is the list of files matched.
-// Init returns no commands: the tree is a pure view, scrolled by the viewport.
+// Init returns no commands: the tree needs none until a key arrives.
 func (t *TreeView) Init() tea.Cmd { return nil }
 
+// NewTreeFromScopes builds the two-level tree the commands need: at the top
+// are scopes (rules), and under each scope is the list of files it matched.
+// Scopes are expanded by default so the full match picture is visible, and
+// both scopes and files are sorted so the layout is deterministic.
 func NewTreeFromScopes(scopes map[string][]string) *TreeView {
-	tree := &TreeView{}
-	rootNode := make(map[string]*ScopeNode)
-	keys := make([]string, 0, len(scopes))
+	root := tree.Root("kit · rules")
+	files := 0
+	scopeKeys := make([]string, 0, len(scopes))
 	for k := range scopes {
-		keys = append(keys, k)
+		scopeKeys = append(scopeKeys, k)
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		children := make(map[string]*ScopeNode)
-		for _, f := range scopes[k] {
-			children[f] = &ScopeNode{Title: f}
+	sort.Strings(scopeKeys)
+	for _, scope := range scopeKeys {
+		node := tree.Root(scope)
+		matched := append([]string(nil), scopes[scope]...)
+		sort.Strings(matched)
+		for _, f := range matched {
+			node.Child(f)
 		}
-		rootNode[k] = &ScopeNode{Title: k, Kids: children}
+		node.Open() // expand each scope on first render
+		root.Child(node)
+		files += len(matched)
 	}
-	tree.lines = buildTreeLines(rootNode)
-	tree.vp = viewport.New(60, 25)
-	tree.vp.SetContent(styleTree(linesToText(tree.lines)))
-	return tree
+	return &TreeView{
+		model:  tree.New(root, contentWidth(60), contentHeight(25)),
+		title:  "kit · rules",
+		scopes: len(scopes),
+		files:  files,
+	}
 }
 
-// buildTreeLines walks the map and emits one line per node. The top-level
-// scopes use a "├" branch; files under a scope use an indented "│  " gutter
-// and a "   └──" bullet, in sorted order.
-func buildTreeLines(nodes map[string]*ScopeNode) []string {
-	lines := []string{}
-	keys := sortedNodeKeys(nodes)
-	for i, k := range keys {
-		n := nodes[k]
-		last := i == len(keys)-1
-		branch := "│   "
-		if last {
-			branch = "    "
-		}
-		lines = append(lines, branch+styleTree(n.Title)+" "+styleLeaf(len(n.Kids)))
-		fileKeys := sortedNodeKeys(n.Kids)
-		for j, fk := range fileKeys {
-			lastF := j == len(fileKeys)-1
-			cbranch := "    ├── "
-			if lastF {
-				cbranch = "    └── "
-			}
-			lines = append(lines, cbranch+n.Kids[fk].Title)
-		}
-	}
-	return lines
-}
-
-func sortedNodeKeys(nodes map[string]*ScopeNode) []string {
-	keys := make([]string, 0, len(nodes))
-	for k := range nodes {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func linesToText(lines []string) string {
-	b := ""
-	for i, l := range lines {
-		if i > 0 {
-			b += "\n"
-		}
-		b += l
-	}
-	return b
-}
-
-func (t *TreeView) View() string { return t.vp.View() }
-func (t *TreeView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if k, ok := msg.(tea.KeyMsg); ok && (k.String() == "q" || k.String() == "esc") {
-		return t, tea.Quit
-	}
-	model, _ := t.vp.Update(msg)
-	t.vp = model
-	return t, nil
-}
-
-func styleTree(s string) string { return lipgloss.NewStyle().Bold(true).Render(s) }
-func styleLeaf(count int) string {
-	if count == 0 {
-		return lipgloss.NewStyle().Faint(true).Render("(none)")
-	}
-	return lipgloss.NewStyle().Faint(true).Render(fmt.Sprintf("(%d file(s))", count))
-}
-
-// RunTree runs a TreeView and returns on quit.
-func RunTree(tree *TreeView) error {
-	_, err := tea.NewProgram(tree).Run()
+// RunTree runs the tree view and returns on quit.
+func RunTree(tv *TreeView) error {
+	_, err := tea.NewProgram(tv).Run()
 	return err
+}
+
+// View draws the tree inside the shared frame: the frame's strips and
+// rounded panel supply every edge, and the inner padding keeps the nodes off
+// the rules.
+func (t *TreeView) View() tea.View {
+	context := fmt.Sprintf("%d scope(s) · %d file(s)", t.scopes, t.files)
+	return tea.NewView(frame(t.title, context, "enter expand · q quit", t.width, t.height, t.model.View()))
+}
+
+// Update handles keys: "q" and "esc" quit; the other keys are routed to the
+// tree model for navigation. WindowSizeMsg refits the tree to the panel: the
+// frame claims two columns and four rows for its own strips and rules.
+func (t *TreeView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch k := msg.(type) {
+	case tea.KeyPressMsg:
+		if k.String() == "q" || k.String() == "esc" {
+			return t, tea.Quit
+		}
+	case tea.WindowSizeMsg:
+		t.width = k.Width
+		t.height = k.Height
+		t.model.SetSize(contentWidth(k.Width), contentHeight(k.Height))
+	}
+	model, cmd := t.model.Update(msg)
+	t.model = model
+	return t, cmd
 }

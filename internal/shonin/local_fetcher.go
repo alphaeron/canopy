@@ -45,7 +45,7 @@ func (lf *LocalFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 			"component", "fetcher", "phase", "fetch", "repo_root", repoRoot, "error", err)
 		return repoRoot, rules, fmt.Errorf("read repository HEAD: %w", err)
 	}
-	log.Info("kit: resolved repository HEAD",
+	log.Debug("kit: resolved repository HEAD",
 		"component", "fetcher", "phase", "fetch", "repo_root", repoRoot, "ref", ref.Hash())
 
 	isAbsolute := false
@@ -58,7 +58,7 @@ func (lf *LocalFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 
 	var fetchErrors []error
 	for _, path := range paths {
-		log.Info("kit: loading rules from KIT file",
+		log.Debug("kit: loading rules from KIT file",
 			"component", "fetcher", "phase", "fetch", "path", path)
 		fileRules, err := getRulesForKitFile(repoRoot, path, log)
 		if err != nil {
