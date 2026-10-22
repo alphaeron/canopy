@@ -83,7 +83,5 @@ func violationText(violations map[string][]error) map[string][]string {
 
 func init() {
 	validateCmd.Flags().String("file", "", "validate only this rules file (path from the repository root, or its directory)")
-	validateCmd.Flags().Bool("all", false, "validate every rules file")
-	cobra.CheckErr(validateCmd.Flags().MarkDeprecated("all", "every rules file is validated by default; use --file to narrow"))
 	rootCmd.AddCommand(validateCmd)
 }

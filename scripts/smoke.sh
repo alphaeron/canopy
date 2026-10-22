@@ -23,7 +23,7 @@ fail() { echo "smoke: FAIL: $1" >&2; exit 1; }
 # --- 1. no-commit repo degrades to empty universes, no error -------------
 printf 'package main\n' > main.go
 printf 'package api\n' > src/api/h.go
-$BIN validate --all >/dev/null   # must not error even before the first commit
+$BIN validate >/dev/null   # must not error even before the first commit
 
 # --- 2. init scaffolds a KIT file and a rule ------------------------------
 $BIN init --pattern '.*\.go' --name 'go review' --approver "team/go" --approver "1" --json \
@@ -33,7 +33,7 @@ grep -q "name: go review" KIT || fail "init KIT content"
 git add -A && git commit -qm init
 
 # --- 3. validate ----------------------------------------------------------
-$BIN validate --all | grep -q "are valid" || fail "validate --all"
+$BIN validate | grep -q "are valid" || fail "validate"
 
 # --- 4. rules list / get --------------------------------------------------
 $BIN rules list --json | grep -q '"pattern": ".*\\\\\.go"' || fail "rules list --json"
@@ -58,12 +58,12 @@ $BIN review 'main\.go' | grep -q "^Overall: missing approvers" || fail "review t
 $BIN rules files --json | grep -q '"KIT"' || fail "rules files --json"
 
 # --- 8. validate flags a malformed rule and exits nonzero -----------------
-# The malformed file must be tracked before validate --all can see it: the
-# command walks the committed tree, not the working directory.
+# validate reads every rules file in the working tree, so the malformed one
+# fails it.
 mkdir -p src/kit-bad
 printf '.*\\(unclosed:\n  name: bad\n' > src/kit-bad/KIT
 git add -A && git commit -qm "add malformed rule"
-if $BIN validate --all >/dev/null 2>&1; then fail "validate should fail on malformed rule"; fi
+if $BIN validate >/dev/null 2>&1; then fail "validate should fail on malformed rule"; fi
 # Every command that loads KIT files fails closed on a malformed one, so drop
 # it before exercising the rest of the surface.
 git rm -q src/kit-bad/KIT && git commit -qm "drop malformed rule"

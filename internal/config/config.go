@@ -57,18 +57,6 @@ type GitHub struct {
 	WebhookSecret string `mapstructure:"webhook_secret"`
 }
 
-// legacyKey is a deprecated key and the key that replaced it.
-type legacyKey struct{ old, key string }
-
-// legacyKeys are the deprecated flat keys. A legacy key still configures its
-// replacement when the replacement is not set itself, with a deprecation
-// warning.
-var legacyKeys = []legacyKey{
-	{old: "github_app_id", key: "github.app_id"},
-	{old: "github_private_key", key: "github.private_key"},
-	{old: "webhook_hmac_secret", key: "github.webhook_secret"},
-}
-
 // Load resolves configuration from, in decreasing precedence: environment
 // variables named with brand.EnvPrefix, a file passed explicitly (the CLI's
 // --config), the file named by brand.EnvConfig, then brand.ConfigName in
@@ -96,16 +84,7 @@ func Load(explicitPath string) (*Config, error) {
 	}
 
 	v.SetDefault("serve_addr", ":8080")
-	keys := configKeys(reflect.TypeFor[Config](), "")
-	for _, l := range legacyKeys {
-		// A legacy key whose variable is also its replacement's (as
-		// KIT_GITHUB_APP_ID is) needs no binding of its own, and binding it
-		// would warn about a variable that is not deprecated.
-		if envName(l.old) != envName(l.key) {
-			keys = append(keys, l.old)
-		}
-	}
-	for _, key := range keys {
+	for _, key := range configKeys(reflect.TypeFor[Config](), "") {
 		if err := v.BindEnv(key, envName(key)); err != nil {
 			return nil, err
 		}
@@ -126,16 +105,6 @@ func Load(explicitPath string) (*Config, error) {
 		}
 	}
 
-	var deprecated []legacyKey
-	for _, l := range legacyKeys {
-		if v.IsSet(l.old) {
-			deprecated = append(deprecated, l)
-			if !v.IsSet(l.key) {
-				v.Set(l.key, v.Get(l.old))
-			}
-		}
-	}
-
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
@@ -145,10 +114,6 @@ func Load(explicitPath string) (*Config, error) {
 	}
 
 	slog.SetDefault(loggerFor(cfg.Verbose, os.Stderr))
-	for _, l := range deprecated {
-		slog.Warn("deprecated configuration key; use its replacement",
-			"component", "config", "key", l.old, "replacement", l.key)
-	}
 	cfg.Path = v.ConfigFileUsed()
 	return &cfg, nil
 }

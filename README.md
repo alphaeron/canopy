@@ -177,5 +177,3 @@ github:
     ...
   webhook_secret: "..."
 ```
-
-The flat keys `github_app_id`, `github_private_key`, and `webhook_hmac_secret` (and `KIT_WEBHOOK_HMAC_SECRET`) are deprecated: they still configure their replacements, with a warning, when the replacement is not set.

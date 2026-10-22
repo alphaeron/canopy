@@ -122,7 +122,5 @@ func strategyName(r rulesfile.Rule) string {
 func init() {
 	rulesListCmd.RunE = runRulesList
 	rulesListCmd.Flags().String("file", "", "list only this rules file (path from the repository root, or its directory)")
-	rulesListCmd.Flags().Bool("all", false, "list every rules file")
-	cobra.CheckErr(rulesListCmd.Flags().MarkDeprecated("all", "every rules file is listed by default; use --file to narrow"))
 	rulesCmd.AddCommand(rulesListCmd)
 }
