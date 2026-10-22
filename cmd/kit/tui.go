@@ -17,26 +17,37 @@ import (
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// The TUI mirrors the command tree: every read-only command is a route
-// whose options form (o) offers exactly the command's arguments and flags,
-// derived from its cobra definition. The home page and command palette list
-// each command once, with default values; running a command on a terminal
-// opens the TUI on its route with the given values. Both paths load data
-// through the same functions, so the CLI and the TUI take the same inputs
-// and show the same results. Mutating commands (init, rules add/edit/remove)
-// keep their prompts on the CLI and are actions on the rules page.
+// The TUI mirrors the command tree: every command `kit --help` lists is a
+// route (see routeFor) whose options form (o) offers exactly the command's
+// arguments and flags, derived from its cobra definition. The home page and
+// command palette list each command once, with default values; running a
+// read-only command on a terminal opens the TUI on its route with the given
+// values. A command that changes something (init, rules add/edit/remove) is
+// a Run route: its options form is the command line, and submitting it runs
+// the command. Both paths go through the same functions, so the CLI and the
+// TUI take the same inputs and have the same effects. The root's persistent
+// flags are the session's, not a command's: --config and --verbose apply to
+// the whole TUI, and --json is the alternative to it.
 
-// appRoutes is the home page and command palette: one route per command.
+// appRoutes is the home page and command palette: one route per command, in
+// `kit --help` order.
 func appRoutes() []tui.Route {
-	var none tui.Values
-	return []tui.Route{
-		matchRoute(none),
-		coverageRoute(none),
-		rulesListRoute(none),
-		rulesGetRoute(none),
-		rulesFilesRoute(none),
-		validateRoute(none),
+	// Execute adds the built-in help and completion commands when it runs;
+	// adding them here too (both are idempotent) lists them regardless.
+	rootCmd.InitDefaultHelpCmd()
+	rootCmd.InitDefaultCompletionCmd()
+	var routes []tui.Route
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range visibleCommands(c) {
+			if r, ok := routeFor(sub, tui.Values{}); ok {
+				routes = append(routes, r)
+			}
+			walk(sub)
+		}
 	}
+	walk(rootCmd)
+	return routes
 }
 
 // openTUI deep-links into the TUI at r. The page is loaded first so a load
@@ -52,11 +63,17 @@ func openTUI(cmd *cobra.Command, r tui.Route) error {
 }
 
 // valuesFrom is a CLI invocation as route values: its arguments and every
-// command flag the user set.
+// command flag the user set. A repeatable flag's values are joined as one
+// comma-separated value, which is how pflag reads it back.
 func valuesFrom(cmd *cobra.Command, args []string) tui.Values {
 	v := tui.Values{Args: slices.Clone(args), Flags: map[string]string{}}
 	cmd.LocalNonPersistentFlags().VisitAll(func(f *pflag.Flag) {
-		if f.Changed {
+		if !f.Changed {
+			return
+		}
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			v.Flags[f.Name] = joinList(sv.GetSlice())
+		} else {
 			v.Flags[f.Name] = f.Value.String()
 		}
 	})
@@ -78,6 +95,7 @@ func commandRoute(cmd *cobra.Command, v tui.Values, load func(context.Context, t
 // choiceFlags are the flags whose values the options form offers as a list
 // instead of free text.
 var choiceFlags = map[string]func(context.Context) ([]string, error){
+	"strategy": staticChoices("union", "override", "intersect"),
 	"file": func(context.Context) ([]string, error) {
 		s, err := openKitSet()
 		if err != nil {
@@ -94,9 +112,26 @@ var choiceFlags = map[string]func(context.Context) ([]string, error){
 	},
 }
 
+func staticChoices(choices ...string) func(context.Context) ([]string, error) {
+	return func(context.Context) ([]string, error) { return choices, nil }
+}
+
+// unsetAnnotation is the flag annotation tuiUnset sets.
+const unsetAnnotation = "kit_tui_unset"
+
+// tuiUnset labels what leaving flag unset means in the TUI's options form,
+// where the default "all" (or the flag's default value) would mislead, e.g.
+// "unchanged" for rules edit. A labeled boolean flag is offered as true,
+// false, or unset, since its absence differs from false; a labeled text
+// flag as unset or set, since its absence differs from empty.
+func tuiUnset(cmd *cobra.Command, flag, label string) {
+	cobra.CheckErr(cmd.Flags().SetAnnotation(flag, unsetAnnotation, []string{label}))
+}
+
 // paramsFor lists cmd's positional argument (from its Use line, with its
 // help from the "arg" annotation) and its visible flags, as options-form
-// parameters.
+// parameters. The root's persistent flags are the session's (see the top of
+// this file), so only cmd's own flags are listed.
 func paramsFor(cmd *cobra.Command) []tui.Param {
 	var ps []tui.Param
 	if arg, ok := argParam(cmd.Use); ok {
@@ -104,15 +139,26 @@ func paramsFor(cmd *cobra.Command) []tui.Param {
 		ps = append(ps, arg)
 	}
 	cmd.LocalNonPersistentFlags().VisitAll(func(f *pflag.Flag) {
-		if f.Hidden || f.Deprecated != "" {
+		// --help, which cobra adds to a command it executes, is `kit help`.
+		if f.Hidden || f.Deprecated != "" || f.Annotations[cobra.FlagSetByCobraAnnotation] != nil {
 			return
 		}
 		p := tui.Param{Name: f.Name, Help: f.Usage}
+		if unset := f.Annotations[unsetAnnotation]; len(unset) > 0 {
+			p.Unset = unset[0]
+		} else if f.DefValue != "" && choiceFlags[f.Name] != nil {
+			p.Unset = f.DefValue + " (default)"
+		}
+		_, slice := f.Value.(pflag.SliceValue)
 		switch {
+		case f.Value.Type() == "bool" && p.Unset != "":
+			p.Kind, p.Choices = tui.ParamChoice, staticChoices("true", "false")
 		case f.Value.Type() == "bool":
 			p.Kind = tui.ParamBool
 		case choiceFlags[f.Name] != nil:
 			p.Kind, p.Choices = tui.ParamChoice, choiceFlags[f.Name]
+		case slice:
+			p.Help += " (comma-separated, as on the command line)"
 		}
 		ps = append(ps, p)
 	})
@@ -355,11 +401,8 @@ func ruleActions(s *kitSet) []tui.Action {
 				if err != nil {
 					return tui.Outcome{}, err
 				}
-				pattern := e.rule.Pattern
-				if _, err := s.mutate(e.kitFile, func(k *kitfile.KitFile) error { return k.Remove(pattern) }); err != nil {
-					return tui.Outcome{}, err
-				}
-				return tui.Outcome{Info: fmt.Sprintf("removed rule %q from %s", pattern, e.kitFile), Reload: true}, nil
+				info, err := removeRule(s, e.kitFile, e.rule.Pattern)
+				return tui.Outcome{Info: info, Reload: true}, err
 			},
 		},
 	}
@@ -444,9 +487,15 @@ func rulesGetRoute(v tui.Values) tui.Route {
 // so opening the route asks for the regex first instead of loading every
 // file; the CLI argument stays optional.
 func requirePattern(r tui.Route) tui.Route {
+	return withParam(r, func(p *tui.Param) bool { return p.Arg }, func(p *tui.Param) { p.Required = true })
+}
+
+// withParam applies change to r's parameters that match.
+func withParam(r tui.Route, match func(*tui.Param) bool, change func(*tui.Param)) tui.Route {
+	r.Params = slices.Clone(r.Params)
 	for i := range r.Params {
-		if r.Params[i].Arg {
-			r.Params[i].Required = true
+		if match(&r.Params[i]) {
+			change(&r.Params[i])
 		}
 	}
 	return r

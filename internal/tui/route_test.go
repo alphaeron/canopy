@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -143,5 +144,219 @@ func TestRuleFormOffersKitFiles(t *testing.T) {
 	_ = bare.init()
 	if strings.Contains(bare.form.View(), "KIT file") {
 		t.Error("without KIT files the picker must be absent")
+	}
+}
+
+// runRoute is a Run route that records the values it ran with and fails
+// while fail is set.
+func runRoute(params []Param, runs *[]Values, fail *bool) Route {
+	return Route{
+		Command: "rules add",
+		Params:  params,
+		Run: func(_ context.Context, v Values) (Outcome, error) {
+			*runs = append(*runs, v)
+			if *fail {
+				return Outcome{}, errors.New("bad pattern")
+			}
+			return Outcome{Info: "added rule"}, nil
+		},
+	}
+}
+
+// TestRunRouteRunsFromOptions is the TUI form of a command that changes
+// something: opening it shows its options (the command line), submitting
+// runs it, and a failure reopens the form with the values to correct.
+func TestRunRouteRunsFromOptions(t *testing.T) {
+	var runs []Values
+	fail := true
+	r := runRoute([]Param{{Name: "pattern", Required: true}}, &runs, &fail)
+	h := newHarness(t, Config{Routes: []Route{r}})
+	h.press("enter")
+	if _, ok := h.a.top().page.(*optionsPage); !ok || len(runs) != 0 {
+		t.Fatalf("opening a Run route must show its options first (runs %d)", len(runs))
+	}
+	h.send(tea.PasteMsg{Content: "a.go"})
+	h.press("enter")
+	if len(runs) != 1 || runs[0].Flag("pattern") != "a.go" {
+		t.Fatalf("submitting must run the command with the form's values, got %+v", runs)
+	}
+	p, ok := h.a.top().page.(*optionsPage)
+	if !ok || p.route.Values.Flag("pattern") != "a.go" || !strings.Contains(h.screen(), "✗ bad pattern") {
+		t.Fatalf("a failure must reopen the form with the values and report the error:\n%s", h.screen())
+	}
+	fail = false
+	h.press("enter")
+	if len(runs) != 2 || len(h.a.stack) != 1 || !strings.Contains(h.screen(), "✓ added rule") {
+		t.Fatalf("a success must close the form and report (runs %d, stack %d):\n%s", len(runs), len(h.a.stack), h.screen())
+	}
+}
+
+// TestRunRouteConfirms covers rules remove: without --force it asks first.
+func TestRunRouteConfirms(t *testing.T) {
+	var runs []Values
+	fail := false
+	r := runRoute([]Param{{Name: "force", Kind: ParamBool}}, &runs, &fail)
+	r.Confirm = func(v Values) string {
+		if v.Bool("force") {
+			return ""
+		}
+		return "Remove rule?"
+	}
+	h := newHarness(t, Config{Routes: []Route{r}})
+	h.press("enter", "enter")
+	if !strings.Contains(h.screen(), "Remove rule? [y/N]") || len(runs) != 0 {
+		t.Fatalf("must ask before running:\n%s", h.screen())
+	}
+	h.press("n")
+	if len(runs) != 0 {
+		t.Fatal("declining must not run")
+	}
+	h.press("enter", "enter")
+	h.press("y")
+	if len(runs) != 1 {
+		t.Fatal("accepting must run")
+	}
+	h.press("enter", "left", "enter")
+	if len(runs) != 2 || h.a.prompt != nil {
+		t.Fatalf("--force must run without asking (runs %d)", len(runs))
+	}
+}
+
+// TestChoiceUnsetAndRequired pins the empty choice's label and that a
+// required choice has none.
+func TestChoiceUnsetAndRequired(t *testing.T) {
+	labels := func(p Param) []string {
+		var out []string
+		for _, o := range choiceOptions(p, []string{"true", "false"}, "") {
+			out = append(out, o.Key)
+		}
+		return out
+	}
+	if got := labels(Param{}); !reflect.DeepEqual(got, []string{"all", "true", "false"}) {
+		t.Errorf("default unset label = %q", got)
+	}
+	if got := labels(Param{Unset: "unchanged"}); got[0] != "unchanged" {
+		t.Errorf("unset label = %q", got)
+	}
+	if got := labels(Param{Required: true}); !reflect.DeepEqual(got, []string{"true", "false"}) {
+		t.Errorf("a required choice must have no empty option, got %q", got)
+	}
+}
+
+// TestCommandLineFalseChoice: a tri-state boolean (rules edit
+// --self-approve) set to false must appear, unlike a plain false boolean.
+func TestCommandLineFalseChoice(t *testing.T) {
+	r := Route{
+		Command: "rules edit",
+		Params: []Param{
+			{Name: "pattern", Arg: true, Required: true},
+			{Name: "self-approve", Kind: ParamChoice},
+			{Name: "force", Kind: ParamBool},
+		},
+		Values: Values{Args: []string{"a"}, Flags: map[string]string{"self-approve": "false", "force": "false"}},
+	}
+	if got, want := r.CommandLine(), "kit rules edit a --self-approve=false"; got != want {
+		t.Errorf("CommandLine = %q, want %q", got, want)
+	}
+}
+
+// TestVariadicChoiceArg: `help rules add` takes a command path as several
+// words, chosen as one value.
+func TestVariadicChoiceArg(t *testing.T) {
+	r := Route{Command: "help", Params: []Param{{Name: "command", Arg: true, Variadic: true, Kind: ParamChoice}},
+		Values: Values{Args: []string{"rules", "add"}}}
+	p := newOptionsPage(r, map[string][]string{"command": {"rules", "rules add"}}, false)
+	if got := p.values().Args; !reflect.DeepEqual(got, []string{"rules", "add"}) {
+		t.Errorf("args = %q", got)
+	}
+}
+
+// TestRequiredChoice covers rules edit's pattern picker: the first choice
+// is selected, and with no choices (no rules) the form does not open.
+func TestRequiredChoice(t *testing.T) {
+	var choices []string
+	var runs []Values
+	fail := false
+	r := runRoute([]Param{{Name: "pattern", Arg: true, Required: true, Kind: ParamChoice,
+		Choices: func(context.Context) ([]string, error) { return choices, nil }}}, &runs, &fail)
+	h := newHarness(t, Config{Routes: []Route{r}})
+	h.press("enter")
+	if len(h.a.stack) != 1 || !strings.Contains(h.screen(), "✗ rules add: no <pattern> to choose from") {
+		t.Fatalf("no choices must report instead of opening an unsubmittable form:\n%s", h.screen())
+	}
+	choices = []string{`.*\.go`, "docs/"}
+	h.press("enter", "enter")
+	if len(runs) != 1 || !reflect.DeepEqual(runs[0].Args, []string{`.*\.go`}) {
+		t.Errorf("ran with %+v, want the first choice", runs)
+	}
+}
+
+// TestClearableFlag covers rules edit --name: unset (unchanged) differs
+// from set empty, and the input is a hidden group that is skipped unless
+// the flag is set.
+func TestClearableFlag(t *testing.T) {
+	params := []Param{
+		{Name: "pattern", Arg: true, Required: true},
+		{Name: "name", Unset: "unchanged"},
+		{Name: "force", Kind: ParamBool},
+	}
+	const input = "empty sets it empty"
+	tests := []struct {
+		name   string
+		keys   []string // after the pattern, on the --name choice
+		paste  string
+		want   map[string]string
+		inputs bool
+	}{
+		{"unchanged skips the input", []string{"enter"}, "", map[string]string{}, false},
+		{"set empty", []string{"down", "enter"}, "", map[string]string{"name": ""}, true},
+		{"set a value", []string{"down", "enter"}, "core", map[string]string{"name": "core"}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var runs []Values
+			fail := false
+			r := runRoute(params, &runs, &fail)
+			h := newHarness(t, Config{Routes: []Route{r}})
+			h.press("enter")
+			h.send(tea.PasteMsg{Content: "p"})
+			h.press("enter")
+			if strings.Contains(h.screen(), input) {
+				t.Fatalf("the input must be hidden until the flag is set:\n%s", h.screen())
+			}
+			h.press(tc.keys...)
+			if got := strings.Contains(h.screen(), input); got != tc.inputs {
+				t.Fatalf("input shown = %v, want %v:\n%s", got, tc.inputs, h.screen())
+			}
+			if tc.inputs {
+				if tc.paste != "" {
+					h.send(tea.PasteMsg{Content: tc.paste})
+				}
+				h.press("enter")
+			}
+			h.press("enter") // --force, the last field, submits.
+			if len(runs) != 1 || !reflect.DeepEqual(runs[0].Flags, tc.want) {
+				t.Fatalf("ran with %+v, want flags %v", runs, tc.want)
+			}
+		})
+	}
+}
+
+func TestClearableSeedAndCommandLine(t *testing.T) {
+	r := Route{
+		Command: "rules edit",
+		Params:  []Param{{Name: "pattern", Arg: true}, {Name: "name", Unset: "unchanged"}, {Name: "scope"}},
+		Values:  Values{Args: []string{"p"}, Flags: map[string]string{"name": "", "scope": ""}},
+	}
+	if got, want := r.CommandLine(), "kit rules edit p --name=''"; got != want {
+		t.Errorf("CommandLine = %q, want %q", got, want)
+	}
+	p := newOptionsPage(r, nil, false)
+	if got := p.values().Flags; !reflect.DeepEqual(got, map[string]string{"name": ""}) {
+		t.Errorf("a set empty flag must reopen as set, got %v", got)
+	}
+	r.Values.Flags = map[string]string{"name": "core"}
+	if got := newOptionsPage(r, nil, false).values().Flags["name"]; got != "core" {
+		t.Errorf("name = %q", got)
 	}
 }

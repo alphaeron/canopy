@@ -17,32 +17,21 @@ import (
 // runs the interactive rule form; with --pattern it scaffolds the file and
 // the rule together.
 var initCmd = &cobra.Command{
-	Use:   "init [path]",
-	Short: "Initialize a KIT file in the current repository",
-	Long:  "Initialize a KIT file in the current repository, with an optional rule pre-filled by the form or by flags.",
+	Use:         "init [path]",
+	Short:       "Initialize a KIT file in the current repository",
+	Long:        "Initialize a KIT file in the current repository, with an optional rule pre-filled by the form or by flags.",
+	Annotations: map[string]string{"arg": "the KIT file to write, or a directory to write it in (default: KIT in the current directory)"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		path := "KIT"
+		var arg string
 		if len(args) > 0 {
-			if isDir(args[0]) {
-				path = filepath.Join(args[0], "KIT")
-			} else {
-				path = args[0]
-			}
+			arg = args[0]
 		}
+		path := initPath(arg)
 		force, _ := cmd.Flags().GetBool("force")
-
-		if _, statErr := os.Stat(path); statErr == nil && !force {
-			return fmt.Errorf("KIT file %q already exists; pass --force to overwrite", path)
+		if err := checkInitTarget(path, force); err != nil {
+			return err
 		}
-
-		ruleName, _ := cmd.Flags().GetString("name")
 		pattern, _ := cmd.Flags().GetString("pattern")
-		strategy, _ := cmd.Flags().GetString("strategy")
-		ignoreParent, _ := cmd.Flags().GetBool("ignore-parent")
-		currentDirOnly, _ := cmd.Flags().GetBool("current-dir-only")
-		selfApprove, _ := cmd.Flags().GetBool("self-approve")
-		approvers, _ := cmd.Flags().GetStringSlice("approver")
-
 		mode, _ := resolveOutputMode(cmd)
 
 		var fields tui.RuleFields
@@ -52,42 +41,72 @@ var initCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("run form: %w", err)
 			}
-		} else {
-			fields = tui.RuleFields{
-				Pattern: pattern, Name: ruleName, Strategy: strategy,
-				Ignore: ignoreParent, CurrentDirOnly: currentDirOnly,
-				SelfApprove: selfApprove,
-			}
-			approverText, aErr := approverText(approvers)
-			if aErr != nil {
-				return aErr
-			}
-			fields.ApproverText = approverText
+		} else if fields, err = ruleFieldsFrom(tui.RuleFields{Strategy: "union"}, valuesFrom(cmd, args)); err != nil {
+			return err
 		}
 
-		k := &kitfile.KitFile{Path: path}
-		if fields.Pattern != "" {
-			rule, err := buildRuleFromFields(fields)
-			if err != nil {
-				return err
-			}
-			if err := k.Add(rule); err != nil {
-				return err
-			}
-		}
-		if err := k.Save(path); err != nil {
-			return fmt.Errorf("write %s: %w", path, err)
+		k, err := writeKitFile(path, force, fields)
+		if err != nil {
+			return err
 		}
 		if mode == modeJSON {
 			return tui.JSONEncoder(os.Stdout, k.Rules)
 		}
-		if len(k.Rules) > 0 {
-			fmt.Printf("initialized %s with rule %q\n", path, k.Rules[0].Pattern)
-		} else {
-			fmt.Printf("initialized empty KIT file at %s\n", path)
-		}
+		fmt.Println(initMessage(path, k))
 		return nil
 	},
+}
+
+// initPath is the KIT file `kit init [path]` writes: KIT in the current
+// directory when arg is empty, KIT inside arg when it is a directory, and
+// arg itself otherwise.
+func initPath(arg string) string {
+	switch {
+	case arg == "":
+		return "KIT"
+	case isDir(arg):
+		return filepath.Join(arg, "KIT")
+	}
+	return arg
+}
+
+// checkInitTarget refuses to overwrite an existing KIT file without force.
+func checkInitTarget(path string, force bool) error {
+	if _, err := os.Stat(path); err == nil && !force {
+		return fmt.Errorf("KIT file %q already exists; pass --force to overwrite", path)
+	}
+	return nil
+}
+
+// writeKitFile writes a new KIT file at path holding the rule fields
+// describe, or no rule when they have no pattern. The CLI and the TUI both
+// create KIT files through it.
+func writeKitFile(path string, force bool, fields tui.RuleFields) (*kitfile.KitFile, error) {
+	if err := checkInitTarget(path, force); err != nil {
+		return nil, err
+	}
+	k := &kitfile.KitFile{Path: path}
+	if fields.Pattern != "" {
+		rule, err := buildRuleFromFields(fields)
+		if err != nil {
+			return nil, err
+		}
+		if err := k.Add(rule); err != nil {
+			return nil, err
+		}
+	}
+	if err := k.Save(path); err != nil {
+		return nil, fmt.Errorf("write %s: %w", path, err)
+	}
+	return k, nil
+}
+
+// initMessage confirms what writeKitFile wrote.
+func initMessage(path string, k *kitfile.KitFile) string {
+	if len(k.Rules) > 0 {
+		return fmt.Sprintf("initialized %s with rule %q", path, k.Rules[0].Pattern)
+	}
+	return "initialized empty KIT file at " + path
 }
 
 // isDir reports whether the path is a directory; os.Stat errors are treated

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -19,10 +18,11 @@ import (
 // terminal gets a picker and a script must pass --file (see
 // kitSet.ruleTarget).
 var rulesEditCmd = &cobra.Command{
-	Use:   "edit <pattern>",
-	Short: "Edit a rule in a KIT file",
-	Long:  "Edit an existing rule in a KIT file, replacing its name, strategy, flags, and approver list.",
-	Args:  cobra.ExactArgs(1),
+	Use:         "edit <pattern>",
+	Short:       "Edit a rule in a KIT file",
+	Long:        "Edit an existing rule in a KIT file, replacing its name, strategy, flags, and approver list.",
+	Args:        cobra.ExactArgs(1),
+	Annotations: map[string]string{"arg": "the pattern of the rule to edit"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pattern := args[0]
 		mode, _ := resolveOutputMode(cmd)
@@ -39,29 +39,21 @@ var rulesEditCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		i := slices.IndexFunc(s.rules[target], func(r kitfile.Rule) bool { return r.Pattern == pattern })
-		if i < 0 {
-			return fmt.Errorf("no rule with pattern %q in %s: %w", pattern, target, kitfile.ErrPatternNotFound)
+		rule, err := s.rule(target, pattern)
+		if err != nil {
+			return err
 		}
 
-		fields := fieldsFromRule(s.rules[target][i])
+		fields := fieldsFromRule(rule)
 		if mode == modeTUI {
-			f, ferr := tui.RunForm(fields, nil)
-			if ferr != nil {
-				return fmt.Errorf("run form: %w", ferr)
+			if fields, err = tui.RunForm(fields, nil); err != nil {
+				return fmt.Errorf("run form: %w", err)
 			}
-			fields, err = ruleFields(f, cmd)
-			if err != nil {
-				return err
-			}
-		} else {
-			// Scripted mode: only flag-provided fields mutate; empty flags
-			// leave the pre-filled values standing so a single-field edit
-			// (e.g., --self-approve) does not zero out the other fields.
-			fields, err = ruleFields(fields, cmd)
-			if err != nil {
-				return err
-			}
+		}
+		// Flags given on the command line win over the form; the others
+		// leave the rule's values standing.
+		if fields, err = ruleFieldsFrom(fields, valuesFrom(cmd, args)); err != nil {
+			return err
 		}
 
 		newRule, err := buildRuleFromFields(fields)
@@ -90,5 +82,10 @@ func init() {
 	rulesEditCmd.Flags().Bool("current-dir-only", false, "current_directory_only: scope this rule to the file's own directory")
 	rulesEditCmd.Flags().Bool("self-approve", false, "self_approve: allow the author to satisfy this rule")
 	rulesEditCmd.Flags().StringSlice("approver", nil, `replace the rule's approver list with these 'target required_count' pairs`)
+	tuiUnset(rulesEditCmd, "file", "the KIT file declaring the pattern")
+	// Unset keeps the rule's value; --name '' and --approver '' clear it.
+	for _, f := range []string{"name", "strategy", "ignore-parent", "current-dir-only", "self-approve", "approver"} {
+		tuiUnset(rulesEditCmd, f, "unchanged")
+	}
 	rulesCmd.AddCommand(rulesEditCmd)
 }

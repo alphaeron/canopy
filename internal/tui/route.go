@@ -30,6 +30,15 @@ type Route struct {
 	// may do I/O; it runs again when the page is reloaded or its options
 	// change.
 	Load func(ctx context.Context, v Values) (Page, error)
+	// Run, set instead of Load, makes the route a command that changes
+	// something (init, rules add): it has no page, so opening it always
+	// shows the options form, and submitting the form runs it off the UI
+	// loop. Its Outcome is applied as an action's is; on an error the form
+	// reopens with the submitted values so they can be corrected.
+	Run func(ctx context.Context, v Values) (Outcome, error)
+	// Confirm, when set and returning non-empty text for v, asks that
+	// question before Run runs, as the CLI prompts unless --force is given.
+	Confirm func(v Values) string
 }
 
 // ParamKind is how the options form edits a parameter.
@@ -61,9 +70,20 @@ type Param struct {
 	// with none shows the options form first.
 	Required bool
 	// Choices lists the values a ParamChoice may take. It may do I/O and
-	// runs off the UI loop when the options form opens.
+	// runs off the UI loop when the options form opens. A variadic choice
+	// argument's value is split into words (a command path such as
+	// "rules add").
 	Choices func(ctx context.Context) ([]string, error)
+	// Unset labels the empty choice of an optional ParamChoice: what the
+	// command does when the flag is not given. It defaults to "all". On a
+	// text flag it makes the flag clearable: not giving it (Unset, e.g.
+	// "unchanged") differs from giving it empty, as `--name ''` does.
+	Unset string
 }
+
+// clearable reports whether p is a text flag whose empty value is a value,
+// distinct from leaving the flag unset.
+func (p Param) clearable() bool { return !p.Arg && p.Kind == ParamText && p.Unset != "" }
 
 // Values are a route's positional arguments and flag values, exactly as the
 // CLI receives them. Boolean flags are "true" or "false"; unset flags are
@@ -96,18 +116,25 @@ func (v Values) WithFlag(name, value string) Values {
 // CommandLine is the CLI invocation equivalent to the route, quoted for a
 // POSIX shell so it can be copied and run, e.g.
 // "kit match --changed --scope=core". Flags appear in Params order; false
-// booleans and empty values are omitted as they are the defaults.
+// booleans and empty values are omitted as they are the defaults. A "false"
+// choice and a clearable flag's empty value are kept: their unset value
+// means something else, such as "unchanged" for rules edit.
 func (r Route) CommandLine() string {
 	parts := []string{"kit", r.Command}
 	for _, a := range r.Values.Args {
 		parts = append(parts, shellQuote(a))
 	}
 	seen := map[string]bool{}
+	choice, clearable := map[string]bool{}, map[string]bool{}
+	for _, p := range r.Params {
+		choice[p.Name] = !p.Arg && p.Kind == ParamChoice
+		clearable[p.Name] = p.clearable()
+	}
 	appendFlag := func(name string) {
 		seen[name] = true
 		val, ok := r.Values.Flags[name]
 		switch {
-		case !ok || val == "" || val == "false":
+		case !ok || val == "" && !clearable[name] || val == "false" && !choice[name]:
 		case val == "true":
 			parts = append(parts, "--"+name)
 		default:

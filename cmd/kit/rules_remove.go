@@ -18,9 +18,10 @@ import (
 // its pattern within its KIT file; without --file the KIT file is found as
 // for rules edit (see kitSet.ruleTarget).
 var rulesRemoveCmd = &cobra.Command{
-	Use:   "remove <pattern>",
-	Short: "Remove a rule from a KIT file",
-	Args:  cobra.ExactArgs(1),
+	Use:         "remove <pattern>",
+	Short:       "Remove a rule from a KIT file",
+	Args:        cobra.ExactArgs(1),
+	Annotations: map[string]string{"arg": "the pattern of the rule to remove"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pattern := args[0]
 		force, _ := cmd.Flags().GetBool("force")
@@ -45,12 +46,22 @@ var rulesRemoveCmd = &cobra.Command{
 				return nil
 			}
 		}
-		if _, err := s.mutate(target, func(k *kitfile.KitFile) error { return k.Remove(pattern) }); err != nil {
+		msg, err := removeRule(s, target, pattern)
+		if err != nil {
 			return err
 		}
-		fmt.Printf("removed rule %q from %s\n", pattern, target)
+		fmt.Println(msg)
 		return nil
 	},
+}
+
+// removeRule removes the rule keyed by pattern from kitFile, for the CLI and
+// the TUI alike, and returns the confirmation message.
+func removeRule(s *kitSet, kitFile, pattern string) (string, error) {
+	if _, err := s.mutate(kitFile, func(k *kitfile.KitFile) error { return k.Remove(pattern) }); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("removed rule %q from %s", pattern, kitFile), nil
 }
 
 // confirm prints a prompt to out when out is attached to a terminal, reads
@@ -76,5 +87,6 @@ func confirm(in io.Reader, out io.Writer) bool {
 func init() {
 	kitFileFlag(rulesRemoveCmd, "the KIT file holding the rule (default: the one KIT file with that pattern)")
 	rulesRemoveCmd.Flags().Bool("force", false, "skip the interactive confirmation prompt")
+	tuiUnset(rulesRemoveCmd, "file", "the KIT file declaring the pattern")
 	rulesCmd.AddCommand(rulesRemoveCmd)
 }

@@ -33,7 +33,7 @@ var rulesAddCmd = &cobra.Command{
 		mode, _ := resolveOutputMode(cmd)
 
 		var fields tui.RuleFields
-		if mode == modeTUI && !ruleFlagProvided(cmd, "pattern") {
+		if mode == modeTUI && !cmd.Flags().Changed("pattern") {
 			seed := tui.RuleFields{Strategy: "union"}
 			var choices []string
 			if target == "" {
@@ -56,7 +56,7 @@ var rulesAddCmd = &cobra.Command{
 				target = fields.KitFile
 			}
 		} else {
-			fields, err = ruleFieldsFromFlags(cmd)
+			fields, err = ruleFieldsFrom(tui.RuleFields{Strategy: "union"}, valuesFrom(cmd, args))
 			if err != nil {
 				return err
 			}
@@ -83,45 +83,6 @@ var rulesAddCmd = &cobra.Command{
 	},
 }
 
-// ruleFlagProvided reports whether the named flag was explicitly set on the
-// command line, even if its value equals the flag default. add and edit use
-// this to decide which fields the form should own versus override.
-func ruleFlagProvided(cmd *cobra.Command, name string) bool {
-	return cmd.Flags().Changed(name)
-}
-
-// ruleFieldsFromFlags assembles a tui.RuleFields purely from command flags.
-// Approver pairs are validated here (not inside the form) so scripted runs
-// fail with the precise pair error before any file mutation.
-func ruleFieldsFromFlags(cmd *cobra.Command) (tui.RuleFields, error) {
-	var f tui.RuleFields
-	var err error
-	if f.Pattern, err = cmd.Flags().GetString("pattern"); err != nil {
-		return f, err
-	}
-	if f.Name, err = cmd.Flags().GetString("name"); err != nil {
-		return f, err
-	}
-	if f.Strategy, err = cmd.Flags().GetString("strategy"); err != nil {
-		return f, err
-	}
-	if f.Ignore, err = cmd.Flags().GetBool("ignore-parent"); err != nil {
-		return f, err
-	}
-	if f.CurrentDirOnly, err = cmd.Flags().GetBool("current-dir-only"); err != nil {
-		return f, err
-	}
-	if f.SelfApprove, err = cmd.Flags().GetBool("self-approve"); err != nil {
-		return f, err
-	}
-	approvers, err := cmd.Flags().GetStringSlice("approver")
-	if err != nil {
-		return f, err
-	}
-	f.ApproverText, err = approverText(approvers)
-	return f, err
-}
-
 // approverText converts the --approver flag pairs ("target required_count",
 // repeatable) into the form text used to build the rule's approver targets.
 // An odd pair count or a non-integer count is an error, so a malformed
@@ -141,47 +102,42 @@ func approverText(pairs []string) (string, error) {
 	return kitfile.ApproversToText(targets), nil
 }
 
-// ruleFields returns the union of the form's fields and the explicitly-set
-// flag overrides: a flag the user passed on the command line always wins
-// over the corresponding form value, while a flag left at its default leaves
-// the form's text standing.
-func ruleFields(form tui.RuleFields, cmd *cobra.Command) (tui.RuleFields, error) {
-	var err error
-	if ruleFlagProvided(cmd, "name") {
-		if form.Name, err = cmd.Flags().GetString("name"); err != nil {
-			return form, err
+// ruleFieldsFrom applies the rule flags set in v over seed: a flag given on
+// the command line (see valuesFrom) or in the TUI's options form always
+// wins, while an unset one leaves seed's value standing, so a single-field
+// rules edit does not zero out the other fields. init and add seed the
+// flags' defaults. Approver pairs are validated here, so a malformed value
+// fails with the precise pair error before any file is written.
+func ruleFieldsFrom(seed tui.RuleFields, v tui.Values) (tui.RuleFields, error) {
+	f := seed
+	if s, ok := v.Flags["pattern"]; ok {
+		f.Pattern = s
+	}
+	if s, ok := v.Flags["name"]; ok {
+		f.Name = s
+	}
+	if s, ok := v.Flags["strategy"]; ok {
+		f.Strategy = s
+	}
+	for name, field := range map[string]*bool{
+		"ignore-parent":    &f.Ignore,
+		"current-dir-only": &f.CurrentDirOnly,
+		"self-approve":     &f.SelfApprove,
+	} {
+		if _, ok := v.Flags[name]; ok {
+			*field = v.Bool(name)
 		}
 	}
-	if ruleFlagProvided(cmd, "strategy") {
-		if form.Strategy, err = cmd.Flags().GetString("strategy"); err != nil {
-			return form, err
-		}
-	}
-	if ruleFlagProvided(cmd, "ignore-parent") {
-		if form.Ignore, err = cmd.Flags().GetBool("ignore-parent"); err != nil {
-			return form, err
-		}
-	}
-	if ruleFlagProvided(cmd, "current-dir-only") {
-		if form.CurrentDirOnly, err = cmd.Flags().GetBool("current-dir-only"); err != nil {
-			return form, err
-		}
-	}
-	if ruleFlagProvided(cmd, "self-approve") {
-		if form.SelfApprove, err = cmd.Flags().GetBool("self-approve"); err != nil {
-			return form, err
-		}
-	}
-	if ruleFlagProvided(cmd, "approver") {
-		approvers, err := cmd.Flags().GetStringSlice("approver")
+	if s, ok := v.Flags["approver"]; ok {
+		pairs, err := splitList(s)
 		if err != nil {
-			return form, err
+			return f, fmt.Errorf("--approver %q: %w", s, err)
 		}
-		if form.ApproverText, err = approverText(approvers); err != nil {
-			return form, err
+		if f.ApproverText, err = approverText(pairs); err != nil {
+			return f, err
 		}
 	}
-	return form, nil
+	return f, nil
 }
 
 // buildRuleFromFields converts a submitted rule-field set into the KIT file
@@ -220,5 +176,6 @@ func init() {
 	rulesAddCmd.Flags().Bool("current-dir-only", false, "current_directory_only: scope this rule to the file's own directory")
 	rulesAddCmd.Flags().Bool("self-approve", false, "self_approve: allow the author to satisfy this rule")
 	rulesAddCmd.Flags().StringSlice("approver", nil, `approver pairs 'target required_count', repeatable`)
+	tuiUnset(rulesAddCmd, "file", "the repository-root KIT")
 	rulesCmd.AddCommand(rulesAddCmd)
 }

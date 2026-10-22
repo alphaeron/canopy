@@ -153,6 +153,27 @@ func (s *kitSet) withPattern(pattern string) []string {
 	return out
 }
 
+// rule returns the rule keyed by pattern in kitFile.
+func (s *kitSet) rule(kitFile, pattern string) (kitfile.Rule, error) {
+	i := slices.IndexFunc(s.rules[kitFile], func(r kitfile.Rule) bool { return r.Pattern == pattern })
+	if i < 0 {
+		return kitfile.Rule{}, fmt.Errorf("no rule with pattern %q in %s: %w", pattern, kitFile, kitfile.ErrPatternNotFound)
+	}
+	return s.rules[kitFile][i], nil
+}
+
+// patterns lists the distinct rule patterns, the values rules edit and
+// rules remove accept.
+func (s *kitSet) patterns() []string {
+	seen := map[string]bool{}
+	for _, rules := range s.rules {
+		for _, r := range rules {
+			seen[r.Pattern] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
+}
+
 // nearest is the KIT file closest to the current directory: the one in it
 // or its nearest ancestor up to the repository root, falling back to the
 // first KIT file. It is "" only when there are no KIT files.

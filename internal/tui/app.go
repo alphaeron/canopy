@@ -125,6 +125,12 @@ type (
 		run func(ctx context.Context) (Outcome, error)
 		pop bool
 	}
+	// ranMsg is the result of running a Run route.
+	ranMsg struct {
+		route   Route
+		outcome Outcome
+		err     error
+	}
 )
 
 func runCmd(run func(ctx context.Context) (Outcome, error), pop bool) tea.Cmd {
@@ -227,7 +233,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.spinner, cmd = a.spinner.Update(msg)
 		return a, cmd
 	case navigateMsg:
-		if msg.route.missingRequired() {
+		if msg.route.Run != nil || msg.route.missingRequired() {
 			a.palette = nil
 			return a, a.openOptions(msg.route, false)
 		}
@@ -242,6 +248,9 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.push(newOptionsPage(msg.route, msg.choices, msg.replace))
 	case reopenMsg:
 		a.pop()
+		if msg.route.Run != nil {
+			return a, a.runRoute(msg.route)
+		}
 		var replace Page
 		if msg.replace {
 			replace = a.top().page
@@ -264,6 +273,12 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			o, err := msg.run(ctx)
 			return outcomeMsg{outcome: o, err: err, pop: msg.pop}
 		}
+	case ranMsg:
+		if msg.err != nil {
+			a.setStatus(msg.err.Error(), true)
+			return a, a.openOptions(msg.route, false)
+		}
+		return a, a.applyOutcome(outcomeMsg{outcome: msg.outcome})
 	case tea.KeyPressMsg:
 		return a, a.handleKey(msg)
 	case tea.MouseWheelMsg, tea.MouseClickMsg:
@@ -342,10 +357,30 @@ func (a *app) openOptions(r Route, replace bool) tea.Cmd {
 			if err != nil {
 				return optionsReadyMsg{err: fmt.Errorf("load %s choices: %w", p.Name, err)}
 			}
+			if p.Required && len(c) == 0 {
+				// The form could not be submitted.
+				return optionsReadyMsg{err: fmt.Errorf("%s: no %s to choose from", r.Command, paramUsage(p))}
+			}
 			choices[p.Name] = c
 		}
 		return optionsReadyMsg{route: r, replace: replace, choices: choices}
 	}
+}
+
+// runRoute runs a Run route with its submitted values, after asking its
+// Confirm question when there is one.
+func (a *app) runRoute(r Route) tea.Cmd {
+	ctx := a.ctx
+	run := func() tea.Msg {
+		o, err := r.Run(ctx, r.Values)
+		return ranMsg{route: r, outcome: o, err: err}
+	}
+	if r.Confirm != nil {
+		if q := r.Confirm(r.Values); q != "" {
+			return confirm(clean(q), run)
+		}
+	}
+	return run
 }
 
 // handleMouse routes wheel and click events. The palette takes the wheel
