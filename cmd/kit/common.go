@@ -1,8 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -20,96 +21,64 @@ func newLocalEngine(repo *gitRepo) (*kenin.Engine, error) {
 	return kenin.New(source, nil), nil
 }
 
-// scopesByRule flattens a shonin RuleChain into the scope-keyed file map the
-// TUI tree view renders: every rule in every layer is a key (its pattern with
-// the registering layer's KIT file, "KIT" for a repo-root rule), and every
-// file whose chain included the rule appears once under that key. This is the
-// shared "which rules apply to which files" projection for rules get and
-// match --by-scope, so neither command re-derives the grouping.
-func scopesByRule(chain shonin.RuleChain) map[string][]string {
-	byScope := map[string]map[string]bool{}
-	var order []string
+// ruleScope is one rule of a rule chain with the files it applies to.
+type ruleScope struct {
+	key     string // "<pattern> in <KIT file> (<name>)"
+	rule    kitfile.Rule
+	kitFile string
+	files   []string // sorted
+}
+
+// ruleScopes flattens a rule chain into "which rules apply to which files":
+// one entry per rule in any layer, keyed by its pattern, declaring KIT file
+// ("KIT" for a repo-root rule) and name, with every file whose chain included
+// the rule listed once. Entries are sorted by key. Each keeps the rule's
+// definition and KIT file so the TUI can show where the rule comes from.
+func ruleScopes(chain shonin.RuleChain) []ruleScope {
+	byKey := map[string]*ruleScope{}
+	seen := map[string]map[string]bool{}
 	for file, layers := range chain.FileChains {
 		for _, layer := range layers {
-			kitFile := "KIT"
-			if layer.DirectoryPath != "" {
-				kitFile = layer.DirectoryPath + "/KIT"
-			}
+			kitFile := layerKitFile(layer)
 			for _, rule := range layer.Rules {
 				key := rule.Pattern + " in " + kitFile
 				if rule.Name != "" {
 					key += " (" + rule.Name + ")"
 				}
-				if _, seen := byScope[key]; !seen {
-					byScope[key] = map[string]bool{}
-					order = append(order, key)
+				sc, ok := byKey[key]
+				if !ok {
+					sc = &ruleScope{key: key, rule: rule.Rule, kitFile: kitFile}
+					byKey[key] = sc
+					seen[key] = map[string]bool{}
 				}
-				byScope[key][file] = true
+				if !seen[key][file] {
+					seen[key][file] = true
+					sc.files = append(sc.files, file)
+				}
 			}
 		}
 	}
-	out := make(map[string][]string, len(order))
-	for _, k := range order {
-		for f := range byScope[k] {
-			out[k] = append(out[k], f)
-		}
+	out := make([]ruleScope, 0, len(byKey))
+	for _, sc := range byKey {
+		slices.Sort(sc.files)
+		out = append(out, *sc)
 	}
+	slices.SortFunc(out, func(a, b ruleScope) int { return strings.Compare(a.key, b.key) })
 	return out
 }
 
-// allKitContent returns every tracked KIT file's parsed rules, keyed by the
-// KIT file path. It reads each file's content from the repository's HEAD blob
-// (repo.FileContentAt), matching the tree FindFiles enumerates: a file that is
-// tracked but absent from the worktree disk still resolves, and a file that has
-// never been committed never appears. This keeps list-type commands consistent
-// regardless of worktree hygiene.
-func allKitContent(repo *gitRepo) (map[string]kitfile.Rules, error) {
-	// A repository with no commit yet has no tracked KIT files, so it is
-	// valid empty input rather than a fatal missing-HEAD error.
-	if !repo.HasCommits() {
-		return map[string]kitfile.Rules{}, nil
+// layerKitFile is the KIT file that declares a layer's rules.
+func layerKitFile(layer shonin.RuleLayer) string {
+	if layer.DirectoryPath == "" {
+		return "KIT"
 	}
-	ref, err := repo.Head()
-	if err != nil {
-		return nil, fmt.Errorf("read HEAD: %w", err)
-	}
-	paths, err := repo.FindFiles(`KIT`, ref, false)
-	if err != nil {
-		return nil, fmt.Errorf("find KIT files: %w", err)
-	}
-	rules := make(map[string]kitfile.Rules, len(paths))
-	for _, p := range paths {
-		content, exists, err := repo.FileContentAt(p, "HEAD")
-		if err != nil {
-			return nil, fmt.Errorf("read %s from HEAD: %w", p, err)
-		}
-		if !exists {
-			continue
-		}
-		list, perr := kitfile.ParseRules([]byte(content))
-		if perr != nil {
-			return nil, fmt.Errorf("parse %s: %w", p, perr)
-		}
-		rules[p] = list
-	}
-	return rules, nil
+	return layer.DirectoryPath + "/KIT"
 }
 
-// kitFilePathFor returns the default KIT file path the user was looking at, or
-// the path explicitly passed via --file. An empty --file resolves to the
-// repository root's "KIT" file.
-func kitFilePathFor(flagVal string) string {
-	if flagVal != "" {
-		return flagVal
-	}
-	return "KIT"
-}
-
-// kitFileFlag registers the shared --file flag on a command that operates on a
-// KIT file. Every command that targets a KIT file reads the flag through
-// targetKitFile(cmd).
-func kitFileFlag(cmd *cobra.Command) {
-	cmd.Flags().String("file", "", "the KIT file to target (defaults to the repo-root KIT)")
+// kitFileFlag registers the shared --file flag on a command that changes a
+// KIT file. The value is resolved by kitSet.resolve.
+func kitFileFlag(cmd *cobra.Command, usage string) {
+	cmd.Flags().String("file", "", usage+" (path from the repository root, or its directory)")
 }
 
 // outputMode is the resolved output style for a command invocation. The CLI

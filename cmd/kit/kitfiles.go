@@ -19,45 +19,44 @@ var kitfilesCmd = &cobra.Command{
 
 var kitfilesListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List every KIT file in the repository at the current HEAD",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		repo, err := getRepo()
-		if err != nil {
-			return err
+	Short: "List every KIT file in the repository's working tree",
+}
+
+// runKitfilesList is kitfilesListCmd's RunE, assigned in init: it opens the TUI, whose
+// routes refer back to the command, so a RunE literal would be an
+// initialization cycle.
+func runKitfilesList(cmd *cobra.Command, args []string) error {
+	mode, _ := resolveOutputMode(cmd)
+	if mode == modeTUI {
+		return openTUI(cmd, kitfilesRoute(valuesFrom(cmd, args)))
+	}
+	files, err := listKitFiles()
+	if err != nil {
+		return err
+	}
+	switch mode {
+	case modeJSON:
+		return tui.JSONEncoder(os.Stdout, map[string][]string{"kit_files": files})
+	default:
+		for _, f := range files {
+			fmt.Println(f)
 		}
-		var files []string
-		if repo.HasCommits() {
-			ref, err := repo.Head()
-			if err != nil {
-				return fmt.Errorf("read HEAD: %w", err)
-			}
-			files, err = repo.FindFiles(`KIT`, ref, false)
-			if err != nil {
-				return fmt.Errorf("find KIT files: %w", err)
-			}
-		}
-		mode, _ := resolveOutputMode(cmd)
-		switch mode {
-		case modeJSON:
-			return tui.JSONEncoder(os.Stdout, map[string][]string{"kit_files": files})
-		case modeTUI:
-			rows := make([]tui.Row, 0, len(files))
-			for _, f := range files {
-				rows = append(rows, tui.Row{Title: f, Subtitle: "KIT file", Data: f})
-			}
-			if _, err := tui.RunListView(rows); err != nil {
-				return fmt.Errorf("run list: %w", err)
-			}
-		default:
-			for _, f := range files {
-				fmt.Println(f)
-			}
-		}
-		return nil
-	},
+	}
+	return nil
+}
+
+// listKitFiles lists every KIT file in the working tree, the
+// repository-root KIT first.
+func listKitFiles() ([]string, error) {
+	s, err := openKitSet()
+	if err != nil {
+		return nil, err
+	}
+	return s.paths(), nil
 }
 
 func init() {
+	kitfilesListCmd.RunE = runKitfilesList
 	kitfilesCmd.AddCommand(kitfilesListCmd)
 	rootCmd.AddCommand(kitfilesCmd)
 }

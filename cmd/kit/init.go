@@ -48,7 +48,7 @@ var initCmd = &cobra.Command{
 		var fields tui.RuleFields
 		var err error
 		if pattern == "" && mode == modeTUI {
-			fields, err = tui.RunForm(tui.RuleFields{Strategy: "union"})
+			fields, err = tui.RunForm(tui.RuleFields{Strategy: "union"}, nil)
 			if err != nil {
 				return fmt.Errorf("run form: %w", err)
 			}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"regexp"
 
 	"gopkg.in/yaml.v3"
@@ -135,4 +136,14 @@ func (k *KitFile) Validate() error {
 		}
 	}
 	return errors.Join(all...)
+}
+
+// FileName is the name every KIT file has, in any directory.
+const FileName = "KIT"
+
+// IsKitFile reports whether the slash-separated repository path names a KIT
+// file: its final element is exactly FileName. Matching the whole name
+// keeps files such as "docs/KITCHEN.md" from being read as rules.
+func IsKitFile(p string) bool {
+	return path.Base(p) == FileName
 }

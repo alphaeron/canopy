@@ -9,10 +9,13 @@ import (
 )
 
 type Rule struct {
-	Pattern              string              `yaml:"-"`
-	Name                 string              `yaml:"name"`
-	IgnoreParentDirs     bool                `yaml:"ignore_parent_dirs"`
-	CombineStrategy      RuleCombineStrategy `yaml:"combine_strategy"`
+	Pattern          string `yaml:"-"`
+	Name             string `yaml:"name"`
+	IgnoreParentDirs bool   `yaml:"ignore_parent_dirs"`
+	// CombineStrategy is omitted when unset, so a rule loaded without one
+	// is saved without one (writing the zero value would produce
+	// "unknown", which does not parse back).
+	CombineStrategy      RuleCombineStrategy `yaml:"combine_strategy,omitempty"`
 	CurrentDirectoryOnly bool                `yaml:"current_directory_only"`
 	SelfApprove          bool                `yaml:"self_approve"`
 	Approvers            ApproverTargets     `yaml:"approvers"`

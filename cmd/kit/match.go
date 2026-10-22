@@ -13,58 +13,66 @@ import (
 
 // matchCmd runs the kenin engine's match phase over the selected file
 // universe and renders per-file scopes, per-scope groups, or the diff
-// content. --by-scope and --scope are pure projections of one MatchResult —
-// they never re-run the engine, so switching views costs no extra match work.
+// content. The engine runs once per invocation. --scope narrows the result
+// after matching (kenin.MatchResult.FilterScope): matching always uses every
+// rule, so it changes what is reported, never what matches. --by-scope
+// regroups that one result per scope.
 var matchCmd = &cobra.Command{
 	Use:   "match",
 	Short: "Match files against KIT file rules",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		repo, err := getRepo()
-		if err != nil {
-			return err
-		}
-		engine, err := newLocalEngine(repo)
-		if err != nil {
-			return err
-		}
+}
 
-		changed, _ := cmd.Flags().GetBool("changed")
-		scopeName, _ := cmd.Flags().GetString("scope")
-		includeDiff, _ := cmd.Flags().GetBool("diff")
-		byScope, _ := cmd.Flags().GetBool("by-scope")
+// runMatchCmd is matchCmd's RunE, assigned in init: it opens the TUI, whose
+// routes refer back to the command, so a RunE literal would be an
+// initialization cycle.
+func runMatchCmd(cmd *cobra.Command, args []string) error {
+	changed, _ := cmd.Flags().GetBool("changed")
+	scopeName, _ := cmd.Flags().GetString("scope")
+	includeDiff, _ := cmd.Flags().GetBool("diff")
+	byScope, _ := cmd.Flags().GetBool("by-scope")
+	opts := kenin.Options{
+		ChangedOnly: changed,
+		ScopeName:   scopeName,
+		IncludeDiff: includeDiff,
+	}
 
-		result, err := engine.Match(kenin.Options{
-			ChangedOnly: changed,
-			ScopeName:   scopeName,
-			IncludeDiff: includeDiff,
-		})
-		if err != nil {
-			return fmt.Errorf("run match: %w", err)
-		}
+	mode, _ := resolveOutputMode(cmd)
+	if mode == modeTUI {
+		return openTUI(cmd, matchRoute(valuesFrom(cmd, args)))
+	}
+	result, err := runMatch(opts)
+	if err != nil {
+		return err
+	}
+	if byScope {
+		return renderMatchByScope(mode, result.GroupByScope())
+	}
+	return renderMatchByFile(mode, result, includeDiff)
+}
 
-		mode, _ := resolveOutputMode(cmd)
-		if byScope {
-			groups := result.GroupByScope()
-			return renderMatchByScope(mode, groups)
-		}
-		return renderMatchByFile(mode, result, includeDiff)
-	},
+// runMatch runs the engine's match phase against the local repository.
+func runMatch(opts kenin.Options) (*kenin.MatchResult, error) {
+	repo, err := getRepo()
+	if err != nil {
+		return nil, err
+	}
+	engine, err := newLocalEngine(repo)
+	if err != nil {
+		return nil, err
+	}
+	result, err := engine.Match(opts)
+	if err != nil {
+		return nil, fmt.Errorf("run match: %w", err)
+	}
+	return result, nil
 }
 
 // renderMatchByFile renders one row per file, optionally followed by each
-// file's matched rules and the matched diff.
+// file's matched rules and the matched diff. The TUI form is matchPage.
 func renderMatchByFile(mode outputMode, result *kenin.MatchResult, includeDiff bool) error {
 	switch mode {
 	case modeJSON:
 		return tui.JSONEncoder(os.Stdout, result)
-	case modeTUI:
-		rows := make([]tui.Row, 0, len(result.Files))
-		for _, fm := range result.Files {
-			rows = append(rows, tui.Row{Title: fm.Path, Subtitle: scopeTitles(fm.Scopes), Data: fm})
-		}
-		if _, err := tui.RunListView(rows); err != nil {
-			return fmt.Errorf("render match: %w", err)
-		}
 	default:
 		var header = []string{"File", "Scope"}
 		rows := make([][]string, 0, len(result.Files))
@@ -87,18 +95,11 @@ func renderMatchByFile(mode outputMode, result *kenin.MatchResult, includeDiff b
 }
 
 // renderMatchByScope renders one row per scope, then the files it matched.
+// The TUI form is matchByScopePage.
 func renderMatchByScope(mode outputMode, groups []kenin.ScopeGroup) error {
 	switch mode {
 	case modeJSON:
 		return tui.JSONEncoder(os.Stdout, groups)
-	case modeTUI:
-		scopes := make(map[string][]string)
-		for _, g := range groups {
-			scopes[g.Scope.Name] = append(scopes[g.Scope.Name], g.Files...)
-		}
-		if err := tui.RunTree(tui.NewTreeFromScopes(scopes)); err != nil {
-			return fmt.Errorf("render match by scope: %w", err)
-		}
 	default:
 		var header = []string{"Scope", "Pattern", "KIT File", "Files"}
 		rows := make([][]string, 0, len(groups))
@@ -132,6 +133,7 @@ func scopeTitles(scopes []kenin.Scope) string {
 }
 
 func init() {
+	matchCmd.RunE = runMatchCmd
 	matchCmd.Flags().Bool("changed", false, "match only files changed in the working tree")
 	matchCmd.Flags().Bool("diff", false, "attach the diff content of each file to its match row")
 	matchCmd.Flags().Bool("by-scope", false, "render the result as a scope-keyed group tree")

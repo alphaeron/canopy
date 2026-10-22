@@ -58,6 +58,27 @@ type MatchResult struct {
 	Files []FileMatch `json:"files"`
 }
 
+// FilterScope returns the projection of r onto the scope named name: each
+// file keeps only its scopes with that name, and files left with none are
+// dropped. Matching is unchanged; this narrows what is reported, so views
+// can switch scopes without re-running the engine. r is not modified, but
+// the returned result shares diff strings with it.
+func (r *MatchResult) FilterScope(name string) *MatchResult {
+	out := &MatchResult{RepoRoot: r.RepoRoot, Files: []FileMatch{}}
+	for _, fm := range r.Files {
+		var scopes []Scope
+		for _, s := range fm.Scopes {
+			if s.Name == name {
+				scopes = append(scopes, s)
+			}
+		}
+		if len(scopes) > 0 {
+			out.Files = append(out.Files, FileMatch{Path: fm.Path, Scopes: scopes, Diff: fm.Diff})
+		}
+	}
+	return out
+}
+
 // FilesForScope returns the sorted, de-duplicated file paths that have at
 // least one scope whose rule name is exactly name.
 func (r *MatchResult) FilesForScope(name string) []string {
@@ -129,6 +150,22 @@ func (r *MatchResult) filesFor(pred func(Scope) bool) []string {
 type ScopeGroup struct {
 	Scope Scope    `json:"scope"`
 	Files []string `json:"files"`
+}
+
+// FilterScope returns a copy of the report whose per-scope breakdown keeps
+// only the scopes named name. Universe, Covered, Percent, and Uncovered still
+// describe every rule: narrowing the breakdown does not change what the
+// repository's rules cover.
+func (r *CoverageReport) FilterScope(name string) *CoverageReport {
+	per := make([]ScopeCoverage, 0, len(r.PerScope))
+	for _, sc := range r.PerScope {
+		if sc.Scope.Name == name {
+			per = append(per, sc)
+		}
+	}
+	out := *r
+	out.PerScope = per
+	return &out
 }
 
 // ScopeCoverage is how many files in the universe a single scope matched,

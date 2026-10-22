@@ -11,19 +11,22 @@ import (
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// rulesAddCmd appends a rule to a KIT file. Without --file it edits the
-// repository-root KIT. With a TTY and no --pattern it runs the interactive
-// form; with --pattern it applies the flags non-interactively.
+// rulesAddCmd appends a rule to a KIT file. --file names the KIT file. On a
+// terminal without --pattern it runs the interactive form, which starts with
+// a KIT file picker (preselecting the KIT file nearest the current
+// directory) unless --file chose one; with --pattern it applies the flags
+// non-interactively, writing to the repository-root KIT unless --file says
+// otherwise.
 var rulesAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a rule to a KIT file",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		targetPath, err := targetKitFile(cmd)
+		s, err := openKitSet()
 		if err != nil {
 			return err
 		}
-
-		k, err := loadKitFileContent(targetPath)
+		fileFlag, _ := cmd.Flags().GetString("file")
+		target, err := s.resolve(fileFlag)
 		if err != nil {
 			return err
 		}
@@ -31,14 +34,36 @@ var rulesAddCmd = &cobra.Command{
 
 		var fields tui.RuleFields
 		if mode == modeTUI && !ruleFlagProvided(cmd, "pattern") {
-			fields, err = tui.RunForm(tui.RuleFields{Strategy: "union"})
+			seed := tui.RuleFields{Strategy: "union"}
+			var choices []string
+			if target == "" {
+				if choices = s.paths(); len(choices) == 0 {
+					return errNoKitFiles
+				}
+				seed.KitFile = s.nearest()
+			}
+			fields, err = tui.RunForm(seed, choices)
 			if err != nil {
 				return fmt.Errorf("run form: %w", err)
+			}
+			// The form requires a pattern, so an empty one means it was
+			// cancelled.
+			if fields.Pattern == "" {
+				fmt.Fprintln(os.Stderr, "add aborted")
+				return nil
+			}
+			if target == "" {
+				target = fields.KitFile
 			}
 		} else {
 			fields, err = ruleFieldsFromFlags(cmd)
 			if err != nil {
 				return err
+			}
+			if target == "" {
+				if target, err = s.resolve(kitfile.FileName); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -46,28 +71,16 @@ var rulesAddCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := k.Add(rule); err != nil {
+		k, err := s.mutate(target, func(k *kitfile.KitFile) error { return k.Add(rule) })
+		if err != nil {
 			return err
-		}
-		if err := k.Save(targetPath); err != nil {
-			return fmt.Errorf("save %s: %w", targetPath, err)
 		}
 		if mode == modeJSON {
 			return tui.JSONEncoder(os.Stdout, k.Rules)
 		}
-		fmt.Printf("added rule %q to %s\n", rule.Pattern, targetPath)
+		fmt.Printf("added rule %q to %s\n", rule.Pattern, target)
 		return nil
 	},
-}
-
-// targetKitFile resolves the --file flag to the KIT file path this command
-// mutates, falling back to the repository-root KIT.
-func targetKitFile(cmd *cobra.Command) (string, error) {
-	filePath, err := cmd.Flags().GetString("file")
-	if err != nil {
-		return "", err
-	}
-	return kitFilePathFor(filePath), nil
 }
 
 // ruleFlagProvided reports whether the named flag was explicitly set on the
@@ -199,7 +212,7 @@ func buildRuleFromFields(f tui.RuleFields) (kitfile.Rule, error) {
 }
 
 func init() {
-	kitFileFlag(rulesAddCmd)
+	kitFileFlag(rulesAddCmd, "the KIT file to add the rule to (default: chosen in the form, or the repository-root KIT)")
 	rulesAddCmd.Flags().String("pattern", "", "rule pattern (regex); required unless the interactive form is used")
 	rulesAddCmd.Flags().String("name", "", "rule name")
 	rulesAddCmd.Flags().String("strategy", "union", "combine strategy: union, override, or intersect")

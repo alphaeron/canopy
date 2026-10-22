@@ -1,0 +1,640 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
+	"github.com/alphaeron/kit/internal/kenin"
+	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/shonin"
+	"github.com/alphaeron/kit/internal/tui"
+)
+
+// The TUI mirrors the command tree: every read-only command is a route
+// whose options form (o) offers exactly the command's arguments and flags,
+// derived from its cobra definition. The home page and command palette list
+// each command once, with default values; running a command on a terminal
+// opens the TUI on its route with the given values. Both paths load data
+// through the same functions, so the CLI and the TUI take the same inputs
+// and show the same results. Mutating commands (init, rules add/edit/remove)
+// keep their prompts on the CLI and are actions on the rules page.
+
+// appRoutes is the home page and command palette: one route per command.
+func appRoutes() []tui.Route {
+	var none tui.Values
+	return []tui.Route{
+		matchRoute(none),
+		coverageRoute(none),
+		rulesListRoute(none),
+		rulesGetRoute(none),
+		rulesFilesRoute(none),
+		kitfilesRoute(none),
+		validateRoute(none),
+	}
+}
+
+// openTUI deep-links into the TUI at r. The page is loaded first so a load
+// failure (not a repository, unknown scope, unreadable KIT file) is an
+// ordinary CLI error, exactly as when the command renders a table.
+func openTUI(cmd *cobra.Command, r tui.Route) error {
+	ctx := cmd.Context()
+	page, err := r.Load(ctx, r.Values)
+	if err != nil {
+		return err
+	}
+	return tui.Run(ctx, tui.Config{Routes: appRoutes(), Start: &r, StartPage: page})
+}
+
+// valuesFrom is a CLI invocation as route values: its arguments and every
+// command flag the user set.
+func valuesFrom(cmd *cobra.Command, args []string) tui.Values {
+	v := tui.Values{Args: slices.Clone(args), Flags: map[string]string{}}
+	cmd.LocalNonPersistentFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Changed {
+			v.Flags[f.Name] = f.Value.String()
+		}
+	})
+	return v
+}
+
+// commandRoute builds the route for cmd. Its parameters come from cmd's own
+// definition (paramsFor), so the options form can never drift from the CLI.
+func commandRoute(cmd *cobra.Command, v tui.Values, load func(context.Context, tui.Values) (tui.Page, error)) tui.Route {
+	return tui.Route{
+		Command:     strings.TrimPrefix(cmd.CommandPath(), rootCmd.Name()+" "),
+		Description: cmd.Short,
+		Params:      paramsFor(cmd),
+		Values:      v,
+		Load:        load,
+	}
+}
+
+// choiceFlags are the flags whose values the options form offers as a list
+// instead of free text.
+var choiceFlags = map[string]func(context.Context) ([]string, error){
+	"file": func(context.Context) ([]string, error) {
+		s, err := openKitSet()
+		if err != nil {
+			return nil, err
+		}
+		return s.paths(), nil
+	},
+	"scope": func(context.Context) ([]string, error) {
+		s, err := openKitSet()
+		if err != nil {
+			return nil, err
+		}
+		return s.scopeNames(), nil
+	},
+}
+
+// paramsFor lists cmd's positional argument (from its Use line, with its
+// help from the "arg" annotation) and its visible flags, as options-form
+// parameters.
+func paramsFor(cmd *cobra.Command) []tui.Param {
+	var ps []tui.Param
+	if arg, ok := argParam(cmd.Use); ok {
+		arg.Help = cmd.Annotations["arg"]
+		ps = append(ps, arg)
+	}
+	cmd.LocalNonPersistentFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Hidden || f.Deprecated != "" {
+			return
+		}
+		p := tui.Param{Name: f.Name, Help: f.Usage}
+		switch {
+		case f.Value.Type() == "bool":
+			p.Kind = tui.ParamBool
+		case choiceFlags[f.Name] != nil:
+			p.Kind, p.Choices = tui.ParamChoice, choiceFlags[f.Name]
+		}
+		ps = append(ps, p)
+	})
+	return ps
+}
+
+// argParam reads the positional argument from a cobra Use line such as
+// "files <pattern>" (required) or "get [pattern...]" (optional, variadic).
+func argParam(use string) (tui.Param, bool) {
+	fields := strings.Fields(use)
+	if len(fields) < 2 {
+		return tui.Param{}, false
+	}
+	a := fields[1]
+	p := tui.Param{Arg: true, Required: strings.HasPrefix(a, "<")}
+	a = strings.Trim(a, "<>[]")
+	p.Variadic = strings.HasSuffix(a, "...")
+	p.Name = strings.TrimSuffix(a, "...")
+	return p, p.Name != ""
+}
+
+// matchRoute shows the match result per file, or per scope with --by-scope.
+func matchRoute(v tui.Values) tui.Route {
+	return commandRoute(matchCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		result, err := runMatch(kenin.Options{
+			ChangedOnly: v.Bool("changed"),
+			IncludeDiff: v.Bool("diff"),
+			ScopeName:   v.Flag("scope"),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if v.Bool("by-scope") {
+			return matchByScopePage(result.GroupByScope()), nil
+		}
+		return matchPage(result), nil
+	})
+}
+
+// fileRulesRoute is the drill-down from a file to `kit rules get` for it.
+func fileRulesRoute(path string) tui.Route {
+	r := rulesGetRoute(tui.Values{Args: []string{exactPath(path)}})
+	r.Title = "rules for " + path
+	return r
+}
+
+// matchPage lists files; the drill-down shows which scopes own the file
+// (name, pattern, and the KIT file that declared it) and, when the match ran
+// with --diff, the file's diff. Enter opens the file's full rule chain.
+func matchPage(result *kenin.MatchResult) tui.Page {
+	items := make([]tui.Item, 0, len(result.Files))
+	owned := 0
+	for _, fm := range result.Files {
+		if len(fm.Scopes) > 0 {
+			owned++
+		}
+		var d tui.Detail
+		d.Fields = []tui.Field{{Label: "File", Value: fm.Path}, {Label: "Scopes", Value: strconv.Itoa(len(fm.Scopes))}}
+		for _, s := range fm.Scopes {
+			d.Sections = append(d.Sections, tui.Section{Title: "Scope " + scopeLabel(s), Lines: scopeLines(s)})
+		}
+		if fm.Diff != "" {
+			d.Sections = append(d.Sections, tui.Section{Title: "Diff", Lines: strings.Split(strings.TrimRight(fm.Diff, "\n"), "\n"), Diff: true})
+		}
+		r := fileRulesRoute(fm.Path)
+		items = append(items, tui.Item{Title: fm.Path, Description: scopeTitles(fm.Scopes), Detail: d, Route: &r})
+	}
+	return tui.NewListPage("Files", items).
+		WithSummary(fmt.Sprintf("%d files · %d owned · %d unowned", len(items), owned, len(items)-owned))
+}
+
+func matchByScopePage(groups []kenin.ScopeGroup) tui.Page {
+	tg := make([]tui.TreeGroup, 0, len(groups))
+	for _, g := range groups {
+		files := slices.Sorted(slices.Values(g.Files))
+		items := make([]tui.Item, 0, len(files))
+		for _, f := range files {
+			r := fileRulesRoute(f)
+			items = append(items, tui.Item{
+				Title:  f,
+				Detail: tui.Detail{Fields: []tui.Field{{Label: "File", Value: f}, {Label: "Scope", Value: scopeLabel(g.Scope)}}},
+				Route:  &r,
+			})
+		}
+		d := tui.Detail{Fields: append(scopeFields(g.Scope), tui.Field{Label: "Files", Value: strconv.Itoa(len(files))})}
+		tg = append(tg, tui.TreeGroup{Title: scopeLabel(g.Scope), Detail: d, Items: items})
+	}
+	return tui.NewTreePage("Scopes", tg)
+}
+
+func coverageRoute(v tui.Values) tui.Route {
+	return commandRoute(coverageCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		report, err := runCoverage(kenin.Options{ChangedOnly: v.Bool("changed"), ScopeName: v.Flag("scope")})
+		if err != nil {
+			return nil, err
+		}
+		return coveragePage(report), nil
+	})
+}
+
+// coveragePage lists each scope's coverage; a scope with a name drills into
+// `kit match --scope <name>`, the files it matched. The uncovered files are
+// the last row.
+func coveragePage(report *kenin.CoverageReport) tui.Page {
+	items := make([]tui.Item, 0, len(report.PerScope)+1)
+	for _, sc := range report.PerScope {
+		d := tui.Detail{Fields: append(scopeFields(sc.Scope),
+			tui.Field{Label: "Files", Value: strconv.Itoa(sc.Files)},
+			tui.Field{Label: "Coverage", Value: fmt.Sprintf("%.2f%%", sc.Percent)},
+		)}
+		it := tui.Item{
+			Title:       scopeLabel(sc.Scope) + " in " + sc.Scope.KITFile,
+			Description: fmt.Sprintf("%d file(s), %.1f%%", sc.Files, sc.Percent),
+			Detail:      d,
+		}
+		if sc.Scope.Name != "" {
+			r := matchRoute(tui.Values{Flags: map[string]string{"scope": sc.Scope.Name}})
+			it.Route = &r
+		}
+		items = append(items, it)
+	}
+	items = append(items, tui.Item{
+		Title:       "Uncovered files",
+		Description: fmt.Sprintf("%d file(s) match no rule", len(report.Uncovered)),
+		Detail:      tui.Detail{Sections: []tui.Section{{Title: "Uncovered", Lines: report.Uncovered}}},
+	})
+	return tui.NewListPage("Coverage", items).
+		WithSummary(fmt.Sprintf("Total coverage: %.2f%% of %d file(s)", report.Percent, report.Universe))
+}
+
+// rulesListRoute lists the rules of every KIT file, or of the one --file
+// names, with add, edit, and remove.
+func rulesListRoute(v tui.Values) tui.Route {
+	return commandRoute(rulesListCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		s, err := openKitSet()
+		if err != nil {
+			return nil, err
+		}
+		only, err := s.resolve(v.Flag("file"))
+		if err != nil {
+			return nil, err
+		}
+		return rulesPage(s, only), nil
+	})
+}
+
+// rulesPage lists the rules of every KIT file, or only only's. The status
+// line says when other KIT files are hidden and how to see them.
+func rulesPage(s *kitSet, only string) tui.Page {
+	entries := s.entries(only)
+	items := make([]tui.Item, len(entries))
+	for i, e := range entries {
+		items[i] = ruleItem(e)
+	}
+	title, summary := "Rules", countOf(len(entries), "rule")+" in "+countOf(len(s.rules), "KIT file")
+	if only != "" {
+		title += " · " + only
+		summary = fmt.Sprintf("%s · showing %s, 1 of %s · o to change", countOf(len(entries), "rule"), only, countOf(len(s.rules), "KIT file"))
+	}
+	return tui.NewListPage(title, items).WithSummary(summary).WithActions(ruleActions(s)...)
+}
+
+// ruleItem is a rule row: the detail shows the full rule, and enter drills
+// into `kit rules files <pattern>`.
+func ruleItem(e ruleEntry) tui.Item {
+	files := rulesFilesRoute(tui.Values{Args: []string{e.rule.Pattern}})
+	return tui.Item{
+		Title:       e.rule.Pattern,
+		Description: orNone(e.rule.Name) + " · " + e.kitFile,
+		Detail:      tui.Detail{Fields: ruleFieldsDetail(e.kitFile, e.rule)},
+		Route:       &files,
+		Value:       e,
+	}
+}
+
+func ruleFieldsDetail(path string, r kitfile.Rule) []tui.Field {
+	strategy := strategyName(r)
+	if strategy == "" {
+		strategy = "(default)"
+	}
+	return []tui.Field{
+		{Label: "Pattern", Value: r.Pattern},
+		{Label: "Name", Value: r.Name},
+		{Label: "KIT file", Value: path},
+		{Label: "Strategy", Value: strategy},
+		{Label: "Ignore parent", Value: strconv.FormatBool(r.IgnoreParentDirs)},
+		{Label: "Current dir only", Value: strconv.FormatBool(r.CurrentDirectoryOnly)},
+		{Label: "Self approve", Value: strconv.FormatBool(r.SelfApprove)},
+		{Label: "Approvers", Value: approversLabel(r.Approvers)},
+	}
+}
+
+// ruleActions are the TUI forms of rules add, edit, and remove. Each row
+// knows its KIT file, so edit and remove are never ambiguous; add offers
+// every KIT file, preselecting the hovered row's, as `kit rules add` does
+// on a terminal.
+func ruleActions(s *kitSet) []tui.Action {
+	return []tui.Action{
+		{
+			Key: "a", Help: "add rule",
+			Run: func(ctx context.Context, it tui.Item) (tui.Outcome, error) {
+				choices := s.paths()
+				if len(choices) == 0 {
+					return tui.Outcome{}, errNoKitFiles
+				}
+				seed := tui.RuleFields{KitFile: s.nearest()}
+				if e, err := entryOf(it); err == nil {
+					seed.KitFile = e.kitFile
+				}
+				page := tui.NewRuleFormPage("add rule", seed, choices, func(ctx context.Context, f tui.RuleFields) (string, error) {
+					return addRule(s, f.KitFile, f)
+				})
+				return tui.Outcome{Page: page}, nil
+			},
+		},
+		{
+			Key: "e", Help: "edit rule", RequiresItem: true,
+			Run: func(ctx context.Context, it tui.Item) (tui.Outcome, error) {
+				e, err := entryOf(it)
+				if err != nil {
+					return tui.Outcome{}, err
+				}
+				page := tui.NewRuleFormPage("edit rule", fieldsFromRule(e.rule), nil, func(ctx context.Context, f tui.RuleFields) (string, error) {
+					return editRule(s, e.kitFile, e.rule.Pattern, f)
+				})
+				return tui.Outcome{Page: page}, nil
+			},
+		},
+		{
+			Key: "x", Help: "remove rule", RequiresItem: true,
+			Confirm: func(it tui.Item) string {
+				if e, err := entryOf(it); err == nil {
+					return fmt.Sprintf("Remove rule %q from %s?", e.rule.Pattern, e.kitFile)
+				}
+				return fmt.Sprintf("Remove rule %q?", it.Title)
+			},
+			Run: func(ctx context.Context, it tui.Item) (tui.Outcome, error) {
+				e, err := entryOf(it)
+				if err != nil {
+					return tui.Outcome{}, err
+				}
+				pattern := e.rule.Pattern
+				if _, err := s.mutate(e.kitFile, func(k *kitfile.KitFile) error { return k.Remove(pattern) }); err != nil {
+					return tui.Outcome{}, err
+				}
+				return tui.Outcome{Info: fmt.Sprintf("removed rule %q from %s", pattern, e.kitFile), Reload: true}, nil
+			},
+		},
+	}
+}
+
+// entryOf recovers the rule a rules-page row was built from (see ruleItem).
+func entryOf(it tui.Item) (ruleEntry, error) {
+	e, ok := it.Value.(ruleEntry)
+	if !ok {
+		return ruleEntry{}, fmt.Errorf("row %q does not hold a rule", it.Title)
+	}
+	return e, nil
+}
+
+func addRule(s *kitSet, kitFile string, f tui.RuleFields) (string, error) {
+	rule, err := buildRuleFromFields(f)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.mutate(kitFile, func(k *kitfile.KitFile) error { return k.Add(rule) }); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("added rule %q to %s", rule.Pattern, kitFile), nil
+}
+
+// editRule replaces the rule keyed by pattern; the pattern itself is the
+// rule's identity and is not changed, matching `kit rules edit`.
+func editRule(s *kitSet, kitFile, pattern string, f tui.RuleFields) (string, error) {
+	f.Pattern = pattern
+	rule, err := buildRuleFromFields(f)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.mutate(kitFile, func(k *kitfile.KitFile) error {
+		return k.Edit(pattern, func(r *kitfile.Rule) { *r = rule })
+	}); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("edited rule %q in %s", pattern, kitFile), nil
+}
+
+// fieldsFromRule seeds the rule form (and `kit rules edit`) from an existing
+// rule. A rule whose combine_strategy is omitted or corrupt is evaluated
+// with shonin's default, which behaves as override, so it is seeded as
+// override: re-saving it must not silently change who has to approve.
+func fieldsFromRule(r kitfile.Rule) tui.RuleFields {
+	strategy := r.CombineStrategy.String()
+	if _, err := kitfile.ParseRuleCombineStrategy(strategy); err != nil {
+		strategy = kitfile.RuleCombineStrategyOverride.String()
+	}
+	return tui.RuleFields{
+		Pattern:        r.Pattern,
+		Name:           r.Name,
+		Strategy:       strategy,
+		Ignore:         r.IgnoreParentDirs,
+		CurrentDirOnly: r.CurrentDirectoryOnly,
+		SelfApprove:    r.SelfApprove,
+		ApproverText:   kitfile.ApproversToText(r.Approvers),
+	}
+}
+
+// rulesGetRoute resolves the rule chain for the files matching the pattern
+// arguments (every file when there are none) and shows it as rule → files.
+func rulesGetRoute(v tui.Values) tui.Route {
+	return commandRoute(rulesGetCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		patterns := v.Args
+		if len(patterns) == 0 {
+			patterns = []string{`.*`}
+		}
+		chain, err := ruleChainFor(patterns)
+		if err != nil {
+			return nil, err
+		}
+		return rulesGetPage(chain), nil
+	})
+}
+
+// ruleChainFor resolves the rule chain for every file matching any pattern
+// at HEAD. A repository with no commit has no files and an empty chain.
+func ruleChainFor(patterns []string) (shonin.RuleChain, error) {
+	repo, err := getRepo()
+	if err != nil {
+		return shonin.RuleChain{}, err
+	}
+	ref, err := repo.Head()
+	if err != nil {
+		if repo.HasCommits() {
+			return shonin.RuleChain{}, fmt.Errorf("read HEAD: %w", err)
+		}
+		return shonin.RuleChain{FileChains: map[string][]shonin.RuleLayer{}}, nil
+	}
+	seen := map[string]bool{}
+	var paths []string
+	for _, p := range patterns {
+		found, err := repo.FindFiles(p, ref, false)
+		if err != nil {
+			return shonin.RuleChain{}, fmt.Errorf("find files for %q: %w", p, err)
+		}
+		for _, f := range found {
+			if !seen[f] {
+				seen[f] = true
+				paths = append(paths, f)
+			}
+		}
+	}
+	s := shonin.Shonin{Fetch: &shonin.LocalFetcher{Repo: repo}, Resolver: &shonin.DefaultApproverResolver{}}
+	chain, err := s.GetRuleChainForFiles(paths)
+	if err != nil {
+		return shonin.RuleChain{}, fmt.Errorf("fetch rules: %w", err)
+	}
+	return chain, nil
+}
+
+// rulesGetPage groups files under the rules that apply to them. A rule's
+// detail is its definition; a file's detail is its provenance: every layer
+// of its chain, from the nearest KIT file up, and the rules each declares.
+func rulesGetPage(chain shonin.RuleChain) tui.Page {
+	scopes := ruleScopes(chain)
+	groups := make([]tui.TreeGroup, 0, len(scopes))
+	for _, sc := range scopes {
+		items := make([]tui.Item, 0, len(sc.files))
+		for _, f := range sc.files {
+			items = append(items, tui.Item{Title: f, Detail: provenance(f, chain.FileChains[f])})
+		}
+		groups = append(groups, tui.TreeGroup{
+			Title:  sc.key,
+			Detail: tui.Detail{Fields: append(ruleFieldsDetail(sc.kitFile, sc.rule), tui.Field{Label: "Files", Value: strconv.Itoa(len(sc.files))})},
+			Items:  items,
+		})
+	}
+	return tui.NewTreePage("Rules", groups).
+		WithSummary(countOf(len(groups), "rule") + " across " + countOf(len(chain.FileChains), "file"))
+}
+
+func provenance(file string, layers []shonin.RuleLayer) tui.Detail {
+	d := tui.Detail{Fields: []tui.Field{{Label: "File", Value: file}, {Label: "Layers", Value: strconv.Itoa(len(layers))}}}
+	for _, layer := range layers {
+		var lines []string
+		for _, r := range layer.Rules {
+			line := r.Pattern + "  " + r.CombineStrategy.String()
+			if r.Name != "" {
+				line = r.Name + ": " + line
+			}
+			if a := approversLabel(r.Approvers); a != "" {
+				line += "  [" + a + "]"
+			}
+			lines = append(lines, line)
+		}
+		d.Sections = append(d.Sections, tui.Section{Title: layerKitFile(layer), Lines: lines})
+	}
+	return d
+}
+
+// rulesFilesRoute lists the files a pattern matches; the pattern argument
+// is required, so opening it from home asks for it first.
+func rulesFilesRoute(v tui.Values) tui.Route {
+	r := commandRoute(rulesFilesCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		if len(v.Args) == 0 {
+			return nil, fmt.Errorf("rules files needs a pattern")
+		}
+		pattern := v.Args[0]
+		files, err := findPatternFiles(pattern, v.Flag("revision"))
+		if err != nil {
+			return nil, err
+		}
+		items := make([]tui.Item, len(files))
+		for i, f := range files {
+			r := fileRulesRoute(f)
+			items[i] = tui.Item{Title: f, Detail: tui.Detail{Fields: []tui.Field{{Label: "File", Value: f}, {Label: "Matched by", Value: pattern}}}, Route: &r}
+		}
+		return tui.NewListPage("Files matching "+pattern, items).WithSummary(countOf(len(files), "file")), nil
+	})
+	if len(v.Args) > 0 {
+		r.Title = "files " + v.Args[0]
+	}
+	return r
+}
+
+// kitfilesRoute lists the KIT files; enter opens `kit rules list --file`.
+func kitfilesRoute(v tui.Values) tui.Route {
+	return commandRoute(kitfilesListCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		files, err := listKitFiles()
+		if err != nil {
+			return nil, err
+		}
+		items := make([]tui.Item, len(files))
+		for i, f := range files {
+			r := rulesListRoute(tui.Values{Flags: map[string]string{"file": f}})
+			items[i] = tui.Item{Title: f, Description: "KIT file", Detail: tui.Detail{Fields: []tui.Field{{Label: "Path", Value: f}}}, Route: &r}
+		}
+		return tui.NewListPage("KIT files", items).WithSummary(countOf(len(files), "KIT file")), nil
+	})
+}
+
+// validateRoute shows every KIT file (or the one --file names) with its
+// violations; enter opens the file's rules.
+func validateRoute(v tui.Values) tui.Route {
+	return commandRoute(validateCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		s, err := openKitSet()
+		if err != nil {
+			return nil, err
+		}
+		only, err := s.resolve(v.Flag("file"))
+		if err != nil {
+			return nil, err
+		}
+		var items []tui.Item
+		total := 0
+		for _, path := range s.paths() {
+			if only != "" && path != only {
+				continue
+			}
+			violations, _ := validateGrouped(map[string]kitfile.Rules{path: s.rules[path]})
+			errs := violations[path]
+			total += len(errs)
+			desc := "valid"
+			if len(errs) > 0 {
+				desc = countOf(len(errs), "violation")
+			}
+			r := rulesListRoute(tui.Values{Flags: map[string]string{"file": path}})
+			items = append(items, tui.Item{
+				Title:       path,
+				Description: desc,
+				Detail:      tui.Detail{Sections: []tui.Section{{Title: "Violations", Lines: errs}}},
+				Route:       &r,
+			})
+		}
+		return tui.NewListPage("Validation", items).
+			WithSummary(fmt.Sprintf("%s in %s", countOf(total, "violation"), countOf(len(items), "KIT file"))), nil
+	})
+}
+
+// approversLabel renders approvers as "team (2), lead (1)": each target with
+// the number of approvals it requires.
+func approversLabel(targets kitfile.ApproverTargets) string {
+	parts := make([]string, len(targets))
+	for i, t := range targets {
+		parts[i] = fmt.Sprintf("%s (%d)", t.Target, t.RequiredCount)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func scopeLabel(s kenin.Scope) string {
+	if s.Name != "" {
+		return s.Name
+	}
+	return s.Pattern
+}
+
+func scopeFields(s kenin.Scope) []tui.Field {
+	return []tui.Field{
+		{Label: "Scope", Value: s.Name},
+		{Label: "Pattern", Value: s.Pattern},
+		{Label: "Directory", Value: s.Directory},
+		{Label: "KIT file", Value: s.KITFile},
+	}
+}
+
+func scopeLines(s kenin.Scope) []string {
+	return []string{"pattern   " + s.Pattern, "declared  " + s.KITFile}
+}
+
+// exactPath is the rules get pattern matching exactly one path.
+func exactPath(p string) string { return "^" + regexp.QuoteMeta(p) + "$" }
+
+func countOf(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return strconv.Itoa(n) + " " + noun + "s"
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "(unnamed)"
+	}
+	return s
+}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 
 	"github.com/google/go-github/v71/github"
 	"gopkg.in/yaml.v3"
@@ -37,7 +36,7 @@ type RemoteFetcher struct {
 }
 
 // Execute runs the fetch phase for a remote repository: it lists the tree at
-// BaseSHA, locates every KIT file (same "KIT" pattern match as LocalFetcher),
+// BaseSHA, locates every KIT file (kitfile.IsKitFile, as LocalFetcher does),
 // reads each file's contents as a single blob, and parses it into a rule list.
 // Any per-file read or parse error is accumulated into the returned error;
 // the partial result is still provided so callers can report which files
@@ -55,7 +54,6 @@ func (rf *RemoteFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 		return "", rules, fmt.Errorf("list base tree %s: %w", rf.BaseSHA, err)
 	}
 
-	kitFilePattern := regexp.MustCompile("KIT")
 	var fetchErrors []error
 	kitFileCount := 0
 	for _, entry := range tree.Entries {
@@ -63,7 +61,7 @@ func (rf *RemoteFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 			continue
 		}
 		path := entry.GetPath()
-		if !kitFilePattern.MatchString(path) {
+		if !kitfile.IsKitFile(path) {
 			continue
 		}
 		kitFileCount++

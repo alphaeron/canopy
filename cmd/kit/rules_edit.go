@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -9,9 +12,12 @@ import (
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// rulesEditCmd edits one rule by its pattern in a KIT file, replacing the
-// rule's name, strategy, flags, and approver list. The pattern itself is
-// positional and immutable here, since the pattern is the rule's key.
+// rulesEditCmd edits one rule by its pattern, replacing the rule's name,
+// strategy, flags, and approver list. The pattern is positional and
+// immutable, since it is the rule's key within its KIT file. Without --file
+// the KIT file is the one declaring the pattern; when several do, a
+// terminal gets a picker and a script must pass --file (see
+// kitSet.ruleTarget).
 var rulesEditCmd = &cobra.Command{
 	Use:   "edit <pattern>",
 	Short: "Edit a rule in a KIT file",
@@ -19,31 +25,28 @@ var rulesEditCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pattern := args[0]
-		targetPath, err := targetKitFile(cmd)
-		if err != nil {
-			return err
-		}
-
-		k, err := loadKitFileContent(targetPath)
-		if err != nil {
-			return err
-		}
-		rule, ok := k.RuleByPattern(pattern)
-		if !ok {
-			return fmt.Errorf("no rule with pattern %q in %s: %w", pattern, targetPath, kitfile.ErrPatternNotFound)
-		}
-
 		mode, _ := resolveOutputMode(cmd)
-		fields := tui.RuleFields{
-			Name:           rule.Name,
-			Strategy:       rule.CombineStrategy.String(),
-			Ignore:         rule.IgnoreParentDirs,
-			CurrentDirOnly: rule.CurrentDirectoryOnly,
-			SelfApprove:    rule.SelfApprove,
-			ApproverText:   kitfile.ApproversToText(rule.Approvers),
+		s, err := openKitSet()
+		if err != nil {
+			return err
 		}
+		fileFlag, _ := cmd.Flags().GetString("file")
+		target, err := s.ruleTarget(fileFlag, pattern, mode == modeTUI)
+		if errors.Is(err, tui.ErrAborted) {
+			fmt.Fprintln(os.Stderr, "edit aborted")
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		i := slices.IndexFunc(s.rules[target], func(r kitfile.Rule) bool { return r.Pattern == pattern })
+		if i < 0 {
+			return fmt.Errorf("no rule with pattern %q in %s: %w", pattern, target, kitfile.ErrPatternNotFound)
+		}
+
+		fields := fieldsFromRule(s.rules[target][i])
 		if mode == modeTUI {
-			f, ferr := tui.RunForm(fields)
+			f, ferr := tui.RunForm(fields, nil)
 			if ferr != nil {
 				return fmt.Errorf("run form: %w", ferr)
 			}
@@ -66,22 +69,21 @@ var rulesEditCmd = &cobra.Command{
 			return err
 		}
 		newRule.Pattern = pattern
-		if err := k.Edit(pattern, func(r *kitfile.Rule) { *r = newRule }); err != nil {
+		if _, err := s.mutate(target, func(k *kitfile.KitFile) error {
+			return k.Edit(pattern, func(r *kitfile.Rule) { *r = newRule })
+		}); err != nil {
 			return err
-		}
-		if err := k.Save(targetPath); err != nil {
-			return fmt.Errorf("save %s: %w", targetPath, err)
 		}
 		if mode == modeJSON {
 			return tui.JSONEncoder(cmd.OutOrStdout(), newRule)
 		}
-		fmt.Printf("edited rule %q in %s\n", pattern, targetPath)
+		fmt.Printf("edited rule %q in %s\n", pattern, target)
 		return nil
 	},
 }
 
 func init() {
-	kitFileFlag(rulesEditCmd)
+	kitFileFlag(rulesEditCmd, "the KIT file holding the rule (default: the one KIT file with that pattern)")
 	rulesEditCmd.Flags().String("name", "", "the rule's display name")
 	rulesEditCmd.Flags().String("strategy", "", "combine strategy: union, override, or intersect")
 	rulesEditCmd.Flags().Bool("ignore-parent", false, "ignore_parent_dirs: discard parent directories' rules")

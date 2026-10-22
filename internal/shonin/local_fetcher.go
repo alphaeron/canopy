@@ -24,10 +24,12 @@ type LocalFetcher struct {
 }
 
 // Execute runs the fetch phase for a local checkout: it locates every KIT
-// file at HEAD and parses its rules. Any failure to get the repository
-// root, read HEAD, or locate files is returned as an error; per-file
-// read/parse errors are accumulated into the returned error while the
-// successful rules are still provided to the caller.
+// file in the working tree (gitutil.WorktreeFiles: committed KIT files that
+// still exist plus new, non-ignored ones) and parses each from disk, so
+// uncommitted rule changes are what a local review sees. Any failure to get
+// the repository root or list the working tree is returned as an error;
+// per-file read/parse errors are accumulated into the returned error while
+// the successful rules are still provided to the caller.
 func (lf *LocalFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 	log := lf.log()
 	rules := make(map[string]kitfile.Rules)
@@ -39,17 +41,7 @@ func (lf *LocalFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 		return "", nil, fmt.Errorf("get repository root: %w", err)
 	}
 
-	ref, err := lf.Repo.Head()
-	if err != nil {
-		log.Error("kit: failed to read HEAD",
-			"component", "fetcher", "phase", "fetch", "repo_root", repoRoot, "error", err)
-		return repoRoot, rules, fmt.Errorf("read repository HEAD: %w", err)
-	}
-	log.Debug("kit: resolved repository HEAD",
-		"component", "fetcher", "phase", "fetch", "repo_root", repoRoot, "ref", ref.Hash())
-
-	isAbsolute := false
-	paths, err := lf.Repo.FindFiles("KIT", ref, isAbsolute)
+	paths, err := lf.Repo.WorktreeFiles(kitfile.IsKitFile)
 	if err != nil {
 		log.Error("kit: failed to find KIT files",
 			"component", "fetcher", "phase", "fetch", "repo_root", repoRoot, "error", err)

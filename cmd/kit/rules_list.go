@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -10,97 +11,119 @@ import (
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// rulesListCmd lists the rules stored in a KIT file. Without --file it targets
-// the repository-root KIT. --all lists every tracked KIT file's rules in one
-// grouped render.
+// rulesListCmd lists the rules of every KIT file in the repository, or of
+// one KIT file with --file. Narrowing never changes the output's shape: the
+// JSON is always one flat list of rules, each naming its KIT file.
 var rulesListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List the rules in a KIT file",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		filePath, _ := cmd.Flags().GetString("file")
-		all, _ := cmd.Flags().GetBool("all")
-		mode, _ := resolveOutputMode(cmd)
-
-		if all {
-			repo, err := getRepo()
-			if err != nil {
-				return err
-			}
-			grouped, err := allKitContent(repo)
-			if err != nil {
-				return err
-			}
-			return renderAllKitFiles(mode, grouped)
-		}
-
-		k, err := loadKitFileContent(kitFilePathFor(filePath))
-		if err != nil {
-			return err
-		}
-		return renderKitFileRules(mode, k)
-	},
+	Short: "List the rules in the repository's KIT files",
+	Long: `List the rules of every KIT file in the repository's working tree, the
+repository-root KIT first. --file narrows the list to one KIT file.`,
 }
 
-// loadKitFileContent reads a KIT file by path, falling back to the repository
-// root if it is not found on disk (so that a worktree-relative path works
-// from any subdirectory).
-func loadKitFileContent(path string) (*kitfile.KitFile, error) {
-	k, err := kitfile.LoadKitFile(path)
+// runRulesList is rulesListCmd's RunE, assigned in init: it opens the TUI, whose
+// routes refer back to the command, so a RunE literal would be an
+// initialization cycle.
+func runRulesList(cmd *cobra.Command, args []string) error {
+	mode, _ := resolveOutputMode(cmd)
+	if mode == modeTUI {
+		return openTUI(cmd, rulesListRoute(valuesFrom(cmd, args)))
+	}
+	filePath, _ := cmd.Flags().GetString("file")
+	s, err := openKitSet()
 	if err != nil {
-		return nil, fmt.Errorf("load KIT file %q: %w", path, err)
+		return err
 	}
-	return k, nil
+	only, err := s.resolve(filePath)
+	if err != nil {
+		return err
+	}
+	entries := s.entries(only)
+	if mode == modeJSON {
+		return tui.JSONEncoder(os.Stdout, rulesJSON(entries))
+	}
+	if err := tui.TablePrinter(os.Stdout, []string{"KIT File", "Pattern", "Name", "Strategy", "Approvers"}, ruleRows(entries)); err != nil {
+		return err
+	}
+	return narrowedNotice(os.Stderr, only, len(s.rules))
 }
 
-func renderKitFileRules(mode outputMode, k *kitfile.KitFile) error {
-	switch mode {
-	case modeJSON:
-		return tui.JSONEncoder(os.Stdout, k.Rules)
-	case modeTUI:
-		rows := make([]tui.Row, 0, len(k.Rules))
-		for _, r := range k.Rules {
-			rows = append(rows, tui.Row{Title: r.Pattern, Subtitle: r.Name, Data: r})
-		}
-		if _, err := tui.RunListView(rows); err != nil {
-			return fmt.Errorf("render list: %w", err)
-		}
-		return nil
-	default:
-		for _, r := range k.Rules {
-			fmt.Printf("%s\t%s\n", r.Pattern, r.Name)
-		}
+// narrowedNotice tells the user, on stderr so stdout stays parseable, that
+// --file hid the other KIT files.
+func narrowedNotice(w io.Writer, only string, total int) error {
+	if only == "" || total <= 1 {
 		return nil
 	}
+	_, err := fmt.Fprintf(w, "showing %s, 1 of %d KIT files; omit --file to list all\n", only, total)
+	return err
 }
 
-func renderAllKitFiles(mode outputMode, grouped map[string]kitfile.Rules) error {
-	switch mode {
-	case modeJSON:
-		return tui.JSONEncoder(os.Stdout, grouped)
-	case modeTUI:
-		var rows []tui.Row
-		for file := range grouped {
-			for _, r := range grouped[file] {
-				rows = append(rows, tui.Row{Title: r.Pattern, Subtitle: file, Data: r.Pattern})
-			}
+// ruleJSON is a rule in the rules list JSON: the KIT file fields under
+// their KIT file (YAML) names, plus the KIT file that declares it.
+type ruleJSON struct {
+	KitFile              string         `json:"kit_file"`
+	Pattern              string         `json:"pattern"`
+	Name                 string         `json:"name,omitempty"`
+	CombineStrategy      string         `json:"combine_strategy,omitempty"`
+	IgnoreParentDirs     bool           `json:"ignore_parent_dirs"`
+	CurrentDirectoryOnly bool           `json:"current_directory_only"`
+	SelfApprove          bool           `json:"self_approve"`
+	Approvers            []approverJSON `json:"approvers"`
+}
+
+type approverJSON struct {
+	Target        string `json:"target"`
+	RequiredCount int    `json:"required_count"`
+}
+
+// rulesJSON converts entries to the JSON list; it is never null.
+func rulesJSON(entries []ruleEntry) []ruleJSON {
+	out := make([]ruleJSON, 0, len(entries))
+	for _, e := range entries {
+		approvers := make([]approverJSON, 0, len(e.rule.Approvers))
+		for _, a := range e.rule.Approvers {
+			approvers = append(approvers, approverJSON{Target: a.Target, RequiredCount: a.RequiredCount})
 		}
-		if _, err := tui.RunListView(rows); err != nil {
-			return fmt.Errorf("render list: %w", err)
-		}
-		return nil
-	default:
-		for file := range grouped {
-			fmt.Printf("%s\n", file)
-			for _, r := range grouped[file] {
-				fmt.Printf("  %s\t%s\n", r.Pattern, r.Name)
-			}
-		}
-		return nil
+		out = append(out, ruleJSON{
+			KitFile:              e.kitFile,
+			Pattern:              e.rule.Pattern,
+			Name:                 e.rule.Name,
+			CombineStrategy:      strategyName(e.rule),
+			IgnoreParentDirs:     e.rule.IgnoreParentDirs,
+			CurrentDirectoryOnly: e.rule.CurrentDirectoryOnly,
+			SelfApprove:          e.rule.SelfApprove,
+			Approvers:            approvers,
+		})
 	}
+	return out
+}
+
+// ruleRows are the table rows for entries.
+func ruleRows(entries []ruleEntry) [][]string {
+	rows := make([][]string, 0, len(entries))
+	for _, e := range entries {
+		strategy := strategyName(e.rule)
+		if strategy == "" {
+			strategy = "(default)"
+		}
+		rows = append(rows, []string{e.kitFile, e.rule.Pattern, e.rule.Name, strategy, approversLabel(e.rule.Approvers)})
+	}
+	return rows
+}
+
+// strategyName is the rule's combine_strategy as written in the KIT file,
+// or "" when it is omitted (shonin then applies its default).
+func strategyName(r kitfile.Rule) string {
+	if _, err := kitfile.ParseRuleCombineStrategy(r.CombineStrategy.String()); err != nil {
+		return ""
+	}
+	return r.CombineStrategy.String()
 }
 
 func init() {
-	rulesListCmd.Flags().String("file", "", "target a specific KIT file")
-	rulesListCmd.Flags().Bool("all", false, "list rules from every KIT file in the repository")
+	rulesListCmd.RunE = runRulesList
+	rulesListCmd.Flags().String("file", "", "list only this KIT file (path from the repository root, or its directory)")
+	rulesListCmd.Flags().Bool("all", false, "list every KIT file")
+	cobra.CheckErr(rulesListCmd.Flags().MarkDeprecated("all", "every KIT file is listed by default; use --file to narrow"))
 	rulesCmd.AddCommand(rulesListCmd)
 }

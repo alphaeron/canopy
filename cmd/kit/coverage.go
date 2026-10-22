@@ -19,64 +19,51 @@ import (
 var coverageCmd = &cobra.Command{
 	Use:   "coverage",
 	Short: "Coverage report of KIT file rules",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		repo, err := getRepo()
-		if err != nil {
-			return err
-		}
-		engine, err := newLocalEngine(repo)
-		if err != nil {
-			return err
-		}
-
-		changed, _ := cmd.Flags().GetBool("changed")
-		scopeName, _ := cmd.Flags().GetString("scope")
-
-		report, err := engine.Coverage(kenin.Options{ChangedOnly: changed})
-		if err != nil {
-			return fmt.Errorf("run coverage: %w", err)
-		}
-
-		if scopeName != "" {
-			report = filterCoverageByScope(report, scopeName)
-		}
-
-		mode, _ := resolveOutputMode(cmd)
-		return renderCoverage(mode, report)
-	},
 }
 
-// renderCoverage renders the engine's coverage report in any of the three
-// CLI output modes. TUI mode lists the per-scope breakdown rows; the
-// uncovered files are a plain list underneath, and the overall percentage
-// is always the last row.
+// runCoverageCmd is coverageCmd's RunE, assigned in init: it opens the TUI, whose
+// routes refer back to the command, so a RunE literal would be an
+// initialization cycle.
+func runCoverageCmd(cmd *cobra.Command, args []string) error {
+	changed, _ := cmd.Flags().GetBool("changed")
+	scopeName, _ := cmd.Flags().GetString("scope")
+	opts := kenin.Options{ChangedOnly: changed, ScopeName: scopeName}
+
+	mode, _ := resolveOutputMode(cmd)
+	if mode == modeTUI {
+		return openTUI(cmd, coverageRoute(valuesFrom(cmd, args)))
+	}
+	report, err := runCoverage(opts)
+	if err != nil {
+		return err
+	}
+	return renderCoverage(mode, report)
+}
+
+// runCoverage computes the coverage report against the local repository.
+// opts.ScopeName narrows the per-scope breakdown in the engine.
+func runCoverage(opts kenin.Options) (*kenin.CoverageReport, error) {
+	repo, err := getRepo()
+	if err != nil {
+		return nil, err
+	}
+	engine, err := newLocalEngine(repo)
+	if err != nil {
+		return nil, err
+	}
+	report, err := engine.Coverage(opts)
+	if err != nil {
+		return nil, fmt.Errorf("run coverage: %w", err)
+	}
+	return report, nil
+}
+
+// renderCoverage renders the engine's coverage report as JSON or a table.
+// The TUI form is coveragePage.
 func renderCoverage(mode outputMode, report *kenin.CoverageReport) error {
 	switch mode {
 	case modeJSON:
 		return tui.JSONEncoder(os.Stdout, report)
-	case modeTUI:
-		rows := make([]tui.Row, 0, len(report.PerScope))
-		for _, sc := range report.PerScope {
-			title := sc.Scope.Name
-			if title == "" {
-				title = sc.Scope.Pattern
-			}
-			rows = append(rows, tui.Row{
-				Title:    title + " in " + sc.Scope.KITFile,
-				Subtitle: fmt.Sprintf("%d file(s), %.1f%%", sc.Files, sc.Percent),
-				Data:     sc,
-			})
-		}
-		if _, err := tui.RunListView(rows); err != nil {
-			return fmt.Errorf("render coverage: %w", err)
-		}
-		fmt.Printf("Total coverage: %.2f%% of %d file(s)\n", report.Percent, report.Universe)
-		if len(report.Uncovered) > 0 {
-			fmt.Println("\nUncovered files:")
-			for _, f := range report.Uncovered {
-				fmt.Println("  " + f)
-			}
-		}
 	default:
 		fmt.Printf("Total coverage: %.2f%% of %d file(s)\n", report.Percent, report.Universe)
 		var header = []string{"Scope", "Pattern", "KIT File", "Files", "Percent"}
@@ -99,27 +86,8 @@ func renderCoverage(mode outputMode, report *kenin.CoverageReport) error {
 	return nil
 }
 
-// filterCoverageByScope returns a copy of the report that retains only the
-// scope whose name equals name, leaving the overall universe / covered
-// numbers untouched — this is the projection --scope <name> asks for.
-func filterCoverageByScope(report *kenin.CoverageReport, name string) *kenin.CoverageReport {
-	per := make([]kenin.ScopeCoverage, 0, len(report.PerScope))
-	for _, sc := range report.PerScope {
-		if sc.Scope.Name != name {
-			continue
-		}
-		per = append(per, sc)
-	}
-	return &kenin.CoverageReport{
-		Universe:  report.Universe,
-		Covered:   report.Covered,
-		Percent:   report.Percent,
-		PerScope:  per,
-		Uncovered: report.Uncovered,
-	}
-}
-
 func init() {
+	coverageCmd.RunE = runCoverageCmd
 	coverageCmd.Flags().String("scope", "", "restrict the coverage report to this scope name")
 	coverageCmd.Flags().Bool("changed", false, "report only over the changed files in the working tree")
 	rootCmd.AddCommand(coverageCmd)

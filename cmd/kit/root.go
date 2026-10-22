@@ -7,6 +7,7 @@ import (
 
 	"github.com/alphaeron/kit/internal/config"
 	"github.com/alphaeron/kit/internal/gitutil"
+	"github.com/alphaeron/kit/internal/tui"
 )
 
 // gitRepo is the repository wrapper the CLI's commands consume. It is an
@@ -52,6 +53,15 @@ separate binary, not a subcommand here).`,
 	},
 }
 
+// Bare `kit` on a terminal opens the TUI's home page, which lists every
+// command's page; piped or with --json it prints help as it always has.
+func runRoot(cmd *cobra.Command, args []string) error {
+	if mode, _ := resolveOutputMode(cmd); mode != modeTUI {
+		return cmd.Help()
+	}
+	return tui.Run(cmd.Context(), tui.Config{Routes: appRoutes()})
+}
+
 // Execute adds all child commands to the root command and sets flags
 // appropriately. This is called by the main entry point. It only needs to
 // happen once to the rootCmd.
@@ -60,6 +70,7 @@ func Execute() {
 }
 
 func init() {
+	rootCmd.RunE = runRoot
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $KIT_CONFIG or $HOME/.kit.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug-level) logging; overrides the config file and KIT_VERBOSE")
 	rootCmd.PersistentFlags().Bool("json", false, "emit the result as JSON instead of rendering a table or TUI")

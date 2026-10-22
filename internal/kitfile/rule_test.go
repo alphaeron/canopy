@@ -1,6 +1,8 @@
 package kitfile
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -96,5 +98,33 @@ func TestRulesParsing(t *testing.T) {
 		if !reflect.DeepEqual(rules[i], expected[i]) {
 			t.Errorf("parsed rule does not match expected value")
 		}
+	}
+}
+
+// TestOmittedStrategyRoundTrips guards against saving a rule loaded without
+// combine_strategy as "combine_strategy: unknown", which then fails to
+// parse and makes the whole KIT file unreadable (e.g. after `kit rules add`
+// to a file holding such a rule).
+func TestOmittedStrategyRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "KIT")
+	if err := os.WriteFile(path, []byte("- '.*':\n    name: legacy\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	k, err := LoadKitFile(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := k.Add(Rule{Pattern: "new", CombineStrategy: RuleCombineStrategyUnion}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := k.Save(path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	again, err := LoadKitFile(path)
+	if err != nil {
+		t.Fatalf("a saved file must load again: %v", err)
+	}
+	if len(again.Rules) != 2 || again.Rules[0].CombineStrategy != ruleCombineStrategyUnknown || again.Rules[1].CombineStrategy != RuleCombineStrategyUnion {
+		t.Errorf("rules after round trip = %+v", again.Rules)
 	}
 }

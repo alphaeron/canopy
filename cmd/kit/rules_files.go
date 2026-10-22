@@ -17,53 +17,62 @@ import (
 // before the CLI tries to enumerate the tree and silently produce an empty
 // result.
 var rulesFilesCmd = &cobra.Command{
-	Use:   "files <pattern>",
-	Short: "List the files a rule pattern matches",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		pattern := args[0]
-		revision, _ := cmd.Flags().GetString("revision")
+	Use:         "files <pattern>",
+	Short:       "List the files a rule pattern matches",
+	Args:        cobra.ExactArgs(1),
+	Annotations: map[string]string{"arg": "regular expression of file paths"},
+}
 
-		repo, err := getRepo()
-		if err != nil {
-			return err
-		}
-		files, err := repo.FindFilesAt(pattern, plumbing.Revision(revision), false)
-		if err != nil {
-			// No commit yet: no tracked files exist to match, so an empty
-			// result is valid rather than a fatal missing-HEAD error.
-			if revision == "" && !repo.HasCommits() {
-				files = nil
-			} else {
-				return fmt.Errorf("find files for pattern %q: %w", pattern, err)
-			}
-		}
+// runRulesFiles is rulesFilesCmd's RunE, assigned in init: it opens the TUI, whose
+// routes refer back to the command, so a RunE literal would be an
+// initialization cycle.
+func runRulesFiles(cmd *cobra.Command, args []string) error {
+	pattern := args[0]
+	revision, _ := cmd.Flags().GetString("revision")
 
-		mode, _ := resolveOutputMode(cmd)
-		switch mode {
-		case modeJSON:
-			return tui.JSONEncoder(os.Stdout, map[string][]string{"pattern": {pattern}, "files": files})
-		case modeTUI:
-			rows := make([]tui.Row, 0, len(files))
-			for _, f := range files {
-				rows = append(rows, tui.Row{Title: f, Subtitle: "matched " + pattern, Data: f})
-			}
-			if _, err := tui.RunListView(rows); err != nil {
-				return fmt.Errorf("render files: %w", err)
-			}
-		default:
-			for _, f := range files {
-				fmt.Println(f)
-			}
-			if len(files) == 0 {
-				fmt.Println("(no files match)")
-			}
+	mode, _ := resolveOutputMode(cmd)
+	if mode == modeTUI {
+		return openTUI(cmd, rulesFilesRoute(valuesFrom(cmd, args)))
+	}
+	files, err := findPatternFiles(pattern, revision)
+	if err != nil {
+		return err
+	}
+	switch mode {
+	case modeJSON:
+		return tui.JSONEncoder(os.Stdout, map[string][]string{"pattern": {pattern}, "files": files})
+	default:
+		for _, f := range files {
+			fmt.Println(f)
 		}
-		return nil
-	},
+		if len(files) == 0 {
+			fmt.Println("(no files match)")
+		}
+	}
+	return nil
+}
+
+// findPatternFiles lists the files pattern matches at revision (HEAD when
+// empty).
+func findPatternFiles(pattern, revision string) ([]string, error) {
+	repo, err := getRepo()
+	if err != nil {
+		return nil, err
+	}
+	files, err := repo.FindFilesAt(pattern, plumbing.Revision(revision), false)
+	if err != nil {
+		// No commit yet: no tracked files exist to match, so an empty
+		// result is valid rather than a fatal missing-HEAD error.
+		if revision == "" && !repo.HasCommits() {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find files for pattern %q: %w", pattern, err)
+	}
+	return files, nil
 }
 
 func init() {
+	rulesFilesCmd.RunE = runRulesFiles
 	rulesFilesCmd.Flags().String("revision", "", "tree revision to resolve (defaults to HEAD)")
 	rulesCmd.AddCommand(rulesFilesCmd)
 }

@@ -1,6 +1,8 @@
 package kenin
 
 import (
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/kitfile"
@@ -17,6 +19,7 @@ type stubSource struct {
 	changedErr error
 	changedSet []string
 	diffs      map[string]string
+	diffCalls  []string
 }
 
 func (s *stubSource) RepoRoot() string { return s.root }
@@ -35,6 +38,7 @@ func (s *stubSource) ChangedFiles() ([]string, error) {
 }
 
 func (s *stubSource) DiffContent(path string) (string, error) {
+	s.diffCalls = append(s.diffCalls, path)
 	return s.diffs[path], nil
 }
 
@@ -102,24 +106,92 @@ func TestMatchChangesOnlyFilesWhenOptionSet(t *testing.T) {
 	}
 }
 
+// TestMatchScopeNameFilter pins --scope semantics: matching still uses
+// every rule (src/api.go keeps only its own layer's scope, since
+// IgnoreParentDirs breaks the parent chain), files outside the scope are
+// dropped, a declared scope matching nothing is an empty result, and an
+// undeclared name is ErrUnknownScope.
 func TestMatchScopeNameFilter(t *testing.T) {
-	src := &stubSource{
-		root:  "/repo",
-		rules: fixtureRules,
-		// One matching .go file; the nested rule's scope name is "src go rules"
-		allFiles: []string{"src/api.go"},
+	universe := []string{"main.go", "src/api.go", "docs/readme.md"}
+	tests := []struct {
+		name      string
+		scope     string
+		changed   []string
+		wantFiles []string
+		wantErr   error
+	}{
+		{name: "nested scope", scope: "src go rules", wantFiles: []string{"src/api.go"}},
+		{name: "root scope", scope: "top-level go rules", wantFiles: []string{"main.go"}},
+		{name: "declared but unmatched", scope: "src go rules", changed: []string{"main.go"}, wantFiles: []string{}},
+		{name: "undeclared", scope: "no such rule", wantErr: ErrUnknownScope},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := &stubSource{root: "/repo", rules: fixtureRules, allFiles: universe, changedSet: tc.changed}
+			res, err := New(src, nil).Match(Options{ScopeName: tc.scope, ChangedOnly: tc.changed != nil})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Match error = %v, want %v", err, tc.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			got := []string{}
+			for _, fm := range res.Files {
+				got = append(got, fm.Path)
+				if len(fm.Scopes) != 1 || fm.Scopes[0].Name != tc.scope {
+					t.Errorf("%s scopes = %+v, want only %q", fm.Path, fm.Scopes, tc.scope)
+				}
+			}
+			if !reflect.DeepEqual(got, tc.wantFiles) {
+				t.Errorf("files = %v, want %v", got, tc.wantFiles)
+			}
+		})
+	}
+}
+
+// TestCoverageScopeName mirrors Match: a declared scope narrows the
+// breakdown but not the overall numbers, and an undeclared name is
+// ErrUnknownScope rather than an empty report.
+func TestCoverageScopeName(t *testing.T) {
+	src := &stubSource{root: "/repo", rules: fixtureRules, allFiles: []string{"main.go", "src/api.go", "docs/readme.md"}}
 	e := New(src, nil)
-	res, err := e.Match(Options{ScopeName: "src go rules"})
+	full, err := e.Coverage(Options{})
 	if err != nil {
-		t.Fatalf("Match scope filter: %v", err)
+		t.Fatalf("Coverage: %v", err)
 	}
-	if len(res.Files) != 1 {
-		t.Fatalf("Match returned %d files, want 1", len(res.Files))
+	got, err := e.Coverage(Options{ScopeName: "src go rules"})
+	if err != nil {
+		t.Fatalf("Coverage scoped: %v", err)
 	}
-	fm := res.Files[0]
-	if len(fm.Scopes) != 1 || fm.Scopes[0].Name != "src go rules" {
-		t.Errorf("scope filter did not retain requested scope: %+v", fm.Scopes)
+	if len(got.PerScope) != 1 || got.PerScope[0].Scope.Name != "src go rules" {
+		t.Errorf("breakdown = %+v, want only the requested scope", got.PerScope)
+	}
+	if got.Universe != full.Universe || got.Covered != full.Covered || !reflect.DeepEqual(got.Uncovered, full.Uncovered) {
+		t.Errorf("overall numbers changed: got %+v, full %+v", got, full)
+	}
+	if _, err := e.Coverage(Options{ScopeName: "no such rule"}); !errors.Is(err, ErrUnknownScope) {
+		t.Errorf("undeclared scope error = %v, want ErrUnknownScope", err)
+	}
+}
+
+// TestMatchDiffOnlyForReportedFiles checks that a scope filter also skips
+// fetching diffs for the files it drops.
+func TestMatchDiffOnlyForReportedFiles(t *testing.T) {
+	src := &stubSource{
+		root:     "/repo",
+		rules:    fixtureRules,
+		allFiles: []string{"main.go", "src/api.go", "docs/readme.md"},
+		diffs:    map[string]string{"src/api.go": "+x\n"},
+	}
+	res, err := New(src, nil).Match(Options{ScopeName: "src go rules", IncludeDiff: true})
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	if !reflect.DeepEqual(src.diffCalls, []string{"src/api.go"}) {
+		t.Errorf("diffs fetched for %v, want only the reported file", src.diffCalls)
+	}
+	if len(res.Files) != 1 || res.Files[0].Diff != "+x\n" {
+		t.Errorf("reported file must carry its diff: %+v", res.Files)
 	}
 }
 

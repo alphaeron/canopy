@@ -15,72 +15,77 @@ import (
 // against the repository at HEAD exactly as the match/coverage engine
 // consumes it — this is the pure "which rules apply where" projection.
 var rulesGetCmd = &cobra.Command{
-	Use:   "get",
+	Use:   "get [pattern...]",
 	Short: "Get review rules for a file/regex",
 	Long: `The get subcommand allows for checking applicable review rules for
 a file/pattern matching a set of files.
 
 This way, review requirements can be visualized locally without opening a
 pull request.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			args = []string{`.*`}
-		}
-		repo, err := getRepo()
-		if err != nil {
-			return err
-		}
-		ref, err := repo.Head()
-		if err != nil {
-			if repo.HasCommits() {
-				return fmt.Errorf("read HEAD: %w", err)
-			}
-			// No commit yet: no tracked files exist, so the rule chain over
-			// any file set is simply empty.
-			return renderEmptyMatch(cmd)
-		}
-		fetch := shonin.LocalFetcher{Repo: repo}
-		s := shonin.Shonin{
-			Fetch:    &fetch,
-			Resolver: &shonin.DefaultApproverResolver{},
-		}
+	Annotations: map[string]string{"arg": "regular expression of the files to check (default: every file)"},
+}
 
-		mode, _ := resolveOutputMode(cmd)
-		for _, arg := range args {
-			paths, err := repo.FindFiles(arg, ref, false)
-			if err != nil {
-				return fmt.Errorf("find files for %q: %w", arg, err)
-			}
-			ruleChain, err := s.GetRuleChainForFiles(paths)
-			if err != nil {
-				return fmt.Errorf("fetch rules for %q: %w", arg, err)
-			}
-			switch mode {
-			case modeJSON:
-				m := map[string][]string{}
-				for _, file := range paths {
-					for _, layer := range ruleChain.FileChains[file] {
-						for _, rule := range layer.Rules {
-							m[file] = append(m[file], rule.Pattern)
-						}
+// runRulesGet is rulesGetCmd's RunE, assigned in init: it opens the TUI, whose
+// routes refer back to the command, so a RunE literal would be an
+// initialization cycle.
+func runRulesGet(cmd *cobra.Command, args []string) error {
+	if mode, _ := resolveOutputMode(cmd); mode == modeTUI {
+		return openTUI(cmd, rulesGetRoute(valuesFrom(cmd, args)))
+	}
+	if len(args) == 0 {
+		args = []string{`.*`}
+	}
+	repo, err := getRepo()
+	if err != nil {
+		return err
+	}
+	ref, err := repo.Head()
+	if err != nil {
+		if repo.HasCommits() {
+			return fmt.Errorf("read HEAD: %w", err)
+		}
+		// No commit yet: no tracked files exist, so the rule chain over
+		// any file set is simply empty.
+		return renderEmptyMatch(cmd)
+	}
+	fetch := shonin.LocalFetcher{Repo: repo}
+	s := shonin.Shonin{
+		Fetch:    &fetch,
+		Resolver: &shonin.DefaultApproverResolver{},
+	}
+
+	mode, _ := resolveOutputMode(cmd)
+	for _, arg := range args {
+		paths, err := repo.FindFiles(arg, ref, false)
+		if err != nil {
+			return fmt.Errorf("find files for %q: %w", arg, err)
+		}
+		ruleChain, err := s.GetRuleChainForFiles(paths)
+		if err != nil {
+			return fmt.Errorf("fetch rules for %q: %w", arg, err)
+		}
+		switch mode {
+		case modeJSON:
+			m := map[string][]string{}
+			for _, file := range paths {
+				for _, layer := range ruleChain.FileChains[file] {
+					for _, rule := range layer.Rules {
+						m[file] = append(m[file], rule.Pattern)
 					}
 				}
-				if err := tui.JSONEncoder(os.Stdout, m); err != nil {
-					return err
-				}
-			case modeTUI:
-				if err := tui.RunTree(tui.NewTreeFromScopes(scopesByRule(ruleChain))); err != nil {
-					return fmt.Errorf("run tree view: %w", err)
-				}
-			default:
-				shonin.PrintRuleChain(ruleChain)
 			}
+			if err := tui.JSONEncoder(os.Stdout, m); err != nil {
+				return err
+			}
+		default:
+			shonin.PrintRuleChain(ruleChain)
 		}
-		return nil
-	},
+	}
+	return nil
 }
 
 func init() {
+	rulesGetCmd.RunE = runRulesGet
 	rulesCmd.AddCommand(rulesGetCmd)
 }
 

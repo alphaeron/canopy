@@ -11,34 +11,28 @@ import (
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// validateCmd reports integrity violations in one or every KIT file in the
-// repository. The output is the validation error table: every violation,
-// with the KIT file that carries it. A clean run reports every file valid.
+// validateCmd reports integrity violations in every KIT file in the
+// repository, or in one with --file. The output is the validation error
+// table: every violation, with the KIT file that carries it. A clean run
+// reports every file valid; any violation exits non-zero.
 var validateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate KIT file integrity",
-	Long:  "Validate KIT file structure, rule patterns, and required fields.",
+	Long: `Validate KIT file structure, rule patterns, and required fields in every KIT
+file in the repository's working tree. --file narrows the check to one KIT file.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		repo, err := getRepo()
+		filePath, _ := cmd.Flags().GetString("file")
+		s, err := openKitSet()
 		if err != nil {
 			return err
 		}
-		all, _ := cmd.Flags().GetBool("all")
-		filePath, _ := cmd.Flags().GetString("file")
-
-		var grouped map[string]kitfile.Rules
-		if all {
-			grouped, err = allKitContent(repo)
-			if err != nil {
-				return err
-			}
-		} else {
-			path := kitFilePathFor(filePath)
-			k, err := loadKitFileContent(path)
-			if err != nil {
-				return err
-			}
-			grouped = map[string]kitfile.Rules{path: k.Rules}
+		only, err := s.resolve(filePath)
+		if err != nil {
+			return err
+		}
+		grouped := s.rules
+		if only != "" {
+			grouped = map[string]kitfile.Rules{only: s.rules[only]}
 		}
 
 		violations, errList := validateGrouped(grouped)
@@ -49,20 +43,22 @@ var validateCmd = &cobra.Command{
 		}
 		var header = []string{"KIT File", "Violation"}
 		rows := make([][]string, 0, len(errList))
-		for path, errs := range violations {
-			for _, e := range errs {
+		for _, path := range s.paths() {
+			for _, e := range violations[path] {
 				rows = append(rows, []string{path, e})
 			}
 		}
 		if err := tui.TablePrinter(os.Stdout, header, rows); err != nil {
 			return err
 		}
+		if err := narrowedNotice(os.Stderr, only, len(s.rules)); err != nil {
+			return err
+		}
 		if len(violations) == 0 {
 			fmt.Printf("All %d KIT file(s) are valid.\n", len(grouped))
-		} else {
-			return fmt.Errorf("%d violation(s) in %d KIT file(s)", len(errList), len(violations))
+			return nil
 		}
-		return nil
+		return fmt.Errorf("%d violation(s) in %d KIT file(s)", len(errList), len(violations))
 	},
 }
 
@@ -95,7 +91,8 @@ func validateGrouped(grouped map[string]kitfile.Rules) (map[string][]string, []s
 }
 
 func init() {
-	validateCmd.Flags().String("file", "", "validate only this specific KIT file (default is repo-root KIT)")
-	validateCmd.Flags().Bool("all", false, "validate every KIT file in the repository")
+	validateCmd.Flags().String("file", "", "validate only this KIT file (path from the repository root, or its directory)")
+	validateCmd.Flags().Bool("all", false, "validate every KIT file")
+	cobra.CheckErr(validateCmd.Flags().MarkDeprecated("all", "every KIT file is validated by default; use --file to narrow"))
 	rootCmd.AddCommand(validateCmd)
 }

@@ -10,15 +10,6 @@ import (
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-func TestKitFilePathFor(t *testing.T) {
-	if got := kitFilePathFor(""); got != "KIT" {
-		t.Errorf("empty flag should default to KIT, got %q", got)
-	}
-	if got := kitFilePathFor("sub/KIT"); got != "sub/KIT" {
-		t.Errorf("explicit path should pass through, got %q", got)
-	}
-}
-
 func TestApproverTextTable(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -119,41 +110,18 @@ func TestScopeTitles(t *testing.T) {
 	}
 }
 
-func TestFilterCoverageByScope(t *testing.T) {
-	report := &kenin.CoverageReport{
-		Universe: 10,
-		Covered:  7,
-		Percent:  70.0,
-		PerScope: []kenin.ScopeCoverage{
-			{Scope: kenin.Scope{Name: "core"}, Files: 5, Percent: 50},
-			{Scope: kenin.Scope{Name: "sec"}, Files: 2, Percent: 20},
-		},
-		Uncovered: []string{"x.go"},
-	}
-	filtered := filterCoverageByScope(report, "sec")
-	if len(filtered.PerScope) != 1 || filtered.PerScope[0].Scope.Name != "sec" {
-		t.Fatalf("did not filter to the named scope: %+v", filtered.PerScope)
-	}
-	// Overall universe/covered numbers are preserved by the projection.
-	if filtered.Universe != report.Universe || filtered.Covered != report.Covered || filtered.Percent != report.Percent {
-		t.Errorf("projection changed overall numbers: %+v", filtered)
-	}
-	if !reflect.DeepEqual(filtered.Uncovered, report.Uncovered) {
-		t.Errorf("projection changed uncovered list: %v", filtered.Uncovered)
-	}
-}
-
-func TestScopesByRuleShapes(t *testing.T) {
+func TestRuleScopesShapes(t *testing.T) {
+	core := kitfile.Rule{Pattern: `.*\.go`, Name: "core"}
 	chain := shonin.RuleChain{FileChains: map[string][]shonin.RuleLayer{
-		"s/one.go": {{DirectoryPath: "s", Rules: []shonin.Rule{{Rule: kitfile.Rule{Pattern: `.*\.go`, Name: "core"}}}}},
+		"s/one.go": {{DirectoryPath: "s", Rules: []shonin.Rule{{Rule: core}}}},
 		"two.go":   nil, // a file with no matching scope is absent from FileChains
 	}}
-	got := scopesByRule(chain)
-	key := `.*\.go in s/KIT (core)`
-	if !reflect.DeepEqual(got[key], []string{"s/one.go"}) {
-		t.Errorf("expected %s to cover s/one.go only; got %v", key, got)
-	}
+	got := ruleScopes(chain)
 	if len(got) != 1 {
-		t.Errorf("expected one scope key, got %d: %v", len(got), got)
+		t.Fatalf("expected one scope, got %d: %+v", len(got), got)
+	}
+	want := ruleScope{key: `.*\.go in s/KIT (core)`, rule: core, kitFile: "s/KIT", files: []string{"s/one.go"}}
+	if !reflect.DeepEqual(got[0], want) {
+		t.Errorf("got %+v, want %+v", got[0], want)
 	}
 }

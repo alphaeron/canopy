@@ -10,24 +10,31 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/alphaeron/kit/internal/kitfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// rulesRemoveCmd deletes one rule by its pattern from a KIT file. A rule is
-// identified by its pattern, which shonin uses as the scope-matching key.
+// rulesRemoveCmd deletes one rule by its pattern. A rule is identified by
+// its pattern within its KIT file; without --file the KIT file is found as
+// for rules edit (see kitSet.ruleTarget).
 var rulesRemoveCmd = &cobra.Command{
 	Use:   "remove <pattern>",
 	Short: "Remove a rule from a KIT file",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pattern := args[0]
-		targetPath, err := targetKitFile(cmd)
+		force, _ := cmd.Flags().GetBool("force")
+		mode, _ := resolveOutputMode(cmd)
+		s, err := openKitSet()
 		if err != nil {
 			return err
 		}
-		force, _ := cmd.Flags().GetBool("force")
-
-		k, err := loadKitFileContent(targetPath)
+		fileFlag, _ := cmd.Flags().GetString("file")
+		target, err := s.ruleTarget(fileFlag, pattern, mode == modeTUI)
+		if errors.Is(err, tui.ErrAborted) {
+			fmt.Fprintln(os.Stderr, "remove aborted")
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -38,13 +45,10 @@ var rulesRemoveCmd = &cobra.Command{
 				return nil
 			}
 		}
-		if err := k.Remove(pattern); err != nil {
+		if _, err := s.mutate(target, func(k *kitfile.KitFile) error { return k.Remove(pattern) }); err != nil {
 			return err
 		}
-		if err := k.Save(targetPath); err != nil {
-			return fmt.Errorf("save %s: %w", targetPath, err)
-		}
-		fmt.Printf("removed rule %q from %s\n", pattern, targetPath)
+		fmt.Printf("removed rule %q from %s\n", pattern, target)
 		return nil
 	},
 }
@@ -70,7 +74,7 @@ func confirm(in io.Reader, out io.Writer) bool {
 }
 
 func init() {
-	kitFileFlag(rulesRemoveCmd)
+	kitFileFlag(rulesRemoveCmd, "the KIT file holding the rule (default: the one KIT file with that pattern)")
 	rulesRemoveCmd.Flags().Bool("force", false, "skip the interactive confirmation prompt")
 	rulesCmd.AddCommand(rulesRemoveCmd)
 }
