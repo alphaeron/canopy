@@ -86,10 +86,7 @@ func (e *Engine) RuleChain(ctx context.Context, files []string) (approval.RuleCh
 // approve it. Every approver counts as active and there are no repository
 // owners, so a file no rule covers is reported as an unsatisfiable fallback.
 func (e *Engine) Requirements(ctx context.Context, chain approval.RuleChain) *approval.ReviewState {
-	return e.Source.Reviewer().Approve(ctx, approval.PullRequest{
-		CurrentApprovers: map[string]bool{},
-		IsOwnerActive:    func(string) bool { return true },
-	}, chain)
+	return e.Source.Reviewer().Approve(ctx, approval.ReviewInput{}, chain)
 }
 
 // rules loads the source's rules through its platform's fetcher.
@@ -232,43 +229,13 @@ func percentOf(n, total int) float64 {
 	return float64(n) / float64(total) * 100.0
 }
 
-// ReviewInput is the pull-request state a review evaluates files against:
-// who wrote the change, who has approved it, who is unavailable, and the
-// repository owners who decide files no rule covers.
-type ReviewInput struct {
-	Author    string
-	Approvers []string
-	Inactive  []string
-	Owners    []string
-}
-
-// pullRequest is the input as the pull request state the approval package evaluates.
-func (in ReviewInput) pullRequest() approval.PullRequest {
-	inactive := setOf(in.Inactive)
-	return approval.PullRequest{
-		Author:           in.Author,
-		CurrentApprovers: setOf(in.Approvers),
-		IsOwnerActive:    func(u string) bool { return !inactive[u] },
-		RepositoryOwners: in.Owners,
-	}
-}
-
 // Review runs the full approval review (fetch, sift, approve) over files on
 // the source's platform, so rules and approver resolution are local or
-// GitHub together. Every error the review meets is in the returned state
+// hosted together. Every error the review meets is in the returned state
 // (see approval.Reviewer.Execute). The state carries the source's
 // repository root when it has one (see Rooted).
-func (e *Engine) Review(ctx context.Context, files []string, in ReviewInput) *approval.ReviewState {
-	state := e.Source.Reviewer().Execute(ctx, in.pullRequest(), files)
+func (e *Engine) Review(ctx context.Context, files []string, in approval.ReviewInput) *approval.ReviewState {
+	state := e.Source.Reviewer().Execute(ctx, in, files)
 	state.RepoRoot = e.repoRoot()
 	return state
-}
-
-// setOf is the set of items, for membership tests.
-func setOf(items []string) map[string]bool {
-	set := make(map[string]bool, len(items))
-	for _, it := range items {
-		set[it] = true
-	}
-	return set
 }

@@ -15,9 +15,9 @@ import (
 )
 
 // Reviewer orchestrates a code review: it fetches the repository's rules,
-// sifts them into per-file rule chains, and approves them against the current
-// pull request state. All phases are traced as events in the resulting
-// ReviewState and logged as structured JSON.
+// sifts them into per-file rule chains, and approves them against the
+// current state of the change (ReviewInput). All phases are traced as events
+// in the resulting ReviewState and logged as structured JSON.
 //
 // A Reviewer is bound to one platform, which decides both where rules come
 // from and how approver targets resolve to people. local.NewReviewer and
@@ -33,11 +33,11 @@ type Reviewer struct {
 }
 
 // Execute runs the full fetch -> sift -> approve workflow for files against
-// the pull request state in pr and returns the complete review state. Every
+// the change described by in and returns the complete review state. Every
 // error encountered along the way is accumulated in the returned state and
 // forces the final approval status to StatusError, so the caller can block
 // the review and surface the full failure history to the user.
-func (s *Reviewer) Execute(ctx context.Context, pr PullRequest, files []string) *ReviewState {
+func (s *Reviewer) Execute(ctx context.Context, in ReviewInput, files []string) *ReviewState {
 	log := s.log()
 	events := NewReviewStateBuilder()
 
@@ -64,7 +64,7 @@ func (s *Reviewer) Execute(ctx context.Context, pr PullRequest, files []string) 
 	ruleChain := GetFileRuleChain(repoRules, files, events, log)
 
 	// Approve phase: evaluate the rule chains and assemble the final state.
-	reviewState := ruleChain.Execute(ctx, pr, s.Resolver, events, log)
+	reviewState := ruleChain.Execute(ctx, in, s.Resolver, events, log)
 	log.Info("review complete",
 		"component", "approval", "phase", "approve",
 		"status", reviewState.Overall, "errors", len(reviewState.Errors))
@@ -73,9 +73,9 @@ func (s *Reviewer) Execute(ctx context.Context, pr PullRequest, files []string) 
 
 // Approve runs only the approve phase over an already sifted chain, with
 // this platform's resolver: for callers that sifted the rules themselves
-// and want who must approve each file under pr.
-func (s *Reviewer) Approve(ctx context.Context, pr PullRequest, chain RuleChain) *ReviewState {
-	return chain.Execute(ctx, pr, s.Resolver, NewReviewStateBuilder(), s.log())
+// and want who must approve each file under in.
+func (s *Reviewer) Approve(ctx context.Context, in ReviewInput, chain RuleChain) *ReviewState {
+	return chain.Execute(ctx, in, s.Resolver, NewReviewStateBuilder(), s.log())
 }
 
 // log returns the configured logger or the default one.

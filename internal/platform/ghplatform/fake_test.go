@@ -23,16 +23,17 @@ import (
 )
 
 // fakeGitHub answers the REST endpoints the platform reads for repository
-// o/r and pull request 7: the base tree listing, blob reads, and the
-// paginated file listing. It counts requests per endpoint.
+// o/r and pull request 7: the base tree listing, blob reads, the paginated
+// file listing, and team members. It counts requests per endpoint.
 type fakeGitHub struct {
 	base    map[string]string      // base tree blobs: path to contents
 	dirs    []string               // non-blob entries in the tree listing
 	prPages [][]*github.CommitFile // the pull request's files, page by page
+	teams   map[string][]string    // "org/slug" to member logins
 
 	mu    sync.Mutex
 	fail  bool           // answer every request with a server error
-	calls map[string]int // requests per endpoint: "tree", "blob", "files"
+	calls map[string]int // requests per endpoint: "tree", "blob", "files", "teams"
 }
 
 // client starts the fake and returns a GitHub client pointed at it.
@@ -77,6 +78,18 @@ func (f *fakeGitHub) client(t *testing.T) *github.Client {
 		}
 		writeJSON(t, w, files)
 	})
+	mux.HandleFunc("GET /orgs/{org}/teams/{slug}/members", func(w http.ResponseWriter, r *http.Request) {
+		members, ok := f.teams[r.PathValue("org")+"/"+r.PathValue("slug")]
+		if !ok {
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		users := make([]map[string]string, 0, len(members))
+		for _, m := range members {
+			users = append(users, map[string]string{"login": m})
+		}
+		writeJSON(t, w, users)
+	})
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		fail := f.fail
@@ -90,6 +103,8 @@ func (f *fakeGitHub) client(t *testing.T) *github.Client {
 			f.calls["blob"]++
 		case strings.HasSuffix(r.URL.Path, "/files"):
 			f.calls["files"]++
+		case strings.HasPrefix(r.URL.Path, "/orgs/"):
+			f.calls["teams"]++
 		}
 		f.mu.Unlock()
 		if fail {

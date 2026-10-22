@@ -26,3 +26,16 @@ func TestGitHubBaseTreeMeetsTheTreeContract(t *testing.T) {
 		return newBaseTree((&fakeGitHub{base: files}).client(t), "o", "r", "base")
 	})
 }
+
+func TestGitHubResolverMeetsTheResolverContract(t *testing.T) {
+	platformtest.RunResolverContract(t, func(t *testing.T, members []string) platformtest.ResolverHarness {
+		fake := &fakeGitHub{teams: map[string][]string{"acme/backend": members}}
+		return platformtest.ResolverHarness{
+			Resolver:     NewApproverResolver(fake.client(t)),
+			Group:        "acme/backend",
+			UnknownGroup: "acme/ghosts",
+			Invalid:      "acme/../admin",
+			Calls:        func() int { return fake.callCount("teams") },
+		}
+	})
+}

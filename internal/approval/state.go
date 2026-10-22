@@ -53,7 +53,6 @@ type ReviewState struct {
 	// local checkout, and empty otherwise. The approval pipeline never
 	// knows it: the caller that does (match.Engine) sets it.
 	RepoRoot string
-	HeadRef  string
 	Files    map[string]FileState
 	Overall  Status
 	Events   []Event  // chronological trace across fetch, sift, and approve

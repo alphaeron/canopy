@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/brand"
@@ -36,16 +37,12 @@ func withEnv(t *testing.T, kv map[string]string) {
 }
 
 func TestLoadReadsYAMLFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "conf.yaml")
-	text := `verbose: true
+	path := writeConfig(t, `verbose: true
 serve_addr: ":9090"
-github_app_id: "1337"
-webhook_hmac_secret: "topsecret"
-`
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
+github:
+  app_id: "1337"
+  webhook_secret: "topsecret"
+`)
 	got, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -56,15 +53,81 @@ webhook_hmac_secret: "topsecret"
 	if got.ServeAddr != ":9090" {
 		t.Errorf("serve_addr = %q, want :9090 from file", got.ServeAddr)
 	}
-	if got.GitHubAppID != "1337" {
-		t.Errorf("github_app_id = %q, want 1337 from file", got.GitHubAppID)
+	if got.GitHub.AppID != "1337" {
+		t.Errorf("github.app_id = %q, want 1337 from file", got.GitHub.AppID)
 	}
-	if got.WebhookHMACSecret != "topsecret" {
-		t.Errorf("webhook_hmac_secret is not the value from the file")
+	if got.GitHub.WebhookSecret != "topsecret" {
+		t.Errorf("github.webhook_secret is not the value from the file")
 	}
-	if got.GitHubPrivateKey != "" {
-		t.Errorf("github_private_key = %q, want empty (absent from file)", got.GitHubPrivateKey)
+	if got.GitHub.PrivateKey != "" {
+		t.Errorf("github.private_key = %q, want empty (absent from file)", got.GitHub.PrivateKey)
 	}
+}
+
+// TestLoadPlatformSectionFromEnv: a platform section's keys are read from
+// prefixed environment variables named after the dotted key.
+func TestLoadPlatformSectionFromEnv(t *testing.T) {
+	withEnv(t, map[string]string{
+		brand.EnvPrefix + "GITHUB_APP_ID":         "42",
+		brand.EnvPrefix + "GITHUB_WEBHOOK_SECRET": "s3",
+	})
+	got, err := Load(writeConfig(t, "github:\n  app_id: \"1\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.GitHub.AppID != "42" || got.GitHub.WebhookSecret != "s3" {
+		t.Errorf("github = %+v, want the environment's app_id and webhook_secret", got.GitHub)
+	}
+	if !reflect.DeepEqual(configKeys(reflect.TypeFor[Config](), ""), []string{
+		"verbose", "serve_addr", "github.app_id", "github.private_key", "github.webhook_secret",
+	}) {
+		t.Errorf("configKeys = %v, want every tagged field, sections dotted", configKeys(reflect.TypeFor[Config](), ""))
+	}
+}
+
+// TestLoadLegacyKeys: the deprecated flat keys still configure their
+// replacements, from the file or the environment, and lose to them.
+func TestLoadLegacyKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+		env  map[string]string
+		want GitHub
+	}{
+		{name: "flat keys in the file",
+			file: "github_app_id: \"7\"\ngithub_private_key: pem\nwebhook_hmac_secret: old\n",
+			want: GitHub{AppID: "7", PrivateKey: "pem", WebhookSecret: "old"}},
+		{name: "legacy webhook variable",
+			file: "verbose: false\n",
+			env:  map[string]string{brand.EnvPrefix + "WEBHOOK_HMAC_SECRET": "old"},
+			want: GitHub{WebhookSecret: "old"}},
+		{name: "replacement wins over legacy key",
+			file: "webhook_hmac_secret: old\ngithub:\n  webhook_secret: new\n",
+			want: GitHub{WebhookSecret: "new"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withEnv(t, tt.env)
+			got, err := Load(writeConfig(t, tt.file))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got.GitHub != tt.want {
+				t.Errorf("github = %+v, want %+v", got.GitHub, tt.want)
+			}
+		})
+	}
+}
+
+// writeConfig writes text to a config file in a temporary directory and
+// returns its path.
+func writeConfig(t *testing.T, text string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "conf.yaml")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return path
 }
 
 func TestLoadEnvOverridesFile(t *testing.T) {

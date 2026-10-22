@@ -10,13 +10,17 @@ import (
 	"github.com/alphaeron/kit/internal/platform/local"
 )
 
-// newLocalEngine builds the match engine bound to the current repository's
-// worktree. The same engine type is driven by the REST server with a GitHub
-// source; this constructor is the CLI's fixed point. log may be nil
+// openEngine builds the match engine every command evaluates with: the
+// local platform over the repository containing the current directory. It
+// is the one place the CLI chooses a platform, so reviewing a change on a
+// hosted platform from the CLI only changes this function. log may be nil
 // (slog.Default()); the TUI passes quietLog.
-func newLocalEngine(repo *gitRepo, log *slog.Logger) *match.Engine {
-	source := local.NewSource(repo, log)
-	return match.New(source, log)
+func openEngine(log *slog.Logger) (*match.Engine, error) {
+	repo, err := getRepo()
+	if err != nil {
+		return nil, err
+	}
+	return match.New(local.NewSource(repo, log), log), nil
 }
 
 // rulesFileFlag registers the shared --file flag on a command that changes a

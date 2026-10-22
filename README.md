@@ -102,19 +102,21 @@ The self-approval policy is a requirement of the rule and travels with every app
 Every target occurrence is evaluated independently against the same pool of current approvers. Targets resolve to a member set through the configured `ApproverResolver` (individual targets: 1:1 by default; group targets: expanded to their members):
 
 * A target whose members are all inactive prunes away; the rule then falls back to earlier rules or the parent directory (see above).
-* A target that cannot be resolved to any member at all is `unresolved`, which escalates the containing rule, layer, and file to `unresolved` and forces the overall status to `error`.
+* A target that cannot be resolved to any member at all is `unresolved`, which escalates the containing rule, layer, and file to `unresolved` and forces the overall status to `error`. A target the platform does not know (or that is malformed for it) prunes away like an inactive one; a platform failure while resolving (an outage, a rate limit) never prunes, so it cannot weaken a requirement, and its cause is recorded in the review's errors.
+* Names are compared in the platform's canonical form: GitHub logins are case-insensitive, so `Alice` in a `KIT` file matches an approval by `alice`. Local reviews compare names exactly.
+* Each target is resolved once per review, however many files and rules use it.
 * A group is `satisfied` once `required_count` of its eligible, active resolved members appear among current approvers.
 * Because each occurrence is independent, recurring targets under `union` are counted once per occurrence (see Recurring Approver Targets).
 
 ### Rule Fallback
 Pruning drops a target only when *zero* active eligible members remain. A rule left with zero active targets is **skipped** — an error condition: the skip is marked on the rule's own state so the hierarchical breakdown remains a complete trace, and a review error is accumulated, which forces the final review state to `error` even when preceding rules, parent rules, or the repository-owner fallback afterwards still satisfy the file.
 
-## PR Evaluation
+## Change Evaluation
 
-The runtime application processes PR approval status utilizing a three-tiered pipeline:
+The runtime application evaluates a change (a GitHub pull request, or the local working tree) with a three-tiered pipeline. Each platform supplies where files and rules come from and how approver targets resolve; the pipeline itself is the same on every platform:
 
 ```
-[PR Webhook Triggered]
+[Change received]
           │
           ▼
    1. FETCH PHASE  ──► Walk tree from target files up to root (respecting ignore_parent_dirs)
@@ -129,7 +131,7 @@ The runtime application processes PR approval status utilizing a three-tiered pi
 ### Phase Breakdown
 
 #### Phase 1: Fetch
-1. List the PR's changed file paths through the GitHub API (the webhook does not carry them), counting a renamed file at both its old and new paths.
+1. List the change's file paths through the platform, counting a renamed file at both its old and new paths. (GitHub: the pull request's files through the API; the webhook does not carry them. Local: the working tree's status against `HEAD`.)
 2. For each unique file path, systematically map the trajectory from its local leaf directory vertically upward to the root repository level.
 3. Read the `KIT` files along the path sequentially.
 4. If a file specifies `settings.ignore_parent_dirs: true`, halt tree traversal immediately.
@@ -145,11 +147,35 @@ The runtime application processes PR approval status utilizing a three-tiered pi
    * If `intersect`, keep only the criteria present in both the parent accumulation and the current rule.
 
 #### Phase 3: Approve
-1. Extract the unique GitHub usernames of the PR Author and all users who submitted an explicit "Approved" state review.
+1. Read the change's author and approvers from the platform (or, locally, from `kit review` flags), in the platform's canonical name form.
 2. For each final rule block tied to an asset:
-   * Resolve each `approvers` target to its member set (querying live organization team memberships if applicable).
+   * Resolve each `approvers` target to its member set through the platform (GitHub: `org/team-slug` targets expand to the team's members).
    * Apply the self-approval policy: if `self_approve` is `false`, slice the PR Author out of the eligible approver matching array.
    * Increment counts when an active approver matches a member identity target.
    * If a rule's targets have all been pruned away (inactive members, excluded author, or unresolvable targets), the rule is **skipped and the skip is recorded as an error**; it still falls back to the preceding rule's criteria, but the final overall state terminates `error` regardless of that fallback.
 3. Mark a rule block as **Satisfied** once each target's internal `actual_count >= required_count`.
-4. Fire a passing green status payload back to the GitHub Status API if all rules across all files resolve to a **Satisfied** state.
+4. Report the result back on the platform (GitHub: a status on the pull request) — passing only if all rules across all files resolve to a **Satisfied** state.
+
+## Configuration
+
+The CLI and the REST server read the same configuration, in decreasing precedence: environment variables prefixed `KIT_`, the file given with `--config`, the file named by `KIT_CONFIG`, then `.kit.yaml` in the current directory or `$HOME`. Each hosted platform has its own section.
+
+| Key | Environment variable | Default | Purpose |
+|---|---|---|---|
+| `verbose` | `KIT_VERBOSE` | `false` | Debug-level logging |
+| `serve_addr` | `KIT_SERVE_ADDR` | `:8080` | REST server listen address |
+| `github.app_id` | `KIT_GITHUB_APP_ID` | | GitHub App ID |
+| `github.private_key` | `KIT_GITHUB_PRIVATE_KEY` | | GitHub App private key (PEM) |
+| `github.webhook_secret` | `KIT_GITHUB_WEBHOOK_SECRET` | | GitHub webhook signing secret |
+
+```yaml
+verbose: false
+github:
+  app_id: "12345"
+  private_key: |
+    -----BEGIN RSA PRIVATE KEY-----
+    ...
+  webhook_secret: "..."
+```
+
+The flat keys `github_app_id`, `github_private_key`, and `webhook_hmac_secret` (and `KIT_WEBHOOK_HMAC_SECRET`) are deprecated: they still configure their replacements, with a warning, when the replacement is not set.

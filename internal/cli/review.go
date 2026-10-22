@@ -27,7 +27,7 @@ each has, and how every rules file in its chain contributed.
 Every file in the working tree is reviewed, or only changed files with
 --changed; pattern arguments (regular expressions) narrow the files further.
 --approver simulates approvals and --author the change's author, so
-self-approval rules are evaluated as they would be on a pull request.
+self-approval rules are evaluated as they would be on a pull or merge request.
 --inactive marks approvers as unavailable, which prunes their targets. A
 file no rule covers falls back to the --owner repository owners.`,
 	Annotations: map[string]string{"arg": "regular expressions selecting the files to review (every file when omitted)"},
@@ -103,21 +103,30 @@ func runReviewCmd(cmd *cobra.Command, args []string) error {
 // algorithm's structured output; the TUI discards it, as the state holds
 // everything it reports.
 func runReview(ctx context.Context, opts reviewOptions, log *slog.Logger) (*approval.ReviewState, error) {
-	repo, err := getRepo()
+	engine, err := openEngine(log)
 	if err != nil {
 		return nil, err
 	}
-	engine := newLocalEngine(repo, log)
 	files, err := engine.Files(ctx, match.Options{ChangedOnly: opts.changed, Patterns: opts.patterns})
 	if err != nil {
 		return nil, fmt.Errorf("list files: %w", err)
 	}
-	return engine.Review(ctx, files, match.ReviewInput{
-		Author:    opts.author,
-		Approvers: opts.approvers,
-		Inactive:  opts.inactive,
-		Owners:    opts.owners,
-	}), nil
+	return engine.Review(ctx, files, opts.input()), nil
+}
+
+// input is the review input the options describe: --inactive names are the
+// users the review treats as unable to approve.
+func (o reviewOptions) input() approval.ReviewInput {
+	inactive := make(map[string]bool, len(o.inactive))
+	for _, name := range o.inactive {
+		inactive[name] = true
+	}
+	return approval.ReviewInput{
+		Author:    o.author,
+		Approvers: o.approvers,
+		IsActive:  func(name string) bool { return !inactive[name] },
+		Owners:    o.owners,
+	}
 }
 
 // statusLabel is a status for people: "missing approvers".
@@ -146,7 +155,7 @@ func init() {
 	reviewCmd.RunE = runReviewCmd
 	reviewCmd.Flags().Bool("changed", false, "review only files changed in the working tree")
 	reviewCmd.Flags().String("author", "", "the change's author, whose approvals count only under self-approve rules")
-	reviewCmd.Flags().StringSlice("approver", nil, "a user or team that has approved (repeatable)")
+	reviewCmd.Flags().StringSlice("approver", nil, "a user or group that has approved (repeatable)")
 	reviewCmd.Flags().StringSlice("owner", nil, "a repository owner, who approves files no rule covers (repeatable)")
 	reviewCmd.Flags().StringSlice("inactive", nil, "an approver who is unavailable; their targets are pruned (repeatable)")
 	rootCmd.AddCommand(reviewCmd)

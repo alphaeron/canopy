@@ -380,7 +380,7 @@ func TestRepoRootOnlyFromRootedSources(t *testing.T) {
 			if res.RepoRoot != tt.want {
 				t.Errorf("Match RepoRoot = %q, want %q", res.RepoRoot, tt.want)
 			}
-			if got := e.Review(t.Context(), []string{"main.go"}, ReviewInput{}).RepoRoot; got != tt.want {
+			if got := e.Review(t.Context(), []string{"main.go"}, approval.ReviewInput{}).RepoRoot; got != tt.want {
 				t.Errorf("Review RepoRoot = %q, want %q", got, tt.want)
 			}
 		})

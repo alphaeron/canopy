@@ -13,10 +13,6 @@ import (
 	"github.com/alphaeron/kit/internal/match"
 )
 
-// filesPerPage is the largest page GitHub serves when listing a pull
-// request's files, so a large pull request costs as few calls as possible.
-const filesPerPage = 100
-
 // pullRequest is what a Source needs to know about one pull request: enough
 // to fetch the base tree and its rules, list the changed files, and read each
 // file's diff. It is built by NewSourceFromEvent, never by callers, so
@@ -110,28 +106,24 @@ func pullRequestFromEvent(event *github.PullRequestEvent) (*pullRequest, int, er
 	return pr, number, nil
 }
 
-// listFiles lists every file a pull request changes, with its patch,
-// following GitHub's pagination.
+// listFiles lists every file a pull request changes, with its patch.
 func listFiles(ctx context.Context, client *github.Client, owner, repo string, number int) ([]prFile, error) {
-	var files []prFile
-	opts := &github.ListOptions{PerPage: filesPerPage}
-	for {
-		page, resp, err := client.PullRequests.ListFiles(ctx, owner, repo, number, opts)
-		if err != nil {
-			return nil, fmt.Errorf("list files of %s/%s#%d: %w", owner, repo, number, err)
-		}
-		for _, f := range page {
-			files = append(files, prFile{
-				path:         f.GetFilename(),
-				previousPath: f.GetPreviousFilename(),
-				patch:        f.GetPatch(),
-			})
-		}
-		if resp.NextPage == 0 {
-			return files, nil
-		}
-		opts.Page = resp.NextPage
+	opts := &github.ListOptions{PerPage: perPage}
+	page, err := paginate(opts, func() ([]*github.CommitFile, *github.Response, error) {
+		return client.PullRequests.ListFiles(ctx, owner, repo, number, opts)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list files of %s/%s#%d: %w", owner, repo, number, err)
 	}
+	files := make([]prFile, 0, len(page))
+	for _, f := range page {
+		files = append(files, prFile{
+			path:         f.GetFilename(),
+			previousPath: f.GetPreviousFilename(),
+			patch:        f.GetPatch(),
+		})
+	}
+	return files, nil
 }
 
 // Reviewer is the GitHub review platform for the pull request: rules files

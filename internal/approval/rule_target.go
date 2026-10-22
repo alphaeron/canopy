@@ -2,6 +2,7 @@ package approval
 
 import (
 	"context"
+	"errors"
 
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
@@ -25,14 +26,14 @@ type RuleTargets []RuleTarget
 // target to its member set, enforces the self-approval constraint, and counts
 // the eligible members that have approved. The returned state carries that
 // evaluation and the resolved members that contributed.
-func (rt *RuleTarget) Execute(ctx context.Context, pr PullRequest, resolver ApproverResolver) *ApproverTargetState {
-	members, ok := resolver.Resolve(ctx, rt.Target, pr)
-	if !ok {
+func (rt *RuleTarget) Execute(ctx context.Context, p participants, resolver ApproverResolver) *ApproverTargetState {
+	members, err := resolver.Resolve(ctx, rt.Target)
+	if err != nil {
 		return &ApproverTargetState{
 			ApproverTarget: rt.ApproverTarget,
 			ResolvedBy:     []string{},
 			Status:         StatusUnresolved,
-			Reason:         "Could not resolve target to members",
+			Reason:         resolveFailure(err),
 		}
 	}
 
@@ -40,7 +41,7 @@ func (rt *RuleTarget) Execute(ctx context.Context, pr PullRequest, resolver Appr
 	// the rule forbids self-approval, a target that IS the author can
 	// never be satisfied. The policy decision is the single contributes
 	// predicate shared with member-level counting.
-	if !rt.contributes(rt.Target, pr) {
+	if !rt.contributes(p.canonical(rt.Target), p) {
 		return &ApproverTargetState{
 			ApproverTarget: rt.ApproverTarget,
 			ResolvedBy:     []string{},
@@ -52,7 +53,7 @@ func (rt *RuleTarget) Execute(ctx context.Context, pr PullRequest, resolver Appr
 	// Prune targets with no eligible member, which covers inactive
 	// individuals, groups whose members are all inactive, and groups whose
 	// only active member is the author under a non-self-approve rule.
-	if !rt.HasAnyEligibleMember(members, pr) {
+	if !rt.HasAnyEligibleMember(members, p) {
 		return &ApproverTargetState{
 			ApproverTarget: rt.ApproverTarget,
 			ResolvedBy:     []string{},
@@ -61,7 +62,7 @@ func (rt *RuleTarget) Execute(ctx context.Context, pr PullRequest, resolver Appr
 		}
 	}
 
-	resolved := rt.approveMembers(members, pr)
+	resolved := rt.approveMembers(members, p)
 	count := len(resolved)
 	st := StatusSatisfied
 	if count < rt.RequiredCount {
@@ -79,10 +80,10 @@ func (rt *RuleTarget) Execute(ctx context.Context, pr PullRequest, resolver Appr
 // approveMembers resolves the target to its member set and returns which
 // resolved members counted toward it, applying the author / self-approval
 // exclusion.
-func (rt *RuleTarget) approveMembers(members []string, pr PullRequest) []string {
+func (rt *RuleTarget) approveMembers(members []string, p participants) []string {
 	var resolved []string
 	for _, member := range members {
-		if !rt.approves(member, pr) {
+		if !rt.approves(member, p) {
 			continue
 		}
 		resolved = append(resolved, member)
@@ -93,8 +94,8 @@ func (rt *RuleTarget) approveMembers(members []string, pr PullRequest) []string 
 // approves reports whether a resolved member's approval counts toward this
 // target. When the producing rule forbids self-approval, the author never
 // contributes, even when they are a member of a resolved group.
-func (rt *RuleTarget) approves(member string, pr PullRequest) bool {
-	return rt.contributes(member, pr) && pr.CurrentApprovers[member]
+func (rt *RuleTarget) approves(member string, p participants) bool {
+	return rt.contributes(member, p) && p.approvers[member]
 }
 
 // contributes is the single implementation of the rule's self-approval
@@ -104,20 +105,20 @@ func (rt *RuleTarget) approves(member string, pr PullRequest) bool {
 // itself or a member of a resolved group. Every self-approval decision in
 // the algorithm funnels through this predicate, so the requirement and its
 // implementation live on one type - the RuleTarget carrying the policy.
-func (rt *RuleTarget) contributes(member string, pr PullRequest) bool {
-	return rt.SelfApprove || member != pr.Author
+func (rt *RuleTarget) contributes(member string, p participants) bool {
+	return rt.SelfApprove || member != p.author
 }
 
 // HasAnyEligibleMember reports whether at least one resolved member can
 // contribute toward the target: the author is ignored unless the producing
 // rule permits self-approval, and inactive members never qualify. When no
 // member is eligible the target is pruned from the rule.
-func (rt *RuleTarget) HasAnyEligibleMember(members []string, pr PullRequest) bool {
+func (rt *RuleTarget) HasAnyEligibleMember(members []string, p participants) bool {
 	for _, member := range members {
-		if !rt.contributes(member, pr) {
+		if !rt.contributes(member, p) {
 			continue
 		}
-		if pr.IsOwnerActive(member) {
+		if p.isActive(member) {
 			return true
 		}
 	}
@@ -138,4 +139,13 @@ func (current *RuleTargets) Combine(
 ) RuleTargets {
 	builder.AddEvent("approve", file, layer, ruleName, StatusActive, "Applied "+strat.note())
 	return strat.apply(*current, incoming)
+}
+
+// resolveFailure is the reason a target that could not be resolved reports:
+// an unknown target, or a platform failure while resolving it.
+func resolveFailure(err error) string {
+	if errors.Is(err, ErrUnknownTarget) {
+		return "Could not resolve target to members: " + err.Error()
+	}
+	return "Resolving target failed: " + err.Error()
 }

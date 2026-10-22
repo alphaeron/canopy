@@ -33,7 +33,7 @@ func (rl *RuleLayer) RulesFile() string {
 func (rl *RuleLayer) Execute(
 	ctx context.Context,
 	incoming RuleTargets,
-	pr PullRequest,
+	p participants,
 	builder *ReviewStateBuilder,
 	resolver ApproverResolver,
 	file string,
@@ -48,11 +48,11 @@ func (rl *RuleLayer) Execute(
 	for _, rule := range rl.Rules {
 		// 1. Prune the rule's active and valid approver targets, preserving
 		// their required counts. Target-level state stays at the rule level.
-		activeTargets := rule.Prune(ctx, pr, resolver)
+		activeTargets := rule.Prune(ctx, p, resolver)
 
 		// 2. Track this rule's per-target satisfaction in the layer state.
 		// The rule consumes only its own targets' execution.
-		ruleState := rule.Execute(ctx, pr, resolver, file, rl.DirectoryPath, log)
+		ruleState := rule.Execute(ctx, p, resolver, file, rl.DirectoryPath, log)
 		state.Rules = append(state.Rules, ruleState)
 		state.ResolvedBy = append(state.ResolvedBy, ruleState.ResolvedBy...)
 

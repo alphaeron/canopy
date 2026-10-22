@@ -2,99 +2,91 @@ package ghplatform
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
+	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/google/go-github/v71/github"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/logx"
 )
 
-// githubName is what GitHub allows in an organization login or team slug.
-// Targets come from rules files, which are untrusted input, and go-github
-// interpolates both into the request path unescaped, so anything else is
-// rejected before it reaches the API.
+// githubName is what GitHub allows in a login, organization, or team slug
+// (leniently: it also admits the dots and underscores slugs may carry).
 var githubName = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$`)
 
 // ApproverResolver resolves approver targets against GitHub. An
 // "org/team" target is the members of that team (by slug); any other
 // target is a user login standing for itself, as under
-// DefaultApproverResolver. A team that cannot be listed (a malformed name,
-// an unknown team, or an API failure) is unresolved, never treated as
-// approved.
+// DefaultApproverResolver. A malformed target or a team GitHub does not
+// have is approval.ErrUnknownTarget; any other API failure is returned as
+// is, so the review fails rather than treating the team as approved or
+// pruning it. Logins compare case-insensitively (Canonical).
 //
-// Team membership is read once per target and cached for the resolver's
-// lifetime, since one review resolves the same targets many times. A
-// resolver therefore belongs to one review: NewReviewer builds one per pull
-// request, so membership is never stale across reviews. It is safe for
-// concurrent use.
+// It does not cache: a review resolves each target once (see
+// approval.RuleChain.Execute), so one resolver can serve every review
+// without membership going stale. It is safe for concurrent use.
 type ApproverResolver struct {
 	client *github.Client
-	log    *slog.Logger
-
-	mu    sync.Mutex
-	teams map[string]resolvedTeam
 }
 
-type resolvedTeam struct {
-	members []string
-	ok      bool
-}
-
-// NewApproverResolver builds a resolver on an authenticated GitHub
-// client. log may be nil (defaults to slog.Default()).
-func NewApproverResolver(client *github.Client, log *slog.Logger) *ApproverResolver {
-	return &ApproverResolver{client: client, log: log, teams: map[string]resolvedTeam{}}
+// NewApproverResolver builds a resolver on an authenticated GitHub client.
+func NewApproverResolver(client *github.Client) *ApproverResolver {
+	return &ApproverResolver{client: client}
 }
 
 // Resolve maps target to its members: a team's members, or the login
-// itself. The PullRequest has no bearing on membership.
-func (r *ApproverResolver) Resolve(ctx context.Context, target string, _ approval.PullRequest) ([]string, bool) {
+// itself.
+func (r *ApproverResolver) Resolve(ctx context.Context, target string) ([]string, error) {
+	if err := r.ValidateTarget(target); err != nil {
+		return nil, fmt.Errorf("%w: %w", approval.ErrUnknownTarget, err)
+	}
 	org, slug, isTeam := strings.Cut(target, "/")
 	if !isTeam {
-		return []string{target}, true
+		return []string{target}, nil
 	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if t, ok := r.teams[target]; ok {
-		return t.members, t.ok
+	opts := &github.TeamListTeamMembersOptions{ListOptions: github.ListOptions{PerPage: perPage}}
+	users, err := paginate(&opts.ListOptions, func() ([]*github.User, *github.Response, error) {
+		return r.client.Teams.ListTeamMembersBySlug(ctx, org, slug, opts)
+	})
+	var ghErr *github.ErrorResponse
+	if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: team %s: %w", approval.ErrUnknownTarget, target, err)
 	}
-	members, err := r.teamMembers(ctx, org, slug)
 	if err != nil {
-		logx.OrDefault(r.log).Error("resolve: could not list team members",
-			"component", "resolver", "phase", "approve", "target", target, "error", err)
+		return nil, fmt.Errorf("list members of team %s: %w", target, err)
 	}
-	t := resolvedTeam{members: members, ok: err == nil}
-	r.teams[target] = t
-	return t.members, t.ok
+	members := make([]string, 0, len(users))
+	for _, u := range users {
+		members = append(members, u.GetLogin())
+	}
+	return members, nil
 }
 
-// teamMembers lists every member login of org's team slug, following
-// pagination.
-func (r *ApproverResolver) teamMembers(ctx context.Context, org, slug string) ([]string, error) {
+// Canonical lowercases a login: GitHub logins are case-insensitive.
+func (r *ApproverResolver) Canonical(name string) string { return strings.ToLower(name) }
+
+// ValidateTarget checks that target is a login or an "org/team-slug" in the
+// characters GitHub allows. Targets come from rules files, which are
+// untrusted input, and go-github interpolates the org and slug into the
+// request path unescaped, so nothing else may reach the API.
+func (r *ApproverResolver) ValidateTarget(target string) error {
+	org, slug, isTeam := strings.Cut(target, "/")
+	if !isTeam {
+		if !githubName.MatchString(target) {
+			return fmt.Errorf("%w: %q: want a GitHub login or <org>/<team-slug>", approval.ErrInvalidTarget, target)
+		}
+		return nil
+	}
 	if !githubName.MatchString(org) || !githubName.MatchString(slug) {
-		return nil, fmt.Errorf("invalid team %q: want <org>/<team-slug>", org+"/"+slug)
+		return fmt.Errorf("%w: %q: want <org>/<team-slug>", approval.ErrInvalidTarget, target)
 	}
-	opts := &github.TeamListTeamMembersOptions{ListOptions: github.ListOptions{PerPage: 100}}
-	var members []string
-	for {
-		users, resp, err := r.client.Teams.ListTeamMembersBySlug(ctx, org, slug, opts)
-		if err != nil {
-			return nil, fmt.Errorf("list members of %s/%s: %w", org, slug, err)
-		}
-		for _, u := range users {
-			members = append(members, u.GetLogin())
-		}
-		if resp.NextPage == 0 {
-			return members, nil
-		}
-		opts.Page = resp.NextPage
-	}
+	return nil
 }
 
-var _ approval.ApproverResolver = (*ApproverResolver)(nil)
+var (
+	_ approval.ApproverResolver = (*ApproverResolver)(nil)
+	_ approval.TargetValidator  = (*ApproverResolver)(nil)
+)

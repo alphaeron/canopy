@@ -216,11 +216,10 @@ type ownership struct {
 }
 
 func ownershipOf(ctx context.Context, paths []string) ownership {
-	repo, err := getRepo()
+	engine, err := openEngine(quietLog)
 	if err != nil {
 		return ownership{err: err}
 	}
-	engine := newLocalEngine(repo, quietLog)
 	chain, err := engine.RuleChain(ctx, paths)
 	if err != nil {
 		return ownership{err: fmt.Errorf("evaluate approvers: %w", err)}
@@ -689,11 +688,10 @@ func withParam(r tui.Route, match func(*tui.Param) bool, change func(*tui.Param)
 // at HEAD, with the engine that sifted it. A repository with no commit has
 // no files and an empty chain.
 func ruleChainFor(ctx context.Context, patterns []string) (*match.Engine, approval.RuleChain, error) {
-	repo, err := getRepo()
+	engine, err := openEngine(quietLog)
 	if err != nil {
 		return nil, approval.RuleChain{}, err
 	}
-	engine := newLocalEngine(repo, quietLog)
 	paths, err := engine.Files(ctx, match.Options{Patterns: patterns})
 	if err != nil {
 		return nil, approval.RuleChain{}, fmt.Errorf("find files: %w", err)

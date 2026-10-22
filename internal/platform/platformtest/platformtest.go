@@ -1,8 +1,9 @@
 // Package platformtest is the contract every review platform under
-// internal/platform must meet. A platform's tests build its match.Source and
-// approval.Tree over the fixtures this package defines, and the suites check
-// them against the documented behavior of those interfaces, so a new
-// platform is verified to plug into the engine rather than assumed to.
+// internal/platform must meet. A platform's tests build its match.Source,
+// approval.Tree, and approval.ApproverResolver over the fixtures this
+// package defines, and the suites check them against the documented
+// behavior of those interfaces, so a new platform is verified to plug into
+// the engine rather than assumed to.
 package platformtest
 
 import (
@@ -212,4 +213,126 @@ func RunTreeContract(t *testing.T, newTree TreeFactory) {
 			t.Errorf("ReadFile(missing.go) err = %v, want fs.ErrNotExist", err)
 		}
 	})
+}
+
+// ResolverHarness is a platform's approval.ApproverResolver with the
+// platform-specific targets the resolver contract needs, since target
+// syntax differs by platform.
+type ResolverHarness struct {
+	// Resolver is the platform's resolver.
+	Resolver approval.ApproverResolver
+	// Group is a group target whose members are those passed to the
+	// factory; "" when the platform has no groups.
+	Group string
+	// UnknownGroup is a well-formed group target the platform does not
+	// have; "" when the platform has no groups.
+	UnknownGroup string
+	// Invalid is a target the platform rejects as malformed; "" when every
+	// target is well-formed.
+	Invalid string
+	// Calls reports how many platform API calls the resolver has made; nil
+	// when it makes none.
+	Calls func() int
+}
+
+// ResolverFactory builds the platform's resolver harness over a group
+// holding members. It fails t when it cannot.
+type ResolverFactory func(t *testing.T, members []string) ResolverHarness
+
+// RunResolverContract checks a platform's approval.ApproverResolver against
+// the resolver contract: a user stands for itself, a group resolves to its
+// members, an unknown group is approval.ErrUnknownTarget, a malformed target
+// is rejected without an API call, and Canonical is idempotent.
+func RunResolverContract(t *testing.T, newHarness ResolverFactory) {
+	t.Helper()
+	members := []string{"Ann", "bo"}
+
+	t.Run("a user resolves to itself", func(t *testing.T) {
+		h := newHarness(t, members)
+		got, err := h.Resolver.Resolve(t.Context(), "Dana")
+		if err != nil {
+			t.Fatalf("Resolve(Dana): %v", err)
+		}
+		if len(got) != 1 || h.Resolver.Canonical(got[0]) != h.Resolver.Canonical("Dana") {
+			t.Errorf("Resolve(Dana) = %v, want Dana alone", got)
+		}
+	})
+
+	t.Run("Canonical is idempotent", func(t *testing.T) {
+		r := newHarness(t, members).Resolver
+		for _, name := range []string{"Dana", "dana", "DANA", "ann-b"} {
+			if once := r.Canonical(name); r.Canonical(once) != once {
+				t.Errorf("Canonical(Canonical(%q)) = %q, want %q", name, r.Canonical(once), once)
+			}
+		}
+	})
+
+	t.Run("a group resolves to its members", func(t *testing.T) {
+		h := newHarness(t, members)
+		if h.Group == "" {
+			t.Skip("the platform has no groups")
+		}
+		got, err := h.Resolver.Resolve(t.Context(), h.Group)
+		if err != nil {
+			t.Fatalf("Resolve(%s): %v", h.Group, err)
+		}
+		if !slices.Equal(canonicalSet(h.Resolver, got), canonicalSet(h.Resolver, members)) {
+			t.Errorf("Resolve(%s) = %v, want %v", h.Group, got, members)
+		}
+	})
+
+	t.Run("an unknown group is ErrUnknownTarget", func(t *testing.T) {
+		h := newHarness(t, members)
+		if h.UnknownGroup == "" {
+			t.Skip("the platform has no groups")
+		}
+		if _, err := h.Resolver.Resolve(t.Context(), h.UnknownGroup); !errors.Is(err, approval.ErrUnknownTarget) {
+			t.Errorf("Resolve(%s) err = %v, want approval.ErrUnknownTarget", h.UnknownGroup, err)
+		}
+	})
+
+	t.Run("a malformed target is rejected offline", func(t *testing.T) {
+		h := newHarness(t, members)
+		if h.Invalid == "" {
+			t.Skip("the platform accepts every target")
+		}
+		v, ok := h.Resolver.(approval.TargetValidator)
+		if !ok {
+			t.Fatal("a platform that rejects targets must implement approval.TargetValidator")
+		}
+		for _, valid := range []string{"Dana", h.Group} {
+			if err := v.ValidateTarget(valid); valid != "" && err != nil {
+				t.Errorf("ValidateTarget(%q) = %v, want it valid", valid, err)
+			}
+		}
+		if err := v.ValidateTarget(h.Invalid); !errors.Is(err, approval.ErrInvalidTarget) {
+			t.Errorf("ValidateTarget(%q) = %v, want approval.ErrInvalidTarget", h.Invalid, err)
+		}
+		before := calls(h)
+		_, err := h.Resolver.Resolve(t.Context(), h.Invalid)
+		if !errors.Is(err, approval.ErrUnknownTarget) || !errors.Is(err, approval.ErrInvalidTarget) {
+			t.Errorf("Resolve(%q) err = %v, want approval.ErrUnknownTarget and approval.ErrInvalidTarget", h.Invalid, err)
+		}
+		if calls(h) != before {
+			t.Errorf("Resolve(%q) called the platform API", h.Invalid)
+		}
+	})
+}
+
+// canonicalSet is names in canonical form, sorted and deduplicated.
+func canonicalSet(r approval.ApproverResolver, names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, r.Canonical(n))
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// calls is the harness's API call count, or 0 when it makes none.
+func calls(h ResolverHarness) int {
+	if h.Calls == nil {
+		return 0
+	}
+	return h.Calls()
 }

@@ -44,11 +44,11 @@ func runCoverageCmd(cmd *cobra.Command, args []string) error {
 // with the unfiltered match it was computed from. opts.ScopeName narrows
 // the per-scope breakdown in the engine.
 func runCoverage(ctx context.Context, opts match.Options) (*match.CoverageReport, *match.Result, error) {
-	repo, err := getRepo()
+	engine, err := openEngine(nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	report, match, err := newLocalEngine(repo, nil).Coverage(ctx, opts)
+	report, match, err := engine.Coverage(ctx, opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run coverage: %w", err)
 	}

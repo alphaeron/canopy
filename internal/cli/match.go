@@ -52,11 +52,10 @@ func runMatchCmd(cmd *cobra.Command, args []string) error {
 
 // runMatch runs the engine's match phase against the local repository.
 func runMatch(ctx context.Context, opts match.Options) (*match.Result, error) {
-	repo, err := getRepo()
+	engine, err := openEngine(nil)
 	if err != nil {
 		return nil, err
 	}
-	engine := newLocalEngine(repo, nil)
 	result, err := engine.Match(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("run match: %w", err)

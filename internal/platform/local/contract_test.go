@@ -43,3 +43,11 @@ func TestLocalWorktreeMeetsTheTreeContract(t *testing.T) {
 		return &worktree{repo: repo}
 	})
 }
+
+// TestLocalResolverMeetsTheResolverContract: the local platform has no
+// groups and accepts every target, so only the user checks apply.
+func TestLocalResolverMeetsTheResolverContract(t *testing.T) {
+	platformtest.RunResolverContract(t, func(t *testing.T, _ []string) platformtest.ResolverHarness {
+		return platformtest.ResolverHarness{Resolver: NewReviewer(nil, nil).Resolver}
+	})
+}

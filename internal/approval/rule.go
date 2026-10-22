@@ -2,6 +2,7 @@ package approval
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/alphaeron/kit/internal/rulesfile"
@@ -39,18 +40,20 @@ func (r *Rule) Targets() RuleTargets {
 }
 
 // Prune returns the rule's targets that can count at least one active,
-// eligible member under the self-approval policy. Targets that cannot be
-// resolved to any member, and targets whose only members are inactive or the
+// eligible member under the self-approval policy. Unknown targets
+// (ErrUnknownTarget), and targets whose only members are inactive or the
 // excluded author, are dropped: a rule left with zero active targets skips
-// entirely (falling back to earlier rules or the parent directory).
-func (r *Rule) Prune(ctx context.Context, pr PullRequest, resolver ApproverResolver) RuleTargets {
+// entirely (falling back to earlier rules or the parent directory). A target
+// the platform failed to resolve for any other reason is kept, so the
+// failure fails the review instead of silently weakening the requirement.
+func (r *Rule) Prune(ctx context.Context, p participants, resolver ApproverResolver) RuleTargets {
 	var kept RuleTargets
 	for _, target := range r.Targets() {
-		members, ok := resolver.Resolve(ctx, target.Target, pr)
-		if !ok {
+		members, err := resolver.Resolve(ctx, target.Target)
+		if errors.Is(err, ErrUnknownTarget) {
 			continue
 		}
-		if !target.HasAnyEligibleMember(members, pr) {
+		if err == nil && !target.HasAnyEligibleMember(members, p) {
 			continue
 		}
 		kept = append(kept, target)
@@ -65,7 +68,7 @@ func (r *Rule) Prune(ctx context.Context, pr PullRequest, resolver ApproverResol
 // review state, nothing above the rule level.
 func (r *Rule) Execute(
 	ctx context.Context,
-	pr PullRequest,
+	p participants,
 	resolver ApproverResolver,
 	file, layer string,
 	log *slog.Logger,
@@ -76,12 +79,12 @@ func (r *Rule) Execute(
 	for _, target := range r.Targets() {
 		// Target-level execution carries its own self-approval policy and
 		// its own state; the rule only aggregates.
-		state := target.Execute(ctx, pr, resolver)
+		state := target.Execute(ctx, p, resolver)
 		if state.Status == StatusUnresolved {
 			log.Error("approve: could not resolve approver target",
 				"component", "rule", "phase", "approve",
 				"file", file, "layer", layer, "rule", r.Name,
-				"target", target.Target)
+				"target", target.Target, "reason", state.Reason)
 		}
 		approverStates = append(approverStates, *state)
 		if len(state.ResolvedBy) > 0 {

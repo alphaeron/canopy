@@ -25,7 +25,7 @@ var rulesGetCmd = &cobra.Command{
 a file/pattern matching a set of files.
 
 This way, review requirements can be visualized locally without opening a
-pull request.`,
+pull or merge request.`,
 	Annotations: map[string]string{"arg": "regular expression of the files to check (default: every file)"},
 }
 
@@ -39,11 +39,10 @@ func runRulesGet(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		args = []string{`.*`}
 	}
-	repo, err := getRepo()
+	engine, err := openEngine(nil)
 	if err != nil {
 		return err
 	}
-	engine := newLocalEngine(repo, nil)
 
 	mode, _ := resolveOutputMode(cmd)
 	for _, arg := range args {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/rulesfile"
@@ -25,12 +27,12 @@ func approver(target string, count int) rulesfile.ApproverTarget {
 // buildContext assembles the shared PullRequest. Tests pass only the
 // values that differ from the typical case (current approvers, owner
 // activeness, repository owners).
-func buildContext(approvers map[string]bool, isOwnerActive func(string) bool, repoOwners []string) PullRequest {
-	return PullRequest{
-		Author:           testAuthor,
-		CurrentApprovers: approvers,
-		IsOwnerActive:    isOwnerActive,
-		RepositoryOwners: repoOwners,
+func buildContext(approvers map[string]bool, isActive func(string) bool, repoOwners []string) ReviewInput {
+	return ReviewInput{
+		Author:    testAuthor,
+		Approvers: slices.Collect(maps.Keys(approvers)),
+		IsActive:  isActive,
+		Owners:    repoOwners,
 	}
 }
 
@@ -53,6 +55,9 @@ func approverSet(names ...string) map[string]bool {
 	return set
 }
 
+// identity is the canonical form of a platform that compares names exactly.
+func identity(name string) string { return name }
+
 func activeAllOwners() func(string) bool {
 	return func(string) bool { return true }
 }
@@ -64,7 +69,7 @@ func testLogger() *slog.Logger {
 
 // executeChain runs the chain with a fresh event builder and a quiet logger,
 // mirroring how Reviewer.Execute wires the approve phase.
-func executeChain(t *testing.T, rc RuleChain, pr PullRequest) *ReviewState {
+func executeChain(t *testing.T, rc RuleChain, pr ReviewInput) *ReviewState {
 	t.Helper()
 	return rc.Execute(t.Context(), pr, &DefaultApproverResolver{}, NewReviewStateBuilder(), testLogger())
 }
@@ -77,7 +82,7 @@ func TestUnionRecurringTargetCountsPerOccurrence(t *testing.T) {
 	// Root requires 1 approval from team-a; /src (union) requires 2 from the
 	// same team-a. The default resolver maps target -> [target], so the
 	// target name is counted as an approver only if it appears in
-	// CurrentApprovers. With one matching approval, root is satisfied and
+	// approvers. With one matching approval, root is satisfied and
 	// /src still needs one more. Each target occurrence is counted once
 	// per occurrence.
 	pr := buildContext(approverSet("team-a"), activeAllOwners(), []string{"zowner"})
@@ -244,7 +249,7 @@ func TestFallbackUnsatisfiableWhenAllOwnersInactive(t *testing.T) {
 
 // executeChainWithResolver runs the chain with the given resolver so tests can
 // exercise resolution failures.
-func executeChainWithResolver(t *testing.T, rc RuleChain, pr PullRequest, resolver ApproverResolver) *ReviewState {
+func executeChainWithResolver(t *testing.T, rc RuleChain, pr ReviewInput, resolver ApproverResolver) *ReviewState {
 	t.Helper()
 	return rc.Execute(t.Context(), pr, resolver, NewReviewStateBuilder(), testLogger())
 }
@@ -283,20 +288,22 @@ type groupResolver struct{}
 // Resolve maps "team-x" and "team-y" to their members, ignoring the supplied
 // context; every other target resolves to itself, mirroring the default
 // local resolver.
-func (groupResolver) Resolve(_ context.Context, target string, _ PullRequest) ([]string, bool) {
+func (groupResolver) Resolve(_ context.Context, target string) ([]string, error) {
 	switch target {
 	case "team-x":
-		return []string{"al", "bo"}, true
+		return []string{"al", "bo"}, nil
 	case "team-y":
-		return []string{testAuthor, "bo"}, true
+		return []string{testAuthor, "bo"}, nil
 	}
-	return []string{target}, true
+	return []string{target}, nil
 }
+
+func (groupResolver) Canonical(name string) string { return name }
 
 func TestGroupTargetResolvedAgainstMembers(t *testing.T) {
 	// team-x resolves to [al, bo]; bo is active and approving, so the group
 	// is satisfied even though the group name never appears in
-	// CurrentApprovers.
+	// approvers.
 	pr := buildContext(approverSet("bo"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain("/src/x.go",
 		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-x", 1)),
@@ -360,7 +367,7 @@ func TestRuleStateSnapshotsEffectiveCombineStrategy(t *testing.T) {
 		Approvers:       []rulesfile.ApproverTarget{approver("team-a", 1)},
 	})
 	pr := buildContext(approverSet("team-a"), activeAllOwners(), []string{"zowner"})
-	rs := rule.Execute(t.Context(), pr, &DefaultApproverResolver{}, "/src/x.go", "/", testLogger())
+	rs := rule.Execute(t.Context(), newParticipants(pr, identity), &DefaultApproverResolver{}, "/src/x.go", "/", testLogger())
 	if rs.CombineStrategy != rulesfile.RuleCombineStrategyOverride {
 		t.Errorf("snapshot combine strategy = %s, want override for an invalid config value", rs.CombineStrategy)
 	}
@@ -370,7 +377,7 @@ func TestRuleStateSnapshotsEffectiveCombineStrategy(t *testing.T) {
 		CombineStrategy: rulesfile.RuleCombineStrategyIntersect,
 		Approvers:       []rulesfile.ApproverTarget{approver("team-a", 1)},
 	})
-	rs = valid.Execute(t.Context(), pr, &DefaultApproverResolver{}, "/src/x.go", "/src", testLogger())
+	rs = valid.Execute(t.Context(), newParticipants(pr, identity), &DefaultApproverResolver{}, "/src/x.go", "/src", testLogger())
 	if rs.CombineStrategy != rulesfile.RuleCombineStrategyIntersect {
 		t.Errorf("snapshot combine strategy = %s, want intersect pass-through", rs.CombineStrategy)
 	}
@@ -537,7 +544,7 @@ func TestFallbackUnsatisfiableBeatsSatisfiedFiles(t *testing.T) {
 		"/orphan.go": {},
 	}}
 	state := executeChain(t, rc, pr)
-	// /ok.go: rule pruned (owner inactive by IsOwnerActive) -> fallback ->
+	// /ok.go: rule pruned (owner inactive by IsActive) -> fallback ->
 	// owner inactive -> that file is unsatisfiable too. So the overall
 	// status must be unambiguous in error.
 	if state.Overall != StatusError {

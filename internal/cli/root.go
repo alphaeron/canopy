@@ -44,12 +44,12 @@ var rootCmd = &cobra.Command{
 	Use:   brand.Command,
 	Short: brand.Name + " code review CLI",
 	Long: "The " + brand.Name + ` CLI allows for checking code ownership using the local branch
-contents before opening an official Pull Request.
+contents before opening a pull or merge request.
 
 The local branch rules file contents are used rather than a remote main
 branch. Every command runs against the local repository; the same analysis
-is exposed by the REST server against a pull request (which is a
-separate binary, not a subcommand here).`,
+is exposed by the REST server against a hosted change such as a GitHub pull
+request (a separate binary, not a subcommand here).`,
 	// PersistentPreRunE runs after cobra has finished parsing every flag for
 	// the command tree, making --config available. It is the single moment
 	// configuration is loaded, so the resolved set of prefixed environment
@@ -66,10 +66,6 @@ separate binary, not a subcommand here).`,
 		if cfg.Path != "" {
 			slog.Debug("using config file", "component", "config", "path", cfg.Path)
 		}
-		// The CLI is a local tool: it does not need the GitHub app
-		// credentials, but loading them is harmless and keeps the two
-		// binaries (the CLI and the REST server) on the same resolution path.
-		_ = cfg.GitHubAppID
 		return nil
 	},
 }

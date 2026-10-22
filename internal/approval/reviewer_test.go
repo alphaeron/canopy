@@ -3,6 +3,7 @@ package approval
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/rulesfile"
@@ -164,6 +165,8 @@ func TestReviewerExecuteUnresolvableTargetIsTracked(t *testing.T) {
 
 type failingResolver struct{}
 
-func (failingResolver) Resolve(context.Context, string, PullRequest) ([]string, bool) {
-	return nil, false
+func (failingResolver) Resolve(_ context.Context, target string) ([]string, error) {
+	return nil, fmt.Errorf("%w: %s", ErrUnknownTarget, target)
 }
+
+func (failingResolver) Canonical(name string) string { return name }

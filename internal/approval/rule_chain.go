@@ -21,14 +21,18 @@ type RuleChain struct {
 // the target directory. It records "approve" phase events and every error
 // condition into the supplied builder and assembles the complete review
 // state for the input files. resolver is the platform's (see
-// local.NewReviewer and ghplatform.NewReviewer) and is required.
+// local.NewReviewer and ghplatform.NewReviewer) and is required. Every name
+// in the review is compared in the resolver's canonical form, and each
+// target is resolved at most once.
 func (rc *RuleChain) Execute(
 	ctx context.Context,
-	pr PullRequest,
+	in ReviewInput,
 	resolver ApproverResolver,
 	events *ReviewStateBuilder,
 	log *slog.Logger,
 ) *ReviewState {
+	resolver = newReviewResolver(resolver)
+	p := newParticipants(in, resolver.Canonical)
 	log.Info("approve: evaluating rule chain",
 		"component", "rule_chain", "phase", "approve", "files", len(rc.FileChains))
 
@@ -50,7 +54,7 @@ func (rc *RuleChain) Execute(
 		fileLayers := make([]LayerState, 0, len(layers))
 		for _, layer := range layers {
 			layerState := layer.Execute(
-				ctx, runningRequiredApprovers, pr, events, resolver, file, log,
+				ctx, runningRequiredApprovers, p, events, resolver, file, log,
 			)
 			runningRequiredApprovers = layerState.Required
 
@@ -72,7 +76,7 @@ func (rc *RuleChain) Execute(
 				note = "No matching rules found for file; falling back to repository owners"
 			}
 			events.AddEvent("approve", file, "", "", StatusUnresolved, note)
-			fs := rc.fallbackFileState(ctx, pr, resolver, file, fileLayers, events, log)
+			fs := rc.fallbackFileState(ctx, p, resolver, file, fileLayers, events, log)
 			if fs.Status == StatusError {
 				unsatisfiableFiles = append(unsatisfiableFiles, file)
 			}
@@ -87,11 +91,11 @@ func (rc *RuleChain) Execute(
 			// The rule target carries its own rule-specific state;
 			// resolution, counting, and the author / self-approval rule all
 			// live on the rule-target type.
-			state := rt.Execute(ctx, pr, resolver)
+			state := rt.Execute(ctx, p, resolver)
 			if state.Status == StatusUnresolved {
 				resolveErr := fmt.Errorf(
-					"could not resolve approver target %q for file %q to members",
-					rt.Target, file)
+					"approver target %q for file %q: %s",
+					rt.Target, file, state.Reason)
 				events.AddError(resolveErr)
 				log.Error("approve: could not resolve approver target",
 					"component", "rule_chain", "phase", "approve",
@@ -132,7 +136,7 @@ func (rc *RuleChain) Execute(
 	}
 
 	// Surface an error when any file is unsatisfiable so that callers can
-	// block the PR and post a warning comment.
+	// block the change and report why.
 	var overallErr error
 	if len(unsatisfiableFiles) > 0 {
 		overallErr = fmt.Errorf("unsatisfiable rules for %d file(s): %v",
@@ -172,7 +176,7 @@ func statusFromApproverStates(states []ApproverTargetState) Status {
 // unsatisfiable-rules error) when no repository owner is active.
 func (rc *RuleChain) fallbackFileState(
 	ctx context.Context,
-	pr PullRequest,
+	p participants,
 	resolver ApproverResolver,
 	file string,
 	layers []LayerState,
@@ -180,7 +184,7 @@ func (rc *RuleChain) fallbackFileState(
 	log *slog.Logger,
 ) FileState {
 	fs := FileState{Path: file, Layers: layers, Required: []ApproverTargetState{}, UsedFallback: true}
-	states, unsatisfiable := rc.evaluateFallback(ctx, pr, resolver, file, events, log)
+	states, unsatisfiable := rc.evaluateFallback(ctx, p, resolver, file, events, log)
 	if unsatisfiable {
 		events.AddEvent("approve", file, "", "", StatusError,
 			"No active repository owners available; rule is unsatisfiable")
@@ -204,15 +208,15 @@ func (rc *RuleChain) fallbackFileState(
 // (i.e. no active owners exist at all).
 func (rc *RuleChain) evaluateFallback(
 	ctx context.Context,
-	pr PullRequest,
+	p participants,
 	resolver ApproverResolver,
 	file string,
 	events *ReviewStateBuilder,
 	log *slog.Logger,
 ) ([]ApproverTargetState, bool) {
 	var activeOwners []string
-	for _, owner := range pr.RepositoryOwners {
-		if pr.IsOwnerActive(owner) {
+	for _, owner := range p.owners {
+		if p.isActive(owner) {
 			activeOwners = append(activeOwners, owner)
 		}
 	}
@@ -221,16 +225,16 @@ func (rc *RuleChain) evaluateFallback(
 	if len(activeOwners) == 0 {
 		log.Warn("fallback: no active repository owners available",
 			"component", "rule_chain", "phase", "approve",
-			"file", file, "repository_owners", len(pr.RepositoryOwners))
+			"file", file, "repository_owners", len(p.owners))
 		return nil, true
 	}
 
 	var states []ApproverTargetState
 	for _, owner := range activeOwners {
-		members, ok := resolver.Resolve(ctx, owner, pr)
-		if !ok {
+		members, err := resolver.Resolve(ctx, owner)
+		if err != nil {
 			resolveErr := fmt.Errorf(
-				"could not resolve repository owner %q to members", owner)
+				"could not resolve repository owner %q to members: %w", owner, err)
 			events.AddError(resolveErr)
 			log.Error("fallback: could not resolve repository owner",
 				"component", "rule_chain", "phase", "approve",
@@ -241,7 +245,7 @@ func (rc *RuleChain) evaluateFallback(
 				Satisfied:      false,
 				ResolvedBy:     []string{},
 				Status:         StatusUnresolved,
-				Reason:         "Could not resolve target to members",
+				Reason:         resolveFailure(err),
 			})
 			continue
 		}
@@ -249,7 +253,7 @@ func (rc *RuleChain) evaluateFallback(
 		satisfiedCount := 0
 		var resolved []string
 		for _, member := range members {
-			if pr.CurrentApprovers[member] {
+			if p.approvers[member] {
 				satisfiedCount++
 				resolved = append(resolved, member)
 			}
