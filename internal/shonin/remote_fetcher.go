@@ -8,7 +8,6 @@ import (
 	"log/slog"
 
 	"github.com/google/go-github/v71/github"
-	"gopkg.in/yaml.v3"
 
 	"github.com/alphaeron/kit/internal/kitfile"
 )
@@ -70,8 +69,8 @@ func (rf *RemoteFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 			fetchErrors = append(fetchErrors, fmt.Errorf("fetch %s: %w", path, err))
 			continue
 		}
-		fileRules := kitfile.Rules{}
-		if err := yaml.Unmarshal(data, &fileRules); err != nil {
+		fileRules, err := kitfile.ParseRules(data)
+		if err != nil {
 			fetchErrors = append(fetchErrors, fmt.Errorf("parse KIT file %s: %w", path, err))
 			continue
 		}
@@ -113,10 +112,7 @@ func (rf *RemoteFetcher) fetchBlobContents(ctx context.Context, sha string) ([]b
 
 // log returns the configured logger or the default one.
 func (rf *RemoteFetcher) log() *slog.Logger {
-	if rf.Log != nil {
-		return rf.Log
-	}
-	return slog.Default()
+	return logOrDefault(rf.Log)
 }
 
 var _ Fetcher = (*RemoteFetcher)(nil)

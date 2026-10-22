@@ -34,7 +34,7 @@ func reviewRoute(v tui.Values) tui.Route {
 }
 
 func reviewPage(state *shonin.ReviewState, opts reviewOptions) tui.Page {
-	files := sortedFileStates(state)
+	files := state.SortedFiles()
 	counts := map[shonin.Status]int{}
 	for _, fs := range files {
 		counts[fs.Status]++
@@ -149,7 +149,7 @@ func chainSection(fs shonin.FileState) tui.Section {
 		return s
 	}
 	for i, l := range fs.Layers {
-		kit := kitFileOfDir(l.DirectoryPath)
+		kit := kitfile.PathInDir(l.DirectoryPath)
 		r := rulesListRoute(tui.Values{Flags: map[string]string{"file": kit}})
 		note := "active"
 		if !l.Active {
@@ -216,7 +216,7 @@ func eventRows(events []shonin.Event, path *string) []tui.Row {
 		}
 		where := e.Phase
 		if e.Layer != "" {
-			where += " " + kitFileOfDir(e.Layer)
+			where += " " + kitfile.PathInDir(e.Layer)
 		}
 		if e.Rule != "" {
 			where += " · " + e.Rule
@@ -242,15 +242,6 @@ func statusBadge(s shonin.Status) tui.Badge {
 		return tui.BadgeOff
 	}
 	return tui.BadgeNone
-}
-
-// evaluateRequired runs the approve phase over chain with no approvals, so
-// each file's state says who must approve it. Every approver counts as
-// active and there are no repository owners, so a file no rule covers is
-// reported as unsatisfiable.
-func evaluateRequired(chain shonin.RuleChain) *shonin.ReviewState {
-	ctx := shonin.EvaluationContext{CurrentApprovers: map[string]bool{}, IsOwnerActive: func(string) bool { return true }}
-	return chain.Execute(ctx, shonin.NewReviewStateBuilder(nil), quietLog, "")
 }
 
 // requiredOnlyLabel is who must approve a file, without progress: what
@@ -308,9 +299,4 @@ func orNoneLabel(s string) string {
 		return "nobody"
 	}
 	return s
-}
-
-// kitFileOfDir is the KIT file of a layer directory ("" is the root).
-func kitFileOfDir(dir string) string {
-	return layerKitFile(shonin.RuleLayer{DirectoryPath: dir})
 }

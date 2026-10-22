@@ -2,10 +2,15 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"maps"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/alphaeron/kit/internal/kenin"
 	"github.com/alphaeron/kit/internal/shonin"
 	"github.com/alphaeron/kit/internal/tui"
 )
@@ -39,28 +44,15 @@ func runRulesGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ref, err := repo.Head()
-	if err != nil {
-		if repo.HasCommits() {
-			return fmt.Errorf("read HEAD: %w", err)
-		}
-		// No commit yet: no tracked files exist, so the rule chain over
-		// any file set is simply empty.
-		return renderEmptyMatch(cmd)
-	}
-	fetch := shonin.LocalFetcher{Repo: repo}
-	s := shonin.Shonin{
-		Fetch:    &fetch,
-		Resolver: &shonin.DefaultApproverResolver{},
-	}
+	engine := newLocalEngine(repo, nil)
 
 	mode, _ := resolveOutputMode(cmd)
 	for _, arg := range args {
-		paths, err := repo.FindFiles(arg, ref, false)
+		paths, err := engine.Files(kenin.Options{Patterns: []string{arg}})
 		if err != nil {
 			return fmt.Errorf("find files for %q: %w", arg, err)
 		}
-		ruleChain, err := s.GetRuleChainForFiles(paths)
+		ruleChain, err := engine.RuleChain(paths)
 		if err != nil {
 			return fmt.Errorf("fetch rules for %q: %w", arg, err)
 		}
@@ -78,24 +70,50 @@ func runRulesGet(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		default:
-			shonin.PrintRuleChain(ruleChain)
+			if err := printRuleChain(os.Stdout, ruleChain); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
+// printRuleChain writes each file's chain as an indented tree: the file,
+// each layer's directory, and every rule in it with its settings. Files are
+// in path order.
+func printRuleChain(w io.Writer, chain shonin.RuleChain) error {
+	var b strings.Builder
+	for _, file := range slices.Sorted(maps.Keys(chain.FileChains)) {
+		fmt.Fprintf(&b, "%s\n", file)
+		for _, layer := range chain.FileChains[file] {
+			indentCount := strings.Count(layer.DirectoryPath, "/")
+			fmt.Fprintf(&b, "%s%s/\n", strings.Repeat("  ", indentCount), layer.DirectoryPath)
+			patternIndent := strings.Repeat("  ", indentCount+1)
+			ruleIndent := strings.Repeat("  ", indentCount+2)
+			for _, rule := range layer.Rules {
+				fmt.Fprintf(&b, "%s%s:\n", patternIndent, rule.Pattern)
+				printRule(&b, rule, ruleIndent)
+			}
+		}
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+func printRule(b *strings.Builder, rule shonin.Rule, indent string) {
+	fmt.Fprintf(b, "%sName:                 %s\n", indent, rule.Name)
+	fmt.Fprintf(b, "%sIgnoreParentDirs:     %t\n", indent, rule.IgnoreParentDirs)
+	fmt.Fprintf(b, "%sCombineStrategy:      %s\n", indent, rule.CombineStrategy)
+	fmt.Fprintf(b, "%sCurrentDirectoryOnly: %t\n", indent, rule.CurrentDirectoryOnly)
+	fmt.Fprintf(b, "%sSelfApprove:          %t\n", indent, rule.SelfApprove)
+	fmt.Fprintf(b, "%sApprovers:\n", indent)
+	for _, approver := range rule.Approvers {
+		fmt.Fprintf(b, "%s  %s\n", indent, approver)
+	}
+	b.WriteString("\n")
+}
+
 func init() {
 	rulesGetCmd.RunE = runRulesGet
 	rulesCmd.AddCommand(rulesGetCmd)
-}
-
-// renderEmptyMatch outputs the current command's canonical "nothing matched"
-// payload for a repository that has no commit yet, where no file exists to
-// carry a rule. The JSON form is an empty mapping and the table form is no
-// rows, matching what shonin produces for a rule-less tree.
-func renderEmptyMatch(cmd *cobra.Command) error {
-	if m, _ := resolveOutputMode(cmd); m == modeJSON {
-		return tui.JSONEncoder(os.Stdout, map[string][]string{})
-	}
-	return nil
 }

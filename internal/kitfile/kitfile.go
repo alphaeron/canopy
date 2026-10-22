@@ -32,8 +32,8 @@ func LoadKitFile(path string) (*KitFile, error) {
 		return nil, fmt.Errorf("read KIT file %q: %w", path, err)
 	}
 
-	var rules Rules
-	if err := yaml.Unmarshal(dat, &rules); err != nil {
+	rules, err := ParseRules(dat)
+	if err != nil {
 		return nil, fmt.Errorf("parse KIT file %q: %w", path, err)
 	}
 	return &KitFile{Path: path, Rules: rules}, nil
@@ -146,4 +146,11 @@ const FileName = "KIT"
 // keeps files such as "docs/KITCHEN.md" from being read as rules.
 func IsKitFile(p string) bool {
 	return path.Base(p) == FileName
+}
+
+// PathInDir is the slash-separated repository path of the KIT file in dir:
+// "KIT" for the repository root ("" or "."), "<dir>/KIT" otherwise. It is
+// the key a fetcher's rule map uses for that directory's rules.
+func PathInDir(dir string) string {
+	return path.Join(dir, FileName)
 }

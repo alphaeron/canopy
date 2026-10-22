@@ -50,9 +50,8 @@ func TestShoninExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 				Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}}},
 		},
 	}
-	s := &Shonin{Fetch: fetch, Log: testLogger()}
-	rs := s.Execute("user9", approverSet("team-a"), func(string) bool { return true },
-		[]string{"zowner"}, []string{"/src/api.go"})
+	s := &Shonin{Fetch: fetch, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
+	rs := s.Execute(buildContext(approverSet("team-a"), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
 
 	if rs.Err != nil {
 		t.Fatalf("clean run should not produce an error, got %v", rs.Err)
@@ -88,9 +87,8 @@ func TestShoninExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 
 func TestShoninExecuteFetchErrorFailsReview(t *testing.T) {
 	fetchErr := errors.New("no KIT files in repository")
-	s := &Shonin{Fetch: &stubFetcher{root: "/repo", err: fetchErr}, Log: testLogger()}
-	rs := s.Execute("user9", approverSet(), func(string) bool { return true },
-		[]string{"zowner"}, []string{"/src/api.go"})
+	s := &Shonin{Fetch: &stubFetcher{root: "/repo", err: fetchErr}, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
+	rs := s.Execute(buildContext(approverSet(), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
 
 	if rs.Overall != StatusError {
 		t.Errorf("overall status = %s, want error", rs.Overall)
@@ -119,9 +117,8 @@ func TestShoninExecuteSiftErrorFailsReview(t *testing.T) {
 				Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}}},
 		},
 	}
-	s := &Shonin{Fetch: fetch, Log: testLogger()}
-	rs := s.Execute("user9", approverSet("team-a"), func(string) bool { return true },
-		[]string{"zowner"}, []string{"/src/api.go"})
+	s := &Shonin{Fetch: fetch, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
+	rs := s.Execute(buildContext(approverSet("team-a"), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
 
 	if rs.Overall != StatusError {
 		t.Errorf("overall status = %s, want error after sift failure", rs.Overall)
@@ -157,8 +154,7 @@ func TestShoninExecuteUnresolvableTargetIsTracked(t *testing.T) {
 	}
 	resolver := failingResolver{}
 	s := &Shonin{Fetch: fetch, Resolver: resolver, Log: testLogger()}
-	rs := s.Execute("user9", approverSet("ghost-team"), func(string) bool { return true },
-		[]string{"zowner"}, []string{"/src/api.go"})
+	rs := s.Execute(buildContext(approverSet("ghost-team"), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
 
 	if len(rs.Errors) == 0 {
 		t.Errorf("resolution failure must be accumulated in Errors, got none")

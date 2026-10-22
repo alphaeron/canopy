@@ -56,10 +56,7 @@ func runMatch(opts kenin.Options) (*kenin.MatchResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine, err := newLocalEngine(repo)
-	if err != nil {
-		return nil, err
-	}
+	engine := newLocalEngine(repo, nil)
 	result, err := engine.Match(opts)
 	if err != nil {
 		return nil, fmt.Errorf("run match: %w", err)

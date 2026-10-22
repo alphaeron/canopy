@@ -42,7 +42,7 @@ func openKitSet() (*kitSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	root, rules, err := (&shonin.LocalFetcher{Repo: repo}).Execute()
+	root, rules, err := shonin.NewLocal(repo, nil).Fetch.Execute()
 	if err != nil {
 		return nil, fmt.Errorf("load KIT files: %w", err)
 	}

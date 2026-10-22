@@ -1,4 +1,4 @@
-.PHONY: test fmt lint vulncheck smoke
+.PHONY: test fmt lint vulncheck smoke deadcode
 
 test:
 	@go test -v ./...
@@ -13,6 +13,9 @@ fmt:
 
 lint:
 	golangci-lint run ./...
+
+deadcode:
+	@scripts/deadcode.sh
 
 vulncheck:
 	govulncheck -show verbose ./...

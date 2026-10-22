@@ -98,13 +98,14 @@ func newCombineStrategy(s kitfile.RuleCombineStrategy) CombineStrategy {
 	}
 }
 
-// effectiveCombineStrategy reports the combine strategy that
+// EffectiveCombineStrategy reports the combine strategy that
 // newCombineStrategy would resolve to, expressed as a configuration value:
 // valid values pass through unchanged and corrupt or omitted settings map to
 // the default (override) behavior. ReviewState snapshots this so the state
 // is a historical record of what was actually applied, not a copy of the raw
-// configuration file.
-func effectiveCombineStrategy(s kitfile.RuleCombineStrategy) kitfile.RuleCombineStrategy {
+// configuration file; editors seed from it so re-saving a rule never changes
+// who has to approve.
+func EffectiveCombineStrategy(s kitfile.RuleCombineStrategy) kitfile.RuleCombineStrategy {
 	switch s {
 	case kitfile.RuleCombineStrategyUnion,
 		kitfile.RuleCombineStrategyOverride,

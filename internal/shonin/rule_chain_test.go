@@ -65,7 +65,7 @@ func testLogger() *slog.Logger {
 // mirroring how Shonin.Execute wires the approve phase.
 func executeChain(t *testing.T, rc RuleChain, ctx EvaluationContext) *ReviewState {
 	t.Helper()
-	return rc.Execute(ctx, NewReviewStateBuilder(nil), testLogger(), "/repo")
+	return rc.Execute(ctx, &DefaultApproverResolver{}, NewReviewStateBuilder(), testLogger(), "/repo")
 }
 
 func inactiveAllOwners() func(string) bool {
@@ -245,7 +245,7 @@ func TestFallbackUnsatisfiableWhenAllOwnersInactive(t *testing.T) {
 // exercise resolution failures.
 func executeChainWithResolver(t *testing.T, rc RuleChain, ctx EvaluationContext, resolver ApproverResolver) *ReviewState {
 	t.Helper()
-	return rc.Execute(ctx, NewReviewStateBuilder(resolver), testLogger(), "/repo")
+	return rc.Execute(ctx, resolver, NewReviewStateBuilder(), testLogger(), "/repo")
 }
 
 func TestFallbackUnresolvableOwnerIsUnresolved(t *testing.T) {

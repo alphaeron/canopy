@@ -65,3 +65,21 @@ func TestCoverageFilterScope(t *testing.T) {
 		t.Errorf("FilterScope must not modify its receiver: %+v", report.PerScope)
 	}
 }
+
+func TestMatchResultFilesOfAndOverlaps(t *testing.T) {
+	a := Scope{Name: "a", Pattern: ".*", KITFile: "KIT"}
+	b := Scope{Name: "b", Pattern: `\.go$`, KITFile: "src/KIT", Directory: "src"}
+	c := Scope{Name: "c", Pattern: `api`, KITFile: "src/KIT", Directory: "src"}
+	r := &MatchResult{Files: []FileMatch{
+		{Path: "src/api.go", Scopes: []Scope{a, b, c}},
+		{Path: "src/x.go", Scopes: []Scope{a, b}},
+		{Path: "README", Scopes: []Scope{a}},
+	}}
+	if got, want := r.FilesOf(b), []string{"src/api.go", "src/x.go"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("FilesOf(b) = %v, want %v", got, want)
+	}
+	want := []ScopeOverlap{{Scope: b, Shared: 2}, {Scope: c, Shared: 1}}
+	if got := r.Overlaps(a); !reflect.DeepEqual(got, want) {
+		t.Errorf("Overlaps(a) = %+v, want %+v", got, want)
+	}
+}

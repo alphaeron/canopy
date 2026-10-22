@@ -2,10 +2,12 @@ package kenin
 
 import (
 	"errors"
+	"log/slog"
 	"reflect"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/shonin"
 )
 
 // stubSource is an in-memory Source for testing the Engine without touching
@@ -24,8 +26,13 @@ type stubSource struct {
 
 func (s *stubSource) RepoRoot() string { return s.root }
 
-func (s *stubSource) KitFiles() (map[string]kitfile.Rules, error) {
-	return s.rules, s.err
+// Reviewer is a local-style platform over the stub's rules.
+func (s *stubSource) Reviewer() *shonin.Shonin {
+	return &shonin.Shonin{
+		Fetch:    &stubFetch{root: s.root, rules: s.rules, err: s.err},
+		Resolver: &shonin.DefaultApproverResolver{},
+		Log:      slog.New(slog.DiscardHandler),
+	}
 }
 
 func (s *stubSource) AllFiles() ([]string, error) { return s.allFiles, nil }
@@ -43,6 +50,17 @@ func (s *stubSource) DiffContent(path string) (string, error) {
 }
 
 var _ Source = (*stubSource)(nil)
+
+// stubFetch is a Fetcher over a fixed rule map.
+type stubFetch struct {
+	root  string
+	rules map[string]kitfile.Rules
+	err   error
+}
+
+func (s *stubFetch) Execute() (string, map[string]kitfile.Rules, error) {
+	return s.root, s.rules, s.err
+}
 
 // shared fixture rules: a root KIT rule matching .go and a nested /src KIT
 // file with a rule overriding the parent for .go files. The root rule is a
@@ -155,11 +173,11 @@ func TestMatchScopeNameFilter(t *testing.T) {
 func TestCoverageScopeName(t *testing.T) {
 	src := &stubSource{root: "/repo", rules: fixtureRules, allFiles: []string{"main.go", "src/api.go", "docs/readme.md"}}
 	e := New(src, nil)
-	full, err := e.Coverage(Options{})
+	full, _, err := e.Coverage(Options{})
 	if err != nil {
 		t.Fatalf("Coverage: %v", err)
 	}
-	got, err := e.Coverage(Options{ScopeName: "src go rules"})
+	got, _, err := e.Coverage(Options{ScopeName: "src go rules"})
 	if err != nil {
 		t.Fatalf("Coverage scoped: %v", err)
 	}
@@ -169,7 +187,7 @@ func TestCoverageScopeName(t *testing.T) {
 	if got.Universe != full.Universe || got.Covered != full.Covered || !reflect.DeepEqual(got.Uncovered, full.Uncovered) {
 		t.Errorf("overall numbers changed: got %+v, full %+v", got, full)
 	}
-	if _, err := e.Coverage(Options{ScopeName: "no such rule"}); !errors.Is(err, ErrUnknownScope) {
+	if _, _, err := e.Coverage(Options{ScopeName: "no such rule"}); !errors.Is(err, ErrUnknownScope) {
 		t.Errorf("undeclared scope error = %v, want ErrUnknownScope", err)
 	}
 }
@@ -237,7 +255,7 @@ func TestCoverageUnmatchedFilesAndUnmatchedSet(t *testing.T) {
 		allFiles: []string{"main.go", "src/api.go", "docs/readme.md"},
 	}
 	e := New(src, nil)
-	report, err := e.Coverage(Options{})
+	report, _, err := e.Coverage(Options{})
 	if err != nil {
 		t.Fatalf("Coverage: %v", err)
 	}
@@ -268,7 +286,7 @@ func TestCoverageChangedOnly(t *testing.T) {
 		changedSet: []string{"a.go"},
 	}
 	e := New(src, nil)
-	report, err := e.Coverage(Options{ChangedOnly: true})
+	report, _, err := e.Coverage(Options{ChangedOnly: true})
 	if err != nil {
 		t.Fatalf("Coverage changed-only: %v", err)
 	}
@@ -282,3 +300,52 @@ var errRules = err("kit file parsing failed")
 type err string
 
 func (e err) Error() string { return string(e) }
+
+func TestFilesNarrowsByPatterns(t *testing.T) {
+	src := &stubSource{allFiles: []string{"src/api.go", "main.go", "docs/readme.md"}}
+	e := New(src, nil)
+	got, err := e.Files(Options{Patterns: []string{`\.md$`, `^main`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"docs/readme.md", "main.go"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Files = %v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(src.allFiles, []string{"src/api.go", "main.go", "docs/readme.md"}) {
+		t.Errorf("Files must not modify the source's slice: %v", src.allFiles)
+	}
+	if _, err := e.Files(Options{Patterns: []string{"("}}); err == nil {
+		t.Error("an invalid pattern must be an error")
+	}
+}
+
+func TestRequirementsReportsRequiredTargetsAndFallback(t *testing.T) {
+	src := &stubSource{rules: fixtureRules}
+	e := New(src, slog.New(slog.DiscardHandler))
+	chain, err := e.RuleChain([]string{"src/api.go", "docs/readme.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := e.Requirements(chain)
+	api := state.Files["src/api.go"]
+	if api.UsedFallback || len(api.Required) != 1 || api.Required[0].Target != "team-b" {
+		t.Errorf("src/api.go requires %+v, want team-b", api.Required)
+	}
+	if !state.Files["docs/readme.md"].UsedFallback {
+		t.Error("a file no rule covers must fall back to the repository owners")
+	}
+}
+
+func TestCoverageKeepsTheFullMatch(t *testing.T) {
+	src := &stubSource{rules: fixtureRules, allFiles: []string{"main.go", "src/api.go", "docs/readme.md"}}
+	report, match, err := New(src, nil).Coverage(Options{ScopeName: "src go rules"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.PerScope) != 1 || report.Covered != 2 {
+		t.Errorf("report = %+v, want one scope in the breakdown and 2 covered files", report)
+	}
+	if len(match.Files) != 3 {
+		t.Errorf("match has %d files, want the whole universe of 3", len(match.Files))
+	}
+}

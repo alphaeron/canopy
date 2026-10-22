@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 
 	"github.com/alphaeron/kit/internal/kenin"
@@ -45,7 +43,7 @@ func repoOverview(context.Context) (tui.Detail, error) {
 		d.Fields = append(d.Fields, tui.Field{Label: "Validation", Value: "valid", Badge: tui.BadgeOK})
 	}
 
-	if report, err := runCoverage(kenin.Options{}); err != nil {
+	if report, _, err := runCoverage(kenin.Options{}); err != nil {
 		d.Fields = append(d.Fields, failed("Coverage", err))
 	} else {
 		badge := tui.BadgeOK
@@ -60,7 +58,7 @@ func repoOverview(context.Context) (tui.Detail, error) {
 	} else {
 		d.Fields = append(d.Fields,
 			tui.Field{Label: "Changed", Value: countOf(len(state.Files), "file")},
-			tui.Field{Label: "They need", Value: changedNeeds(state.Files)},
+			tui.Field{Label: "They need", Value: changedNeeds(state)},
 		)
 	}
 
@@ -75,24 +73,14 @@ func repoOverview(context.Context) (tui.Detail, error) {
 	return d, nil
 }
 
-// changedNeeds is every approver target the changed files require, each
+// changedNeeds labels who the changed files need: each approver target
 // with the most approvals any file needs from it, and how many files fall
 // back to the repository owners.
-func changedNeeds(files map[string]shonin.FileState) string {
-	need := map[string]int{}
-	fallback := 0
-	for _, fs := range files {
-		if fs.UsedFallback {
-			fallback++
-			continue
-		}
-		for _, r := range fs.Required {
-			need[r.Target] = max(need[r.Target], r.RequiredCount)
-		}
-	}
+func changedNeeds(state *shonin.ReviewState) string {
+	targets, fallback := state.RequiredTargets()
 	var parts []string
-	for _, t := range slices.Sorted(maps.Keys(need)) {
-		parts = append(parts, fmt.Sprintf("%s (%d)", t, need[t]))
+	if label := approversLabel(targets); label != "" {
+		parts = append(parts, label)
 	}
 	if fallback > 0 {
 		parts = append(parts, countOf(fallback, "file")+" for the repository owners")

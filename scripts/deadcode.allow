@@ -1,0 +1,13 @@
+# deadcode.allow — functions `make deadcode` may report as unreachable from
+# cmd/kit without failing. One extended regular expression per line,
+# matched against "<package path>.<func>" or "<package path>.<Type>.<method>".
+# Lines starting with # are comments.
+
+# The remote (GitHub) platform: kept for the review server, which will
+# drive the same engine over a pull request.
+^github\.com/alphaeron/kit/internal/kenin\.(NewRemoteSource|RemoteSource\..+)$
+^github\.com/alphaeron/kit/internal/shonin\.(NewRemote|RemoteFetcher\..+|NewRemoteApproverResolver|RemoteApproverResolver\..+)$
+
+# Marker methods: the TUI matches them through a type switch on the
+# homeTarget interface, which deadcode's call graph does not see.
+^github\.com/alphaeron/kit/internal/tui\.[A-Za-z]+\.forHome$

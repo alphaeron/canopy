@@ -1,8 +1,13 @@
 package kenin
 
 import (
-	"regexp"
+	"cmp"
+	"maps"
+	"slices"
 	"sort"
+
+	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/shonin"
 )
 
 // Scope is one match between a file and a rule, carrying rule identity and
@@ -21,20 +26,31 @@ type Scope struct {
 	KITFile string `json:"kit_file"`
 }
 
+// newScope is the scope of rule as declared by the KIT file in dir: the
+// one place a shonin rule layer becomes a kenin scope.
+func newScope(dir string, rule shonin.Rule) Scope {
+	return Scope{
+		Name:      rule.Name,
+		Pattern:   rule.Pattern,
+		Directory: dir,
+		KITFile:   kitfile.PathInDir(dir),
+	}
+}
+
 // String gives a human-facing reference to the scope, used in TUI rendering.
 func (s Scope) String() string {
-	out := s.Pattern + " in " + kitFilePathOf(s.Directory)
+	out := s.Pattern + " in " + s.KITFile
 	if s.Name != "" {
 		out += " (" + s.Name + ")"
 	}
 	return out
 }
 
-// Identity returns a stable key for grouping scopes: pattern, layer, and
-// KIT file path. Two scopes compare equal by identity when they came from
-// the same rule in the same KIT file.
+// Identity returns a stable key for grouping scopes: the KIT file and the
+// pattern, which a KIT file declares at most once. Two scopes compare equal
+// by identity when they came from the same rule in the same KIT file.
 func (s Scope) Identity() string {
-	return s.Pattern + "\x00" + s.KITFile + "\x00" + s.Directory
+	return s.KITFile + "\x00" + s.Pattern
 }
 
 // FileMatch pairs one file in the universe with the scopes that matched it.
@@ -79,24 +95,6 @@ func (r *MatchResult) FilterScope(name string) *MatchResult {
 	return out
 }
 
-// FilesForScope returns the sorted, de-duplicated file paths that have at
-// least one scope whose rule name is exactly name.
-func (r *MatchResult) FilesForScope(name string) []string {
-	return r.filesFor(func(s Scope) bool { return s.Name == name })
-}
-
-// FilesForPattern returns the sorted, de-duplicated file paths that have at
-// least one scope whose Pattern regex matches the given filter pattern.
-// An invalid filter regex yields an empty list — the caller decides whether
-// to report that as an error.
-func (r *MatchResult) FilesForPattern(pattern string) []string {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil
-	}
-	return r.filesFor(func(s Scope) bool { return re.MatchString(s.Pattern) })
-}
-
 // GroupByScope groups the result by Scope identity and returns one entry
 // per distinct scope, each with its sorted file list. Scopes are listed in
 // stable order (by Name, KITFile, Directory).
@@ -127,6 +125,52 @@ func (r *MatchResult) GroupByScope() []ScopeGroup {
 		g := byID[id]
 		g.Files = r.filesFor(func(s Scope) bool { return s.Identity() == id })
 		out = append(out, *g)
+	}
+	return out
+}
+
+// FilesOf returns the sorted, de-duplicated file paths that s (by
+// identity) matched.
+func (r *MatchResult) FilesOf(s Scope) []string {
+	id := s.Identity()
+	return r.filesFor(func(o Scope) bool { return o.Identity() == id })
+}
+
+// ScopeOverlap is a scope that matches some of the same files as another,
+// and how many files the two share.
+type ScopeOverlap struct {
+	Scope  Scope
+	Shared int
+}
+
+// Overlaps lists the other scopes matching any of the files s (by identity)
+// matched, with how many of those files each shares, most shared first,
+// then by identity.
+func (r *MatchResult) Overlaps(s Scope) []ScopeOverlap {
+	id := s.Identity()
+	byID := map[string]*ScopeOverlap{}
+	for _, fm := range r.Files {
+		if !slices.ContainsFunc(fm.Scopes, func(o Scope) bool { return o.Identity() == id }) {
+			continue
+		}
+		for _, o := range fm.Scopes {
+			oid := o.Identity()
+			if oid == id {
+				continue
+			}
+			if byID[oid] == nil {
+				byID[oid] = &ScopeOverlap{Scope: o}
+			}
+			byID[oid].Shared++
+		}
+	}
+	ids := slices.Collect(maps.Keys(byID))
+	slices.SortFunc(ids, func(a, b string) int {
+		return cmp.Or(cmp.Compare(byID[b].Shared, byID[a].Shared), cmp.Compare(a, b))
+	})
+	out := make([]ScopeOverlap, len(ids))
+	for i, oid := range ids {
+		out[i] = *byID[oid]
 	}
 	return out
 }
@@ -185,16 +229,6 @@ type CoverageReport struct {
 	Percent   float64         `json:"percent"`
 	PerScope  []ScopeCoverage `json:"per_scope"`
 	Uncovered []string        `json:"uncovered"`
-}
-
-// kitFilePathOf returns the KIT file path (relative to the repo root) that
-// registers a rule for a layer directory: "KIT" at the repository root and
-// "<dir>/KIT" for any other directory.
-func kitFilePathOf(dir string) string {
-	if dir == "" {
-		return "KIT"
-	}
-	return dir + "/KIT"
 }
 
 func sortedKeys(set map[string]bool) []string {

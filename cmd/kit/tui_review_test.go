@@ -105,7 +105,7 @@ func TestStatusBadgeAndOrder(t *testing.T) {
 		"m": {Path: "m", Status: shonin.StatusMissingApprovers},
 	}}
 	var got []string
-	for _, fs := range sortedFileStates(state) {
+	for _, fs := range state.SortedFiles() {
 		got = append(got, fs.Path)
 	}
 	if want := []string{"z", "m", "a", "b"}; !reflect.DeepEqual(got, want) {
@@ -183,7 +183,7 @@ func TestRuleMatchesOverlaps(t *testing.T) {
 		{Path: "svc/b.go", Scopes: []kenin.Scope{root, goRule}},
 		{Path: "README.md", Scopes: []kenin.Scope{root, docs}},
 	}}, nil)
-	rows := m.overlaps(ruleKey("KIT", ".*"))
+	rows := m.overlaps("KIT", ".*")
 	if len(rows) != 2 || !strings.HasPrefix(rows[0].Text, "go:") || rows[0].Note != "2 shared files" || rows[1].Note != "1 shared file" {
 		t.Fatalf("overlaps = %+v", rows)
 	}

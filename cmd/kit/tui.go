@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -221,16 +220,15 @@ func ownershipOf(paths []string) ownership {
 	if err != nil {
 		return ownership{err: err}
 	}
-	s := shonin.Shonin{Fetch: &shonin.LocalFetcher{Repo: repo}, Resolver: &shonin.DefaultApproverResolver{}, Log: quietLog}
-	chain, err := s.GetRuleChainForFiles(paths)
+	engine := newLocalEngine(repo, quietLog)
+	chain, err := engine.RuleChain(paths)
 	if err != nil {
 		return ownership{err: fmt.Errorf("evaluate approvers: %w", err)}
 	}
-	return ownershipFromChain(chain)
+	return ownershipFromState(engine.Requirements(chain))
 }
 
-func ownershipFromChain(chain shonin.RuleChain) ownership {
-	state := evaluateRequired(chain)
+func ownershipFromState(state *shonin.ReviewState) ownership {
 	return ownership{files: state.Files, events: state.Events}
 }
 
@@ -319,11 +317,7 @@ func matchByScopePage(groups []kenin.ScopeGroup, own ownership) tui.Page {
 func coverageRoute(v tui.Values) tui.Route {
 	return commandRoute(coverageCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
 		opts := kenin.Options{ChangedOnly: v.Bool("changed"), ScopeName: v.Flag("scope")}
-		report, err := runCoverage(opts)
-		if err != nil {
-			return nil, err
-		}
-		match, err := runMatch(kenin.Options{ChangedOnly: opts.ChangedOnly})
+		report, match, err := runCoverage(opts)
 		if err != nil {
 			return nil, err
 		}
@@ -344,12 +338,6 @@ const detailFilesMax = 50
 // files are the last row, grouped by directory, each directory linking to
 // `kit rules add` for its nearest KIT file.
 func coveragePage(report *kenin.CoverageReport, match *kenin.MatchResult, s *kitSet) tui.Page {
-	byScope := map[string][]string{}
-	for _, fm := range match.Files {
-		for _, sc := range fm.Scopes {
-			byScope[sc.Identity()] = append(byScope[sc.Identity()], fm.Path)
-		}
-	}
 	items := make([]tui.Item, 0, len(report.PerScope)+1)
 	for _, sc := range report.PerScope {
 		d := tui.Detail{
@@ -357,7 +345,7 @@ func coveragePage(report *kenin.CoverageReport, match *kenin.MatchResult, s *kit
 				tui.Field{Label: "Files", Value: strconv.Itoa(sc.Files)},
 				tui.Field{Label: "Coverage", Value: fmt.Sprintf("%.2f%%", sc.Percent)},
 			),
-			Sections: []tui.Section{fileLinks("Files", byScope[sc.Scope.Identity()])},
+			Sections: []tui.Section{fileLinks("Files", match.FilesOf(sc.Scope))},
 		}
 		it := tui.Item{
 			Title:       scopeLabel(sc.Scope) + " in " + sc.Scope.KITFile,
@@ -461,57 +449,36 @@ func rulesListRoute(v tui.Values) tui.Route {
 	})
 }
 
-// ruleMatches is which files each rule matched, and every rule matching a
-// file, from one match over the repository: what the rules page shows of a
-// rule's reach and its overlaps.
+// ruleMatches is one match over the repository, from which the rules page
+// shows each rule's reach and its overlaps; err is why it is unavailable.
 type ruleMatches struct {
-	files  map[string][]string      // rule key → files
-	byFile map[string][]kenin.Scope // file → the rules matching it
-	err    error
+	match *kenin.MatchResult
+	err   error
 }
 
 func newRuleMatches(match *kenin.MatchResult, err error) ruleMatches {
-	m := ruleMatches{files: map[string][]string{}, byFile: map[string][]kenin.Scope{}, err: err}
-	if err != nil {
-		return m
-	}
-	for _, fm := range match.Files {
-		m.byFile[fm.Path] = fm.Scopes
-		for _, sc := range fm.Scopes {
-			k := ruleKey(sc.KITFile, sc.Pattern)
-			m.files[k] = append(m.files[k], fm.Path)
-		}
-	}
-	return m
+	return ruleMatches{match: match, err: err}
 }
 
-func ruleKey(kitFile, pattern string) string { return kitFile + "\x00" + pattern }
+// scopeOf is the scope of the rule keyed by pattern in kitFile.
+func scopeOf(kitFile, pattern string) kenin.Scope {
+	return kenin.Scope{KITFile: kitFile, Pattern: pattern}
+}
 
-// overlaps are the other rules matching any of key's files, with how many
-// files each shares, ordered by that count.
-func (m ruleMatches) overlaps(key string) []tui.Row {
-	shared := map[string]int{}
-	scopes := map[string]kenin.Scope{}
-	for _, f := range m.files[key] {
-		for _, sc := range m.byFile[f] {
-			if k := ruleKey(sc.KITFile, sc.Pattern); k != key {
-				shared[k]++
-				scopes[k] = sc
-			}
-		}
-	}
-	keys := slices.Collect(maps.Keys(shared))
-	slices.SortFunc(keys, func(a, b string) int {
-		if d := shared[b] - shared[a]; d != 0 {
-			return d
-		}
-		return strings.Compare(a, b)
-	})
-	rows := make([]tui.Row, 0, len(keys))
-	for _, k := range keys {
-		sc := scopes[k]
+// files are the files the rule keyed by pattern in kitFile matched.
+func (m ruleMatches) files(kitFile, pattern string) []string {
+	return m.match.FilesOf(scopeOf(kitFile, pattern))
+}
+
+// overlaps are the other rules matching any of the rule's files, with how
+// many files each shares, ordered by that count.
+func (m ruleMatches) overlaps(kitFile, pattern string) []tui.Row {
+	overlaps := m.match.Overlaps(scopeOf(kitFile, pattern))
+	rows := make([]tui.Row, 0, len(overlaps))
+	for _, o := range overlaps {
+		sc := o.Scope
 		r := rulesGetRoute(tui.Values{Args: []string{sc.Pattern}})
-		rows = append(rows, tui.Row{Text: ruleLabel(sc.Name, sc.Pattern) + " in " + sc.KITFile, Note: countOf(shared[k], "shared file"), Route: &r})
+		rows = append(rows, tui.Row{Text: ruleLabel(sc.Name, sc.Pattern) + " in " + sc.KITFile, Note: countOf(o.Shared, "shared file"), Route: &r})
 	}
 	return rows
 }
@@ -542,15 +509,15 @@ func rulesPage(s *kitSet, only string, matches ruleMatches) tui.Page {
 // chains.
 func ruleItem(e ruleEntry, matches ruleMatches) tui.Item {
 	route := rulesGetRoute(tui.Values{Args: []string{e.rule.Pattern}})
-	files := matches.files[ruleKey(e.kitFile, e.rule.Pattern)]
 	fields := append(ruleFieldsDetail(e.kitFile, e.rule),
-		tui.Field{Label: "Effect", Value: strategyEffect(effectiveStrategy(e.rule), false)},
+		tui.Field{Label: "Effect", Value: strategyEffect(shonin.EffectiveCombineStrategy(e.rule.CombineStrategy), false)},
 	)
 	desc := orNone(e.rule.Name) + " · " + e.kitFile
 	d := tui.Detail{Fields: fields}
 	if matches.err == nil {
+		files := matches.files(e.kitFile, e.rule.Pattern)
 		d.Fields = append(d.Fields, tui.Field{Label: "Matches", Value: countOf(len(files), "file")})
-		d.Sections = []tui.Section{{Title: "Overlaps · rules matching the same files", Rows: matches.overlaps(ruleKey(e.kitFile, e.rule.Pattern))}}
+		d.Sections = []tui.Section{{Title: "Overlaps · rules matching the same files", Rows: matches.overlaps(e.kitFile, e.rule.Pattern)}}
 		d.Tabs = []tui.Tab{{Title: "Files", Sections: []tui.Section{fileLinks("Files", files)}}}
 		desc += " · " + countOf(len(files), "file")
 	}
@@ -666,29 +633,14 @@ func editRule(s *kitSet, kitFile, pattern string, f tui.RuleFields) (string, err
 	return fmt.Sprintf("edited rule %q in %s", pattern, kitFile), nil
 }
 
-// effectiveStrategy is the strategy shonin applies for r: an omitted or
-// corrupt combine_strategy behaves as override.
-func effectiveStrategy(r kitfile.Rule) kitfile.RuleCombineStrategy {
-	s, err := kitfile.ParseRuleCombineStrategy(r.CombineStrategy.String())
-	if err != nil {
-		return kitfile.RuleCombineStrategyOverride
-	}
-	return s
-}
-
 // fieldsFromRule seeds the rule form (and `kit rules edit`) from an existing
-// rule. A rule whose combine_strategy is omitted or corrupt is evaluated
-// with shonin's default, which behaves as override, so it is seeded as
-// override: re-saving it must not silently change who has to approve.
+// rule with the strategy shonin applies for it, so re-saving a rule whose
+// combine_strategy is omitted or corrupt never changes who has to approve.
 func fieldsFromRule(r kitfile.Rule) tui.RuleFields {
-	strategy := r.CombineStrategy.String()
-	if _, err := kitfile.ParseRuleCombineStrategy(strategy); err != nil {
-		strategy = kitfile.RuleCombineStrategyOverride.String()
-	}
 	return tui.RuleFields{
 		Pattern:        r.Pattern,
 		Name:           r.Name,
-		Strategy:       strategy,
+		Strategy:       shonin.EffectiveCombineStrategy(r.CombineStrategy).String(),
 		Ignore:         r.IgnoreParentDirs,
 		CurrentDirOnly: r.CurrentDirectoryOnly,
 		SelfApprove:    r.SelfApprove,
@@ -706,11 +658,11 @@ func rulesGetRoute(v tui.Values) tui.Route {
 		if len(patterns) == 0 {
 			patterns = []string{`.*`}
 		}
-		chain, err := ruleChainFor(patterns)
+		engine, chain, err := ruleChainFor(patterns)
 		if err != nil {
 			return nil, err
 		}
-		return rulesGetPage(chain), nil
+		return rulesGetPage(chain, ownershipFromState(engine.Requirements(chain))), nil
 	})
 	return requirePattern(r)
 }
@@ -734,58 +686,45 @@ func withParam(r tui.Route, match func(*tui.Param) bool, change func(*tui.Param)
 }
 
 // ruleChainFor resolves the rule chain for every file matching any pattern
-// at HEAD. A repository with no commit has no files and an empty chain.
-func ruleChainFor(patterns []string) (shonin.RuleChain, error) {
+// at HEAD, with the engine that sifted it. A repository with no commit has
+// no files and an empty chain.
+func ruleChainFor(patterns []string) (*kenin.Engine, shonin.RuleChain, error) {
 	repo, err := getRepo()
 	if err != nil {
-		return shonin.RuleChain{}, err
+		return nil, shonin.RuleChain{}, err
 	}
-	ref, err := repo.Head()
+	engine := newLocalEngine(repo, quietLog)
+	paths, err := engine.Files(kenin.Options{Patterns: patterns})
 	if err != nil {
-		if repo.HasCommits() {
-			return shonin.RuleChain{}, fmt.Errorf("read HEAD: %w", err)
-		}
-		return shonin.RuleChain{FileChains: map[string][]shonin.RuleLayer{}}, nil
+		return nil, shonin.RuleChain{}, fmt.Errorf("find files: %w", err)
 	}
-	seen := map[string]bool{}
-	var paths []string
-	for _, p := range patterns {
-		found, err := repo.FindFiles(p, ref, false)
-		if err != nil {
-			return shonin.RuleChain{}, fmt.Errorf("find files for %q: %w", p, err)
-		}
-		for _, f := range found {
-			if !seen[f] {
-				seen[f] = true
-				paths = append(paths, f)
-			}
-		}
-	}
-	s := shonin.Shonin{Fetch: &shonin.LocalFetcher{Repo: repo}, Resolver: &shonin.DefaultApproverResolver{}}
-	chain, err := s.GetRuleChainForFiles(paths)
+	chain, err := engine.RuleChain(paths)
 	if err != nil {
-		return shonin.RuleChain{}, fmt.Errorf("fetch rules: %w", err)
+		return nil, shonin.RuleChain{}, fmt.Errorf("fetch rules: %w", err)
 	}
-	return chain, nil
+	return engine, chain, nil
 }
 
 // rulesGetPage groups files under the rules that apply to them. A rule's
 // detail is its definition; a file's detail is its provenance: every layer
 // of its chain, from the nearest KIT file up, and the rules each declares.
-func rulesGetPage(chain shonin.RuleChain) tui.Page {
-	scopes := ruleScopes(chain)
-	own := ownershipFromChain(chain)
-	groups := make([]tui.TreeGroup, 0, len(scopes))
-	for _, sc := range scopes {
-		items := make([]tui.Item, 0, len(sc.files))
-		for _, f := range sc.files {
+func rulesGetPage(chain shonin.RuleChain, own ownership) tui.Page {
+	byRule := chain.ByRule()
+	groups := make([]tui.TreeGroup, 0, len(byRule))
+	for _, rf := range byRule {
+		items := make([]tui.Item, 0, len(rf.Files))
+		for _, f := range rf.Files {
 			it := tui.Item{Title: f, Detail: provenance(f, chain.FileChains[f])}
 			own.annotate(&it, f)
 			items = append(items, it)
 		}
+		title := rf.Rule.Pattern + " in " + rf.KitFile()
+		if rf.Rule.Name != "" {
+			title += " (" + rf.Rule.Name + ")"
+		}
 		groups = append(groups, tui.TreeGroup{
-			Title:  sc.key,
-			Detail: tui.Detail{Fields: append(ruleFieldsDetail(sc.kitFile, sc.rule), tui.Field{Label: "Files", Value: strconv.Itoa(len(sc.files))})},
+			Title:  title,
+			Detail: tui.Detail{Fields: append(ruleFieldsDetail(rf.KitFile(), rf.Rule.Rule), tui.Field{Label: "Files", Value: strconv.Itoa(len(rf.Files))})},
 			Items:  items,
 		})
 	}
@@ -807,7 +746,7 @@ func provenance(file string, layers []shonin.RuleLayer) tui.Detail {
 			}
 			lines = append(lines, line)
 		}
-		d.Sections = append(d.Sections, tui.Section{Title: layerKitFile(layer), Lines: lines})
+		d.Sections = append(d.Sections, tui.Section{Title: layer.KitFile(), Lines: lines})
 	}
 	return d
 }

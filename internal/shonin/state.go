@@ -133,7 +133,6 @@ type Event struct {
 // encountered during fetch, sift, and approve so that the resulting
 // ReviewState exposes the full failure picture.
 type ReviewStateBuilder struct {
-	resolver ApproverResolver
 	events   []Event
 	errors   []string
 	repoRoot string
@@ -142,14 +141,8 @@ type ReviewStateBuilder struct {
 }
 
 // NewReviewStateBuilder creates a new review state builder.
-func NewReviewStateBuilder(resolver ApproverResolver) *ReviewStateBuilder {
-	if resolver == nil {
-		resolver = &DefaultApproverResolver{}
-	}
-	return &ReviewStateBuilder{
-		resolver: resolver,
-		events:   make([]Event, 0),
-	}
+func NewReviewStateBuilder() *ReviewStateBuilder {
+	return &ReviewStateBuilder{events: make([]Event, 0)}
 }
 
 // AddEvent adds an event to the review state. It is a no-op on a nil
@@ -225,11 +218,6 @@ func (b *ReviewStateBuilder) Build(baseErr error) *ReviewState {
 		Errors:   errors,
 		Err:      baseErr,
 	}
-}
-
-// Resolver returns the ApproverResolver this builder was created with.
-func (b *ReviewStateBuilder) Resolver() ApproverResolver {
-	return b.resolver
 }
 
 // firstMatching returns the first element of items for which pred holds, or

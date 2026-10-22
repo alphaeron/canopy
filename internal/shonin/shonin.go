@@ -3,45 +3,61 @@ package shonin
 import (
 	"fmt"
 	"log/slog"
+
+	"github.com/google/go-github/v71/github"
+
+	"github.com/alphaeron/kit/internal/gitutil"
 )
 
-// TODO Local Shonin and GitHub/remote shonin, since the remote shonin
-// will need to be able to fetch from the cache for rules, ...?
-// Or, will that be handled by the interface implementations?
-// Also, files will be implementation specific, they'll either be in the
-// webhook body for the remote version, or we'll need to fetch based on
-// a pattern as an initial step for the local version.
-// For now, we'll leave that as an implementation requirement
-// in the corresponding clients above this...
-//
 // Shonin orchestrates a code review: it fetches the repository's KIT rules,
 // sifts them into per-file rule chains, and approves them against the current
 // pull request state. All phases are traced as events in the resulting
 // ReviewState and logged as structured JSON.
+//
+// A Shonin is bound to one platform, which decides both where rules come
+// from and how approver targets resolve to people. NewLocal and NewRemote
+// build the two platforms, so a review never mixes a local fetcher with a
+// remote resolver or the reverse. Fetch and Resolver are both required.
 type Shonin struct {
 	Fetch Fetcher
-	// Resolver maps approver targets to active members. The default stub
-	// resolver is used when nil, preserving the historical behavior.
+	// Resolver maps approver targets to their members.
 	Resolver ApproverResolver
 	// Log receives structured diagnostic output. The default logger is used
 	// when nil.
 	Log *slog.Logger
 }
 
-// Execute runs the full fetch -> sift -> approve workflow and returns the
-// complete review state for the given files. Every error encountered along
-// the way is accumulated in the returned state and forces the final approval
-// status to StatusError, so the caller can block the review and surface the
-// full failure history to the user.
-func (s *Shonin) Execute(
-	author string,
-	currentApprovers map[string]bool,
-	isOwnerActive func(string) bool,
-	repositoryOwners []string,
-	files []string,
-) *ReviewState {
+// NewLocal is the local platform: rules from repo's working tree, and
+// approver targets that stand for themselves (DefaultApproverResolver),
+// since a local review has no platform to expand groups against.
+func NewLocal(repo *gitutil.KitGitRepository, log *slog.Logger) *Shonin {
+	return &Shonin{
+		Fetch:    &LocalFetcher{Repo: repo, Log: log},
+		Resolver: &DefaultApproverResolver{},
+		Log:      log,
+	}
+}
+
+// NewRemote is the GitHub platform for one pull request: rules from the
+// owner/repo tree at baseSHA, and approver targets resolved through the
+// GitHub API (RemoteApproverResolver). Build one per review: the resolver
+// caches team membership for its lifetime.
+func NewRemote(client *github.Client, owner, repo, baseSHA string, log *slog.Logger) *Shonin {
+	return &Shonin{
+		Fetch:    &RemoteFetcher{Client: client, Owner: owner, Repo: repo, BaseSHA: baseSHA, Log: log},
+		Resolver: NewRemoteApproverResolver(client, log),
+		Log:      log,
+	}
+}
+
+// Execute runs the full fetch -> sift -> approve workflow for files against
+// the pull request state in ctx and returns the complete review state. Every
+// error encountered along the way is accumulated in the returned state and
+// forces the final approval status to StatusError, so the caller can block
+// the review and surface the full failure history to the user.
+func (s *Shonin) Execute(ctx EvaluationContext, files []string) *ReviewState {
 	log := s.log()
-	events := NewReviewStateBuilder(s.resolver())
+	events := NewReviewStateBuilder()
 
 	// Fetch phase: retrieve the repository root and all KIT rules.
 	log.Info("kit review starting", "component", "shonin", "phase", "fetch", "files", len(files))
@@ -64,50 +80,32 @@ func (s *Shonin) Execute(
 	// Sift phase: build the per-file rule chains from the fetched rules.
 	log.Info("kit review: sifting rules for files",
 		"component", "shonin", "phase", "sift", "files", len(files))
-	ruleChain := GetFileRuleChain(repoRoot, repoRules, files, events, log)
+	ruleChain := GetFileRuleChain(repoRules, files, events, log)
 
 	// Approve phase: evaluate the rule chains and assemble the final state.
-	reviewState := ruleChain.Execute(
-		EvaluationContext{
-			Author:           author,
-			CurrentApprovers: currentApprovers,
-			IsOwnerActive:    isOwnerActive,
-			RepositoryOwners: repositoryOwners,
-		},
-		events, log, repoRoot,
-	)
+	reviewState := ruleChain.Execute(ctx, s.Resolver, events, log, repoRoot)
 	log.Info("kit review complete",
 		"component", "shonin", "phase", "approve",
 		"status", reviewState.Overall, "errors", len(reviewState.Errors))
 	return reviewState
 }
 
-// GetRuleChainForFiles fetches the repository rules and sifts them into a
-// rule chain for the given files. Any fetch or parse failure is returned as
-// an error rather than silently producing an empty result.
-func (s *Shonin) GetRuleChainForFiles(files []string) (RuleChain, error) {
-	log := s.log()
-	repoRoot, repoRules, err := s.Fetch.Execute()
-	if err != nil {
-		log.Error("kit: fetching rules failed",
-			"component", "shonin", "phase", "fetch", "repo_root", repoRoot, "error", err)
-		return RuleChain{FileChains: map[string][]RuleLayer{}}, err
-	}
-	return GetFileRuleChain(repoRoot, repoRules, files, nil, log), nil
-}
-
-// resolver returns the configured ApproverResolver or the default stub.
-func (s *Shonin) resolver() ApproverResolver {
-	if s.Resolver != nil {
-		return s.Resolver
-	}
-	return &DefaultApproverResolver{}
+// Approve runs only the approve phase over an already sifted chain, with
+// this platform's resolver: for callers that sifted the rules themselves
+// and want who must approve each file under ctx.
+func (s *Shonin) Approve(ctx EvaluationContext, chain RuleChain) *ReviewState {
+	return chain.Execute(ctx, s.Resolver, NewReviewStateBuilder(), s.log(), "")
 }
 
 // log returns the configured logger or the default one.
 func (s *Shonin) log() *slog.Logger {
-	if s.Log != nil {
-		return s.Log
+	return logOrDefault(s.Log)
+}
+
+// logOrDefault returns l, or slog.Default() when l is nil.
+func logOrDefault(l *slog.Logger) *slog.Logger {
+	if l != nil {
+		return l
 	}
 	return slog.Default()
 }

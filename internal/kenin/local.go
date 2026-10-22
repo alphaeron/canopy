@@ -7,32 +7,34 @@ import (
 	"sort"
 
 	"github.com/go-git/go-git/v6"
-	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/alphaeron/kit/internal/gitutil"
-	"github.com/alphaeron/kit/internal/kitfile"
 	"github.com/alphaeron/kit/internal/shonin"
 )
 
 // LocalSource implements Source against a local go-git checkout. The file
 // universe is the working tree (AllFiles) and its diff against HEAD
-// (ChangedFiles); rules come from a shonin Fetcher — the same LocalFetcher
-// that shonin itself uses, so local CLI analysis and shonin local reviews
-// read the same KIT files.
+// (ChangedFiles); rules and approvers come from the local shonin platform
+// (shonin.NewLocal), so local CLI analysis and local reviews read the same
+// KIT files and resolve approvers the same way.
 type LocalSource struct {
-	// Fetch loads KIT rules; typically a *shonin.LocalFetcher already bound
-	// to the repository.
-	Fetch shonin.Fetcher
 	// Repo is the go-git repository for file listings and diffs.
 	Repo *gitutil.KitGitRepository
 	// Log receives diagnostics; nil means slog.Default().
 	Log *slog.Logger
+
+	reviewer *shonin.Shonin
 }
 
-// NewLocalSource builds a LocalSource bound to a repository and rule fetcher.
-func NewLocalSource(repo *gitutil.KitGitRepository, fetch shonin.Fetcher, log *slog.Logger) *LocalSource {
-	return &LocalSource{Repo: repo, Fetch: fetch, Log: log}
+// NewLocalSource builds a LocalSource bound to a repository, on the local
+// shonin platform.
+func NewLocalSource(repo *gitutil.KitGitRepository, log *slog.Logger) *LocalSource {
+	return &LocalSource{Repo: repo, Log: log, reviewer: shonin.NewLocal(repo, log)}
 }
+
+// Reviewer is the local shonin platform: the working tree's KIT files and
+// pass-through approver resolution.
+func (l *LocalSource) Reviewer() *shonin.Shonin { return l.reviewer }
 
 // RepoRoot returns the on-disk repository root. The error path (a repo that
 // does not expose a local filesystem root) is reported through the error,
@@ -44,14 +46,6 @@ func (l *LocalSource) RepoRoot() string {
 			"component", "kenin", "source", "local", "error", err)
 	}
 	return root
-}
-
-// KitFiles delegates to the configured Fetcher: the exact code path shonin
-// uses locally. Errors (missing KIT files, parse failures) are returned
-// wrapped.
-func (l *LocalSource) KitFiles() (map[string]kitfile.Rules, error) {
-	_, rules, err := l.Fetch.Execute()
-	return rules, err
 }
 
 // AllFiles lists every tracked file at HEAD, i.e. the complete file universe
@@ -156,20 +150,7 @@ func osIsNotExist(err error) bool {
 }
 
 func (l *LocalSource) log() *slog.Logger {
-	if l.Log != nil {
-		return l.Log
-	}
-	return slog.Default()
-}
-
-// HeadRevision returns the repository's current HEAD revision as a
-// plumbing.Revision, for callers that need to pin to the exact current tree.
-func (l *LocalSource) HeadRevision() (plumbing.Revision, error) {
-	ref, err := l.Repo.Head()
-	if err != nil {
-		return "", err
-	}
-	return plumbing.Revision(ref.Name().Short()), nil
+	return logOrDefault(l.Log)
 }
 
 var _ Source = (*LocalSource)(nil)

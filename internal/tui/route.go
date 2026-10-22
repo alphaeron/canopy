@@ -108,20 +108,6 @@ func (v Values) Flag(name string) string { return v.Flags[name] }
 // Bool reports whether a boolean flag is set to true.
 func (v Values) Bool(name string) bool { return v.Flags[name] == "true" }
 
-// WithFlag returns a copy of v with flag name set to value ("" unsets it).
-func (v Values) WithFlag(name, value string) Values {
-	flags := maps.Clone(v.Flags)
-	if flags == nil {
-		flags = map[string]string{}
-	}
-	if value == "" {
-		delete(flags, name)
-	} else {
-		flags[name] = value
-	}
-	return Values{Args: slices.Clone(v.Args), Flags: flags}
-}
-
 // CommandLine is the CLI invocation equivalent to the route, quoted for a
 // POSIX shell so it can be copied and run, e.g.
 // "kit match --changed --scope=core". Flags appear in Params order; false

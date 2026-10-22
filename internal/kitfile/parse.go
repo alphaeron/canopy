@@ -10,13 +10,13 @@ import (
 )
 
 // ParseRules parses YAML bytes into a KIT file's rule sequence. It is the
-// shared entry point for the CLI (which reads KIT file content from git
-// blobs) and the REST API's remote fetcher (which reads content from GitHub
-// tree blobs), so the two binaries parse KIT files identically.
+// one parser for every reader (LoadKitFile, the local fetcher reading the
+// working tree, the remote fetcher reading GitHub blobs), so they all parse
+// KIT files identically. Callers add the file's path to the error.
 func ParseRules(dat []byte) (Rules, error) {
 	var rules Rules
 	if err := yaml.Unmarshal(dat, &rules); err != nil {
-		return nil, fmt.Errorf("parse KIT rules: %w", err)
+		return nil, err
 	}
 	return rules, nil
 }

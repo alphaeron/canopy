@@ -10,23 +10,8 @@ import (
 
 	"github.com/google/go-github/v71/github"
 
-	"github.com/alphaeron/kit/internal/kitfile"
 	"github.com/alphaeron/kit/internal/shonin"
 )
-
-// stubFetch lets the tests provide the KIT rule map for a remote source
-// without a GitHub client. It mirrors shonin.LocalFetcher's contract.
-type stubFetch struct {
-	root  string
-	rules map[string]kitfile.Rules
-	err   error
-}
-
-func (s *stubFetch) Execute() (string, map[string]kitfile.Rules, error) {
-	return s.root, s.rules, s.err
-}
-
-var _ shonin.Fetcher = (*stubFetch)(nil)
 
 type fakeTreeEntry struct {
 	Path string `json:"path"`
@@ -79,9 +64,8 @@ func TestRemoteAllFilesListingBlobsAtBaseTree(t *testing.T) {
 	}}
 	client := newTestClient(t, tree)
 
-	fetch := &stubFetch{rules: map[string]kitfile.Rules{"KIT": {}}}
 	pr := &PullRequest{Owner: "o", Repo: "r", BaseSHA: "deadbeef"}
-	src := NewRemoteSource(pr, fetch, client, nil)
+	src := NewRemoteSource(pr, client, nil)
 
 	files, err := src.AllFiles()
 	if err != nil {
@@ -101,7 +85,6 @@ func TestRemoteAllFilesListingBlobsAtBaseTree(t *testing.T) {
 }
 
 func TestRemoteChangedFilesAndDiffFromPayload(t *testing.T) {
-	fetch := &stubFetch{rules: map[string]kitfile.Rules{}}
 	pr := &PullRequest{
 		Owner: "o", Repo: "r", BaseSHA: "deadbeef",
 		Files: []PRFile{
@@ -110,7 +93,7 @@ func TestRemoteChangedFilesAndDiffFromPayload(t *testing.T) {
 		},
 	}
 	// nil client: the changed-files and diff paths read the payload, not the network.
-	src := NewRemoteSource(pr, fetch, nil, nil)
+	src := NewRemoteSource(pr, nil, nil)
 
 	changed, err := src.ChangedFiles()
 	if err != nil {
@@ -136,23 +119,22 @@ func TestRemoteChangedFilesAndDiffFromPayload(t *testing.T) {
 	}
 }
 
-func TestRemoteKitFilesDelegatesToFetcher(t *testing.T) {
-	rules := map[string]kitfile.Rules{"KIT": {{Pattern: ".go"}}}
-	fetch := &stubFetch{rules: rules}
+// TestRemoteSourceIsOnTheRemotePlatform: a remote source's rules and
+// approver resolution both come from GitHub, bound to the pull request.
+func TestRemoteSourceIsOnTheRemotePlatform(t *testing.T) {
 	pr := &PullRequest{Owner: "o", Repo: "r", BaseSHA: "x"}
-	src := NewRemoteSource(pr, fetch, nil, nil)
-
-	got, err := src.KitFiles()
-	if err != nil {
-		t.Fatalf("KitFiles: %v", err)
+	rev := NewRemoteSource(pr, github.NewClient(nil), nil).Reviewer()
+	fetch, ok := rev.Fetch.(*shonin.RemoteFetcher)
+	if !ok || fetch.Owner != "o" || fetch.Repo != "r" || fetch.BaseSHA != "x" {
+		t.Errorf("fetcher = %#v, want a RemoteFetcher for o/r@x", rev.Fetch)
 	}
-	if len(got) != 1 {
-		t.Errorf("KitFiles = %v, want the stub's rule map", got)
+	if _, ok := rev.Resolver.(*shonin.RemoteApproverResolver); !ok {
+		t.Errorf("resolver = %T, want *shonin.RemoteApproverResolver", rev.Resolver)
 	}
 }
 
 func TestRemoteRepoRootIsEmpty(t *testing.T) {
-	src := NewRemoteSource(&PullRequest{}, &stubFetch{}, nil, nil)
+	src := NewRemoteSource(&PullRequest{}, nil, nil)
 	if src.RepoRoot() != "" {
 		t.Errorf("remote RepoRoot must be empty, got %q", src.RepoRoot())
 	}

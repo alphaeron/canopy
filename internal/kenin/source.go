@@ -3,7 +3,7 @@ package kenin
 import (
 	"log/slog"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/shonin"
 )
 
 // Source is the only seam between the Engine and where the files and rules
@@ -15,12 +15,11 @@ type Source interface {
 	// RepoRoot returns the repository root string. Empty for Remote.
 	RepoRoot() string
 
-	// KitFiles loads every KIT file in the source (the local worktree, or
-	// the pull request's base tree through shonin.RemoteFetcher) and returns
-	// a map from KIT file path (as go-git reports it, relative to the repo
-	// root) to its parsed rule list — the exact shape shonin.GetFileRuleChain
-	// consumes.
-	KitFiles() (map[string]kitfile.Rules, error)
+	// Reviewer is the source's shonin platform: how its KIT rules are
+	// fetched and how its approver targets resolve. Local sources use
+	// shonin.NewLocal and remote ones shonin.NewRemote, so the engine
+	// never chooses a fetcher or resolver itself.
+	Reviewer() *shonin.Shonin
 
 	// AllFiles returns the full file set over which to match and evaluate
 	// coverage. Local: all tracked files. Remote: the PR base tree.
@@ -38,9 +37,8 @@ type Source interface {
 	DiffContent(path string) (string, error)
 }
 
-// logOrDefault returns the configured logger or the default slog logger. All
-// kenin and the internal packages it delegates to (shonin, gitutil) use
-// slog.Default() so this indirection is a thin convenience.
+// logOrDefault returns the configured logger, or slog.Default() when none
+// is set.
 func logOrDefault(l *slog.Logger) *slog.Logger {
 	if l != nil {
 		return l

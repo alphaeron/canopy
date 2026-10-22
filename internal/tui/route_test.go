@@ -39,20 +39,6 @@ func TestCommandLine(t *testing.T) {
 	}
 }
 
-func TestValuesWithFlag(t *testing.T) {
-	v := Values{Args: []string{"a"}, Flags: map[string]string{"file": "KIT"}}
-	w := v.WithFlag("file", "svc/KIT").WithFlag("changed", "true")
-	if v.Flag("file") != "KIT" || v.Bool("changed") {
-		t.Errorf("WithFlag must not modify the receiver: %+v", v)
-	}
-	if w.Flag("file") != "svc/KIT" || !w.Bool("changed") || !reflect.DeepEqual(w.Args, []string{"a"}) {
-		t.Errorf("WithFlag result = %+v", w)
-	}
-	if u := w.WithFlag("file", ""); u.Flag("file") != "" {
-		t.Errorf("empty value must unset the flag: %+v", u)
-	}
-}
-
 // valuesRoute is a route whose page shows the values it was loaded with and
 // counts its loads.
 func valuesRoute(params []Param, loads *[]Values) Route {

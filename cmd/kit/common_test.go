@@ -6,7 +6,6 @@ import (
 
 	"github.com/alphaeron/kit/internal/kenin"
 	"github.com/alphaeron/kit/internal/kitfile"
-	"github.com/alphaeron/kit/internal/shonin"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
@@ -107,21 +106,5 @@ func TestScopeTitles(t *testing.T) {
 	s := []kenin.Scope{{Name: "core"}, {Name: "sec"}}
 	if got := scopeTitles(s); got != "core sec" {
 		t.Errorf("got %q, want 'core sec'", got)
-	}
-}
-
-func TestRuleScopesShapes(t *testing.T) {
-	core := kitfile.Rule{Pattern: `.*\.go`, Name: "core"}
-	chain := shonin.RuleChain{FileChains: map[string][]shonin.RuleLayer{
-		"s/one.go": {{DirectoryPath: "s", Rules: []shonin.Rule{{Rule: core}}}},
-		"two.go":   nil, // a file with no matching scope is absent from FileChains
-	}}
-	got := ruleScopes(chain)
-	if len(got) != 1 {
-		t.Fatalf("expected one scope, got %d: %+v", len(got), got)
-	}
-	want := ruleScope{key: `.*\.go in s/KIT (core)`, rule: core, kitFile: "s/KIT", files: []string{"s/one.go"}}
-	if !reflect.DeepEqual(got[0], want) {
-		t.Errorf("got %+v, want %+v", got[0], want)
 	}
 }

@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/go-github/v71/github"
 
-	"github.com/alphaeron/kit/internal/kitfile"
 	"github.com/alphaeron/kit/internal/shonin"
 )
 
@@ -41,33 +40,37 @@ type PRFile struct {
 }
 
 // RemoteSource implements Source against a remote repository. It reads the
-// rules from a shonin RemoteFetcher (over the base tree of the pull
-// request), and reads the file universe and per-file diffs from the pull
+// rules and resolves approvers through the GitHub shonin platform
+// (shonin.NewRemote, over the base tree of the pull request), and reads the file universe and per-file diffs from the pull
 // request's payload. No additional API calls are needed for the changed file
 // list or the per-file patch — only the AllFiles (base tree) call requires
 // the GitHub client.
 type RemoteSource struct {
 	PR     *PullRequest
-	Fetch  shonin.Fetcher // a *shonin.RemoteFetcher bound to the same owner/repo/baseSHA
-	Client *github.Client // used only for AllFiles (listing the base tree)
+	Client *github.Client // lists the base tree, and backs the remote platform
 	Log    *slog.Logger
+
+	reviewer *shonin.Shonin
 }
 
-// NewRemoteSource builds a RemoteSource over a pull request and a rule
-// fetcher. log may be nil (defaults to slog.Default()).
-func NewRemoteSource(pr *PullRequest, fetch shonin.Fetcher, client *github.Client, log *slog.Logger) *RemoteSource {
-	return &RemoteSource{PR: pr, Fetch: fetch, Client: client, Log: log}
+// NewRemoteSource builds a RemoteSource over a pull request, on the GitHub
+// shonin platform bound to the same owner, repository, and base revision.
+// log may be nil (defaults to slog.Default()).
+func NewRemoteSource(pr *PullRequest, client *github.Client, log *slog.Logger) *RemoteSource {
+	return &RemoteSource{
+		PR:       pr,
+		Client:   client,
+		Log:      log,
+		reviewer: shonin.NewRemote(client, pr.Owner, pr.Repo, pr.BaseSHA, log),
+	}
 }
+
+// Reviewer is the GitHub shonin platform for the pull request: KIT files
+// from its base tree, and team targets resolved through the GitHub API.
+func (r *RemoteSource) Reviewer() *shonin.Shonin { return r.reviewer }
 
 // RepoRoot is empty: a remote source has no on-disk repository.
 func (r *RemoteSource) RepoRoot() string { return "" }
-
-// KitFiles delegates to the RemoteFetcher, which reads rules at the pull
-// request's base tree.
-func (r *RemoteSource) KitFiles() (map[string]kitfile.Rules, error) {
-	_, rules, err := r.Fetch.Execute()
-	return rules, err
-}
 
 // AllFiles lists the pull request's base tree, i.e. the complete file set
 // that the rules will match against when the PR is merged. This is the

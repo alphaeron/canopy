@@ -197,3 +197,16 @@ func TestIsKitFile(t *testing.T) {
 		}
 	}
 }
+
+func TestPathInDir(t *testing.T) {
+	for dir, want := range map[string]string{
+		"":        "KIT",
+		".":       "KIT",
+		"src":     "src/KIT",
+		"src/api": "src/api/KIT",
+	} {
+		if got := PathInDir(dir); got != want {
+			t.Errorf("PathInDir(%q) = %q, want %q", dir, got, want)
+		}
+	}
+}

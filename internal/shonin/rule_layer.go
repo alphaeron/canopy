@@ -3,12 +3,20 @@ package shonin
 import (
 	"fmt"
 	"log/slog"
+
+	"github.com/alphaeron/kit/internal/kitfile"
 )
 
 // RuleLayer captures the exact directory context where a set of rules matched.
 type RuleLayer struct {
-	DirectoryPath string // e.g., "/src/api"
+	DirectoryPath string // e.g., "src/api"; "" for the repository root
 	Rules         []Rule
+}
+
+// KitFile is the repository path of the KIT file that declared the layer's
+// rules: "KIT" for the root layer, "<dir>/KIT" otherwise.
+func (rl *RuleLayer) KitFile() string {
+	return kitfile.PathInDir(rl.DirectoryPath)
 }
 
 // Execute evaluates the rules in this layer in order and returns the layer's

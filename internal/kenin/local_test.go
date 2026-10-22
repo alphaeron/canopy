@@ -11,6 +11,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/alphaeron/kit/internal/gitutil"
+	"github.com/alphaeron/kit/internal/shonin"
 )
 
 // newScratchRepo creates a go-git repository in a temp dir, seeded with the
@@ -55,7 +56,7 @@ func TestLocalNoCommitYieldsEmptyUniverses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlainInit: %v", err)
 	}
-	src := NewLocalSource(&gitutil.KitGitRepository{Repository: *repo}, nil, nil)
+	src := NewLocalSource(&gitutil.KitGitRepository{Repository: *repo}, nil)
 
 	got, err := src.AllFiles()
 	if err != nil {
@@ -80,7 +81,7 @@ func TestLocalAllFilesMatchesCommittedSet(t *testing.T) {
 		"src/b.go": "two",
 		"KIT":      "- \"a$\":\n  name: \"n\"\n",
 	})
-	src := NewLocalSource(repo, nil, nil)
+	src := NewLocalSource(repo, nil)
 	files, err := src.AllFiles()
 	if err != nil {
 		t.Fatalf("AllFiles: %v", err)
@@ -96,7 +97,7 @@ func TestLocalChangedFilesUntrackedAndModified(t *testing.T) {
 	dir, repo := newScratchRepo(t, map[string]string{
 		"one.go": "hello",
 	})
-	src := NewLocalSource(repo, nil, nil)
+	src := NewLocalSource(repo, nil)
 
 	// Before any changes there are no changed files.
 	changed, err := src.ChangedFiles()
@@ -128,7 +129,7 @@ func TestLocalDiffContentModifiedAndAdded(t *testing.T) {
 	dir, repo := newScratchRepo(t, map[string]string{
 		"one.go": "a\nb\nc\n",
 	})
-	src := NewLocalSource(repo, nil, nil)
+	src := NewLocalSource(repo, nil)
 
 	// Before edits, no diff content.
 	if diff, err := src.DiffContent("one.go"); err != nil || diff != "" {
@@ -156,5 +157,17 @@ func TestLocalDiffContentModifiedAndAdded(t *testing.T) {
 	}
 	if !strings.Contains(twoDiff, "+line1\n") {
 		t.Errorf("two.go diff = %q, want +line1", twoDiff)
+	}
+}
+
+// TestLocalSourceIsOnTheLocalPlatform: a local source reads the working
+// tree's rules and resolves approvers as themselves.
+func TestLocalSourceIsOnTheLocalPlatform(t *testing.T) {
+	rev := NewLocalSource(nil, nil).Reviewer()
+	if _, ok := rev.Fetch.(*shonin.LocalFetcher); !ok {
+		t.Errorf("fetcher = %T, want *shonin.LocalFetcher", rev.Fetch)
+	}
+	if _, ok := rev.Resolver.(*shonin.DefaultApproverResolver); !ok {
+		t.Errorf("resolver = %T, want *shonin.DefaultApproverResolver", rev.Resolver)
 	}
 }

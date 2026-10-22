@@ -108,11 +108,6 @@ func withGlyph(b Badge, s string) string {
 	return s
 }
 
-// IsZero reports whether the detail has nothing to show.
-func (d Detail) IsZero() bool {
-	return len(d.Fields) == 0 && len(d.Sections) == 0 && len(d.Tabs) == 0
-}
-
 // views are the detail's tabs, the summary first.
 func (d Detail) views() []Tab {
 	return append([]Tab{{Title: "Summary", Fields: d.Fields, Sections: d.Sections}}, d.Tabs...)

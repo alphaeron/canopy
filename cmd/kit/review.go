@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/alphaeron/kit/internal/kenin"
+	"github.com/alphaeron/kit/internal/kitfile"
 	"github.com/alphaeron/kit/internal/shonin"
 	"github.com/alphaeron/kit/internal/tui"
 )
@@ -85,7 +84,7 @@ func runReviewCmd(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		rows := make([][]string, 0, len(state.Files))
-		for _, fs := range sortedFileStates(state) {
+		for _, fs := range state.SortedFiles() {
 			rows = append(rows, []string{fs.Path, statusLabel(fs.Status), requiredLabel(fs)})
 		}
 		if err := tui.TablePrinter(os.Stdout, []string{"File", "Status", "Requires"}, rows); err != nil {
@@ -99,7 +98,8 @@ func runReviewCmd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runReview selects the files and evaluates them. log receives the
+// runReview selects the files and evaluates them: the working tree's files,
+// or its changed ones, kept when they match any pattern. log receives the
 // algorithm's structured output; the TUI discards it, as the state holds
 // everything it reports.
 func runReview(opts reviewOptions, log *slog.Logger) (*shonin.ReviewState, error) {
@@ -107,84 +107,17 @@ func runReview(opts reviewOptions, log *slog.Logger) (*shonin.ReviewState, error
 	if err != nil {
 		return nil, err
 	}
-	files, err := reviewFiles(repo, opts)
-	if err != nil {
-		return nil, err
-	}
-	inactive := map[string]bool{}
-	for _, u := range opts.inactive {
-		inactive[u] = true
-	}
-	approvals := map[string]bool{}
-	for _, u := range opts.approvers {
-		approvals[u] = true
-	}
-	s := shonin.Shonin{Fetch: &shonin.LocalFetcher{Repo: repo}, Resolver: &shonin.DefaultApproverResolver{}, Log: log}
-	return s.Execute(opts.author, approvals, func(u string) bool { return !inactive[u] }, opts.owners, files), nil
-}
-
-// reviewFiles is the sorted file universe of a review: the working tree's
-// files, or its changed ones, kept when they match any pattern.
-func reviewFiles(repo *gitRepo, opts reviewOptions) ([]string, error) {
-	res := make([]*regexp.Regexp, len(opts.patterns))
-	for i, p := range opts.patterns {
-		re, err := regexp.Compile(p)
-		if err != nil {
-			return nil, fmt.Errorf("invalid pattern %q: %w", p, err)
-		}
-		res[i] = re
-	}
-	src := kenin.NewLocalSource(repo, &shonin.LocalFetcher{Repo: repo}, nil)
-	var all []string
-	var err error
-	if opts.changed {
-		all, err = src.ChangedFiles()
-	} else {
-		all, err = src.AllFiles()
-	}
+	engine := newLocalEngine(repo, log)
+	files, err := engine.Files(kenin.Options{ChangedOnly: opts.changed, Patterns: opts.patterns})
 	if err != nil {
 		return nil, fmt.Errorf("list files: %w", err)
 	}
-	var files []string
-	for _, f := range all {
-		if len(res) == 0 || slices.ContainsFunc(res, func(re *regexp.Regexp) bool { return re.MatchString(f) }) {
-			files = append(files, f)
-		}
-	}
-	slices.Sort(files)
-	return files, nil
-}
-
-// statusOrder ranks file statuses for display, most in need of attention
-// first.
-func statusOrder(s shonin.Status) int {
-	switch s {
-	case shonin.StatusError:
-		return 0
-	case shonin.StatusUnresolved:
-		return 1
-	case shonin.StatusMissingApprovers:
-		return 2
-	case shonin.StatusSatisfied:
-		return 4
-	}
-	return 3
-}
-
-// sortedFileStates lists a review's files, most in need of attention first,
-// then by path.
-func sortedFileStates(state *shonin.ReviewState) []shonin.FileState {
-	out := make([]shonin.FileState, 0, len(state.Files))
-	for _, fs := range state.Files {
-		out = append(out, fs)
-	}
-	slices.SortFunc(out, func(a, b shonin.FileState) int {
-		if d := statusOrder(a.Status) - statusOrder(b.Status); d != 0 {
-			return d
-		}
-		return strings.Compare(a.Path, b.Path)
-	})
-	return out
+	return engine.Review(files, kenin.ReviewInput{
+		Author:    opts.author,
+		Approvers: opts.approvers,
+		Inactive:  opts.inactive,
+		Owners:    opts.owners,
+	}), nil
 }
 
 // statusLabel is a status for people: "missing approvers".
@@ -266,10 +199,10 @@ func reviewJSONOf(state *shonin.ReviewState) reviewJSON {
 	if out.Errors == nil {
 		out.Errors = []string{}
 	}
-	for _, fs := range sortedFileStates(state) {
+	for _, fs := range state.SortedFiles() {
 		f := fileReviewJSON{Path: fs.Path, Status: fs.Status.String(), UsedFallback: fs.UsedFallback, Required: targetsJSON(fs.Required), Layers: []layerStateJSON{}}
 		for _, l := range fs.Layers {
-			lj := layerStateJSON{KitFile: kitFileOfDir(l.DirectoryPath), Status: l.Status.String(), Active: l.Active, Reason: l.Reason, Rules: []ruleStateJSON{}, Requires: []approverJSON{}}
+			lj := layerStateJSON{KitFile: kitfile.PathInDir(l.DirectoryPath), Status: l.Status.String(), Active: l.Active, Reason: l.Reason, Rules: []ruleStateJSON{}, Requires: []approverJSON{}}
 			for _, r := range l.Rules {
 				lj.Rules = append(lj.Rules, ruleStateJSON{
 					Pattern: r.Pattern, Name: r.Name, Strategy: r.CombineStrategy.String(),

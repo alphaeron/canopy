@@ -1,78 +1,22 @@
 package main
 
 import (
+	"log/slog"
 	"os"
-	"slices"
-	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/alphaeron/kit/internal/kenin"
-	"github.com/alphaeron/kit/internal/kitfile"
-	"github.com/alphaeron/kit/internal/shonin"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
 // newLocalEngine builds the kenin engine bound to the current repository's
 // worktree. The same engine type is driven by the REST server with a remote
-// source; this constructor is the CLI's fixed point.
-func newLocalEngine(repo *gitRepo) (*kenin.Engine, error) {
-	source := kenin.NewLocalSource(repo, &shonin.LocalFetcher{Repo: repo}, nil)
-	return kenin.New(source, nil), nil
-}
-
-// ruleScope is one rule of a rule chain with the files it applies to.
-type ruleScope struct {
-	key     string // "<pattern> in <KIT file> (<name>)"
-	rule    kitfile.Rule
-	kitFile string
-	files   []string // sorted
-}
-
-// ruleScopes flattens a rule chain into "which rules apply to which files":
-// one entry per rule in any layer, keyed by its pattern, declaring KIT file
-// ("KIT" for a repo-root rule) and name, with every file whose chain included
-// the rule listed once. Entries are sorted by key. Each keeps the rule's
-// definition and KIT file so the TUI can show where the rule comes from.
-func ruleScopes(chain shonin.RuleChain) []ruleScope {
-	byKey := map[string]*ruleScope{}
-	seen := map[string]map[string]bool{}
-	for file, layers := range chain.FileChains {
-		for _, layer := range layers {
-			kitFile := layerKitFile(layer)
-			for _, rule := range layer.Rules {
-				key := rule.Pattern + " in " + kitFile
-				if rule.Name != "" {
-					key += " (" + rule.Name + ")"
-				}
-				sc, ok := byKey[key]
-				if !ok {
-					sc = &ruleScope{key: key, rule: rule.Rule, kitFile: kitFile}
-					byKey[key] = sc
-					seen[key] = map[string]bool{}
-				}
-				if !seen[key][file] {
-					seen[key][file] = true
-					sc.files = append(sc.files, file)
-				}
-			}
-		}
-	}
-	out := make([]ruleScope, 0, len(byKey))
-	for _, sc := range byKey {
-		slices.Sort(sc.files)
-		out = append(out, *sc)
-	}
-	slices.SortFunc(out, func(a, b ruleScope) int { return strings.Compare(a.key, b.key) })
-	return out
-}
-
-// layerKitFile is the KIT file that declares a layer's rules.
-func layerKitFile(layer shonin.RuleLayer) string {
-	if layer.DirectoryPath == "" {
-		return "KIT"
-	}
-	return layer.DirectoryPath + "/KIT"
+// source; this constructor is the CLI's fixed point. log may be nil
+// (slog.Default()); the TUI passes quietLog.
+func newLocalEngine(repo *gitRepo, log *slog.Logger) *kenin.Engine {
+	source := kenin.NewLocalSource(repo, log)
+	return kenin.New(source, log)
 }
 
 // kitFileFlag registers the shared --file flag on a command that changes a

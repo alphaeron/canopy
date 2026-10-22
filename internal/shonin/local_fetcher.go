@@ -8,8 +8,6 @@ import (
 	"path"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/alphaeron/kit/internal/gitutil"
 	"github.com/alphaeron/kit/internal/kitfile"
 )
@@ -66,8 +64,6 @@ func (lf *LocalFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 // getRulesForKitFile reads and parses a single KIT file, returning a wrapped
 // error describing the failed step instead of silently yielding nil rules.
 func getRulesForKitFile(repoRoot string, fileName string, log *slog.Logger) (kitfile.Rules, error) {
-	var rules kitfile.Rules
-
 	f := path.Join(repoRoot, fileName)
 
 	exists, err := fileExistsCaseSensitive(f)
@@ -89,7 +85,8 @@ func getRulesForKitFile(repoRoot string, fileName string, log *slog.Logger) (kit
 		return nil, fmt.Errorf("read %s: %w", f, err)
 	}
 
-	if err := yaml.Unmarshal(dat, &rules); err != nil {
+	rules, err := kitfile.ParseRules(dat)
+	if err != nil {
 		log.Error("kit: failed to parse KIT file",
 			"component", "fetcher", "phase", "fetch", "path", fileName, "error", err)
 		return nil, fmt.Errorf("parse %s: %w", fileName, err)
@@ -137,8 +134,5 @@ func fileExistsCaseSensitive(path string) (bool, error) {
 
 // log returns the configured logger or the default one.
 func (lf *LocalFetcher) log() *slog.Logger {
-	if lf.Log != nil {
-		return lf.Log
-	}
-	return slog.Default()
+	return logOrDefault(lf.Log)
 }

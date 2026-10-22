@@ -33,29 +33,26 @@ func runCoverageCmd(cmd *cobra.Command, args []string) error {
 	if mode == modeTUI {
 		return openTUI(cmd, coverageRoute(valuesFrom(cmd, args)))
 	}
-	report, err := runCoverage(opts)
+	report, _, err := runCoverage(opts)
 	if err != nil {
 		return err
 	}
 	return renderCoverage(mode, report)
 }
 
-// runCoverage computes the coverage report against the local repository.
-// opts.ScopeName narrows the per-scope breakdown in the engine.
-func runCoverage(opts kenin.Options) (*kenin.CoverageReport, error) {
+// runCoverage computes the coverage report against the local repository,
+// with the unfiltered match it was computed from. opts.ScopeName narrows
+// the per-scope breakdown in the engine.
+func runCoverage(opts kenin.Options) (*kenin.CoverageReport, *kenin.MatchResult, error) {
 	repo, err := getRepo()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	engine, err := newLocalEngine(repo)
+	report, match, err := newLocalEngine(repo, nil).Coverage(opts)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("run coverage: %w", err)
 	}
-	report, err := engine.Coverage(opts)
-	if err != nil {
-		return nil, fmt.Errorf("run coverage: %w", err)
-	}
-	return report, nil
+	return report, match, nil
 }
 
 // renderCoverage renders the engine's coverage report as JSON or a table.

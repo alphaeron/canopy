@@ -100,7 +100,7 @@ func (r *Rule) Execute(
 	// rewritten to the default (override) behavior so the state always
 	// reports what actually ran.
 	appliedRule := r.Rule
-	appliedRule.CombineStrategy = effectiveCombineStrategy(appliedRule.CombineStrategy)
+	appliedRule.CombineStrategy = EffectiveCombineStrategy(appliedRule.CombineStrategy)
 
 	return RuleState{
 		Rule:       appliedRule,
