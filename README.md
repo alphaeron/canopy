@@ -81,7 +81,7 @@ The approve phase is a chain of independent layers. Each layer consumes only the
 
 | Layer | Type | Command | State it returns |
 |---|---|---|---|
-| Fetch | `Fetcher` (interface), `LocalFetcher` | `Execute()` | repository root + parsed `KIT` rules |
+| Fetch | `Fetcher` (interface), `local.Fetcher`, `remote.Fetcher` | `Execute(ctx)` | repository root + parsed `KIT` rules |
 | Sift | `RuleChain` builder | `GetFileRuleChain` | per-file ordered rule layers |
 | Chain | `RuleChain` | `Execute` | `ReviewState` (consumes only `LayerState`) |
 | Layer | `RuleLayer` | `Execute` | `LayerState` incl. per-rule states and the combined target footprint (`Required`) for the next layer |

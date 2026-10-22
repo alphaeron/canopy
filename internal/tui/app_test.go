@@ -10,6 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	huh "charm.land/huh/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -453,7 +454,8 @@ func TestTerminalCursor(t *testing.T) {
 }
 
 func TestFormFollowsTerminalTheme(t *testing.T) {
-	p := NewRuleFormPage("add rule", RuleFields{}, nil, nil).(*formPage)
+	name := "n"
+	p := NewFormPage("add rule", "new rule", huh.NewForm(huh.NewGroup(huh.NewInput().Title("Name").Value(&name))), nil).(*formPage)
 	dark := p.form.View()
 	p.setStyles(newStyles(false))
 	if p.form.View() == dark {

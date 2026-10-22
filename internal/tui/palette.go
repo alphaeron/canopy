@@ -58,7 +58,7 @@ func newPalette(st *styles, routes []Route) *palette {
 	in.SetVirtualCursor(false)
 	entries := []paletteEntry{{name: "home", hint: "all commands"}}
 	for i := range routes {
-		entries = append(entries, paletteEntry{name: clean(routes[i].Command), hint: clean(routes[i].Description), route: &routes[i]})
+		entries = append(entries, paletteEntry{name: Clean(routes[i].Command), hint: Clean(routes[i].Description), route: &routes[i]})
 	}
 	p := &palette{st: st, input: in, entries: entries}
 	p.filter()

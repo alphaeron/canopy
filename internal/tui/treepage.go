@@ -53,17 +53,17 @@ type TreePage struct {
 // NewTreePage builds a tree page titled name with every group expanded
 // unless it is Collapsed.
 func NewTreePage(name string, groups []TreeGroup) *TreePage {
-	return newTreePage(name, "all "+strings.ToLower(clean(name)), groups)
+	return newTreePage(name, "all "+strings.ToLower(Clean(name)), groups)
 }
 
 // newTreePage builds a tree page whose root row reads rootLabel.
 func newTreePage(name, rootLabel string, groups []TreeGroup) *TreePage {
 	st := newStyles(true)
-	name = clean(name)
+	name = Clean(name)
 	groups = slices.Clone(groups)
 	for gi := range groups {
 		g := &groups[gi]
-		g.Title = clean(g.Title)
+		g.Title = Clean(g.Title)
 		g.Detail = cleanDetail(g.Detail)
 		g.Items = slices.Clone(g.Items)
 		for ii := range g.Items {

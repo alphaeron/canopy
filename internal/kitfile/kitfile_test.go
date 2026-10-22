@@ -30,15 +30,15 @@ var fixtureRules = Rules{
 }
 
 // writeFixture saves rules to path as the dynamic-key sequence form used on
-// disk, then reloads it through the public LoadKitFile path.
-func writeFixture(t *testing.T, dir string, rules Rules) *KitFile {
+// disk, then reloads it through the public Load path.
+func writeFixture(t *testing.T, dir string, rules Rules) *File {
 	t.Helper()
 	path := filepath.Join(dir, "KIT")
-	kf := &KitFile{Rules: rules}
+	kf := &File{Rules: rules}
 	if err := kf.Save(path); err != nil {
 		t.Fatalf("save fixture: %v", err)
 	}
-	loaded, err := LoadKitFile(path)
+	loaded, err := Load(path)
 	if err != nil {
 		t.Fatalf("load fixture: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestKitFileSaveThenLoadRoundTrips(t *testing.T) {
 }
 
 func TestKitFileLoadMissingFile(t *testing.T) {
-	_, err := LoadKitFile(filepath.Join(t.TempDir(), "absent"))
+	_, err := Load(filepath.Join(t.TempDir(), "absent"))
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("expected wrap of os.ErrNotExist, got %v", err)
 	}
@@ -106,7 +106,7 @@ func TestKitFileRuleByPattern(t *testing.T) {
 }
 
 func TestKitFileAddRejectsDuplicatePattern(t *testing.T) {
-	var kf KitFile
+	var kf File
 	if err := kf.Add(fixtureRules[0]); err != nil {
 		t.Fatalf("first Add to empty KitFile: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestKitFileAddRejectsDuplicatePattern(t *testing.T) {
 	}
 }
 func TestKitFileAddRejectsInvalidRegex(t *testing.T) {
-	var kf KitFile
+	var kf File
 	if err := kf.Add(Rule{Pattern: "("}); err == nil {
 		t.Errorf("Add accepted invalid pattern \"(\"")
 	}
@@ -159,21 +159,21 @@ func TestKitFileRemove(t *testing.T) {
 
 func TestKitFileValidateDetectsDuplicateAndBrokenPattern(t *testing.T) {
 	dup := Rules{{Pattern: ".*.go$"}, {Pattern: ".*.go$"}}
-	if err := (&KitFile{Rules: dup}).Validate(); err == nil {
+	if err := (&File{Rules: dup}).Validate(); err == nil {
 		t.Errorf("Validate missed duplicate pattern")
 	}
 	bad := Rules{{Pattern: "("}}
-	if err := (&KitFile{Rules: bad}).Validate(); err == nil {
+	if err := (&File{Rules: bad}).Validate(); err == nil {
 		t.Errorf("Validate missed invalid pattern")
 	}
-	if err := (&KitFile{Rules: fixtureRules}).Validate(); err != nil {
+	if err := (&File{Rules: fixtureRules}).Validate(); err != nil {
 		t.Errorf("Validate over a clean file: %v", err)
 	}
 }
 
 func TestKitFileValidateRejectsMissingApproverFields(t *testing.T) {
 	fixture := Rules{{Pattern: "x", Approvers: []ApproverTarget{{}}}}
-	if err := (&KitFile{Rules: fixture}).Validate(); err == nil {
+	if err := (&File{Rules: fixture}).Validate(); err == nil {
 		t.Errorf("Validate missed empty approver")
 	}
 }

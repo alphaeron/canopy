@@ -1,3 +1,5 @@
+// Package kitfile defines the KIT file schema: rules, approver targets, and
+// combine strategies, with YAML parsing, validation, and editing.
 package kitfile
 
 import (
@@ -14,20 +16,20 @@ import (
 // given pattern exists in the KIT file. Callers identify it with errors.Is.
 var ErrPatternNotFound = errors.New("no rule with that pattern in the KIT file")
 
-// KitFile is the complete, order-preserving view of one KIT file on disk.
+// File is the complete, order-preserving view of one KIT file on disk.
 // Rules keeps the file's exact rule order (YAML sequence order), so saving a
-// KitFile reproduces the original file modulo formatting.
-type KitFile struct {
+// File reproduces the original file modulo formatting.
+type File struct {
 	// Path records where the file came from: the path given to
-	// LoadKitFile, or the repo-relative key of a Set entry. It is empty for
+	// Load, or the repo-relative key of a Set entry. It is empty for
 	// files synthesized in memory.
 	Path  string
 	Rules Rules
 }
 
-// LoadKitFile reads and parses the KIT file at path. It returns an error
+// Load reads and parses the KIT file at path. It returns an error
 // when the file is missing or does not parse into the rule sequence form.
-func LoadKitFile(path string) (*KitFile, error) {
+func Load(path string) (*File, error) {
 	dat, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read KIT file %q: %w", path, err)
@@ -37,13 +39,13 @@ func LoadKitFile(path string) (*KitFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse KIT file %q: %w", path, err)
 	}
-	return &KitFile{Path: path, Rules: rules}, nil
+	return &File{Path: path, Rules: rules}, nil
 }
 
 // Save writes the rules to path in the dynamic-key sequence form, matching
-// the form LoadKitFile and UnmarshalYAML parse. The target file is created
+// the form Load and UnmarshalYAML parse. The target file is created
 // or truncated; the caller owns the path (KIT files are named "KIT").
-func (k *KitFile) Save(path string) error {
+func (k *File) Save(path string) error {
 	dat, err := yaml.Marshal(k.Rules)
 	if err != nil {
 		return fmt.Errorf("marshal KIT rules: %w", err)
@@ -62,7 +64,7 @@ func (k *KitFile) Save(path string) error {
 
 // RuleByPattern returns the rule registered under the exact pattern string.
 // Patterns are unique within a file (Validate enforces this).
-func (k *KitFile) RuleByPattern(pattern string) (*Rule, bool) {
+func (k *File) RuleByPattern(pattern string) (*Rule, bool) {
 	for i := range k.Rules {
 		if k.Rules[i].Pattern == pattern {
 			return &k.Rules[i], true
@@ -74,7 +76,7 @@ func (k *KitFile) RuleByPattern(pattern string) (*Rule, bool) {
 // Add appends rule at the end of the file's rule list. It rejects rules
 // whose pattern is already registered or whose pattern is not a valid
 // regular expression, so Validate invariants hold after every mutation.
-func (k *KitFile) Add(rule Rule) error {
+func (k *File) Add(rule Rule) error {
 	if _, exists := k.RuleByPattern(rule.Pattern); exists {
 		return fmt.Errorf("add rule: pattern %q is already registered", rule.Pattern)
 	}
@@ -88,7 +90,7 @@ func (k *KitFile) Add(rule Rule) error {
 // Edit applies mutate to the rule registered under pattern. The returned
 // *ErrorPatternNotFound sentinel (ErrPatternNotFound) is wrapped with the
 // offending pattern so callers can identify the failure with errors.Is.
-func (k *KitFile) Edit(pattern string, mutate func(*Rule)) error {
+func (k *File) Edit(pattern string, mutate func(*Rule)) error {
 	rule, ok := k.RuleByPattern(pattern)
 	if !ok {
 		return fmt.Errorf("edit: %w: %q", ErrPatternNotFound, pattern)
@@ -98,7 +100,7 @@ func (k *KitFile) Edit(pattern string, mutate func(*Rule)) error {
 }
 
 // Remove deletes the rule registered under pattern.
-func (k *KitFile) Remove(pattern string) error {
+func (k *File) Remove(pattern string) error {
 	for i := range k.Rules {
 		if k.Rules[i].Pattern == pattern {
 			k.Rules = append(k.Rules[:i], k.Rules[i+1:]...)
@@ -111,14 +113,14 @@ func (k *KitFile) Remove(pattern string) error {
 // Validate reports every integrity violation in the file (see Violations)
 // as one combined error, never just the first one, so a user can fix every
 // problem in one pass. It is nil when the file is valid.
-func (k *KitFile) Validate() error {
+func (k *File) Validate() error {
 	return errors.Join(k.Violations()...)
 }
 
 // Violations lists every integrity violation in the file: duplicate
 // patterns, patterns that are not valid regular expressions, and approver
 // targets with no target name or no required count.
-func (k *KitFile) Violations() []error {
+func (k *File) Violations() []error {
 	seen := make(map[string]bool, len(k.Rules))
 	var all []error
 	for _, rule := range k.Rules {

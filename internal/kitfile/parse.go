@@ -10,7 +10,7 @@ import (
 )
 
 // ParseRules parses YAML bytes into a KIT file's rule sequence. It is the
-// one parser for every reader (LoadKitFile, the local fetcher reading the
+// one parser for every reader (Load, the local fetcher reading the
 // working tree, the remote fetcher reading GitHub blobs), so they all parse
 // KIT files identically. Callers add the file's path to the error.
 func ParseRules(dat []byte) (Rules, error) {

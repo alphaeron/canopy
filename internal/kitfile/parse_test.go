@@ -9,7 +9,7 @@ import (
 
 func TestParseRulesRoundTrip(t *testing.T) {
 	original := Rules{rule1, rule2}
-	kf := &KitFile{Rules: original}
+	kf := &File{Rules: original}
 	dir := t.TempDir()
 	path := dir + "/KIT"
 	if err := kf.Save(path); err != nil {
@@ -83,7 +83,7 @@ func TestParseApproversRoundTrip(t *testing.T) {
 
 func TestApproverTargetRequiredCountValidation(t *testing.T) {
 	r := Rule{Pattern: `.*`, Approvers: ApproverTargets{{Target: "a", RequiredCount: 0}}}
-	kf := &KitFile{Rules: Rules{r}}
+	kf := &File{Rules: Rules{r}}
 	if kf.Validate() == nil {
 		t.Fatal("expected a required_count validation error")
 	}

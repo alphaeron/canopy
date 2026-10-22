@@ -9,40 +9,29 @@ import (
 	huh "charm.land/huh/v2"
 )
 
-// formPage hosts the rule form inside the app. Submitting runs the caller's
+// formPage hosts a huh form inside the app. Submitting runs the caller's
 // submit function and closes the page; esc closes it without saving.
 type formPage struct {
-	name   string
-	st     *styles
-	fields RuleFields
-	form   *huh.Form
-	submit func(ctx context.Context, f RuleFields) (string, error)
-	w, h   int
-	done   bool
+	name    string
+	summary string
+	st      *styles
+	form    *huh.Form
+	submit  func(ctx context.Context) (string, error)
+	w, h    int
+	done    bool
 }
 
-// NewRuleFormPage builds a rule-form page pre-filled from seed. A non-empty
-// kitFiles starts the form with a KIT file picker (seeded from
-// seed.KitFile), as in the CLI's rules add. submit persists the edited
-// fields and returns a confirmation message; the page closes and the page
-// beneath it is reloaded once it succeeds.
-func NewRuleFormPage(name string, seed RuleFields, kitFiles []string, submit func(ctx context.Context, f RuleFields) (string, error)) Page {
-	if seed.Strategy == "" {
-		seed.Strategy = "union"
-	}
-	p := &formPage{name: name, fields: seed, submit: submit, st: newStyles(true)}
-	p.form = newRuleForm(&p.fields, kitFiles).WithShowHelp(true)
-	return p
+// NewFormPage hosts form as a page titled name, with summary on the status
+// line. The caller binds form's fields to its own values; once the form
+// completes, submit persists them and returns a confirmation message, and
+// the page closes and the page beneath it is reloaded once it succeeds.
+func NewFormPage(name, summary string, form *huh.Form, submit func(ctx context.Context) (string, error)) Page {
+	return &formPage{name: name, summary: summary, form: form.WithShowHelp(true), submit: submit, st: newStyles(true)}
 }
 
 func (p *formPage) title() string { return p.name }
 
-func (p *formPage) status() string {
-	if p.fields.Name == "" {
-		return "new rule"
-	}
-	return "rule " + p.fields.Name
-}
+func (p *formPage) status() string { return p.summary }
 
 func (p *formPage) init() tea.Cmd { return p.form.Init() }
 
@@ -95,9 +84,9 @@ func (p *formPage) update(msg tea.Msg) tea.Cmd {
 	switch p.form.State {
 	case huh.StateCompleted:
 		p.done = true
-		fields, submit := p.fields, p.submit
+		submit := p.submit
 		return runCmd(func(ctx context.Context) (Outcome, error) {
-			info, err := submit(ctx, fields)
+			info, err := submit(ctx)
 			return Outcome{Info: info, Reload: true}, err
 		}, true)
 	case huh.StateAborted:

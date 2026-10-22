@@ -1,11 +1,10 @@
+// Command kit is the Kit code review CLI. The commands themselves live in
+// internal/cli; configuration is loaded in the root command's
+// PersistentPreRunE, once cobra has parsed every flag.
 package main
 
-// The kit CLI entry point. All commands, the root command, and the config
-// load live in this package (cmd/kit/), so the only import in main() is
-// the package-local one: Execute(). Configuration is loaded inside the root
-// command's PreRun, which runs after cobra has finished parsing every flag
-// for the command tree; --config is available there, and so are all the
-// internal packages' slog calls, which already pick up the resolved level.
+import "github.com/alphaeron/kit/internal/cli"
+
 func main() {
-	Execute()
+	cli.Execute()
 }

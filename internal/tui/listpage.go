@@ -85,7 +85,7 @@ type ListPage struct {
 // NewListPage builds a list page titled name over items.
 func NewListPage(name string, items []Item) *ListPage {
 	st := newStyles(true)
-	name = clean(name)
+	name = Clean(name)
 	items = slices.Clone(items)
 	rows := make([]list.Item, len(items))
 	for i := range items {

@@ -1,3 +1,6 @@
+// Package tui is Kit's terminal UI toolkit: an app shell of routed pages
+// (lists, trees, forms, details) plus standalone prompts. It knows nothing
+// of KIT rules; callers build pages from their own data.
 package tui
 
 import (
@@ -17,7 +20,7 @@ import (
 )
 
 // Page is one screen of the TUI. Pages are built by the constructors in this
-// package (NewListPage, NewTreePage, NewRuleFormPage) and are driven only by
+// package (NewListPage, NewTreePage, NewFormPage) and are driven only by
 // the app, which owns the chrome, navigation, and global keys.
 type Page interface {
 	// title is the pane title for pages not opened through a route.
@@ -407,7 +410,7 @@ func (a *app) runRoute(r Route) tea.Cmd {
 	}
 	if r.Confirm != nil {
 		if q := r.Confirm(r.Values); q != "" {
-			return confirm(clean(q), run)
+			return confirm(Clean(q), run)
 		}
 	}
 	return run
@@ -541,7 +544,7 @@ func (a *app) applyOutcome(msg outcomeMsg) tea.Cmd {
 
 func (a *app) setStatus(text string, isErr bool) {
 	// Errors can quote repository content (paths, patterns).
-	a.statusText, a.statusErr = clean(text), isErr
+	a.statusText, a.statusErr = Clean(text), isErr
 }
 
 // resize recomputes the body size and propagates it to every page on the
@@ -591,9 +594,9 @@ func (a *app) View() tea.View {
 // name is the breadcrumb label for a stack entry.
 func (e entry) name() string {
 	if e.route != nil {
-		return clean(e.route.label())
+		return Clean(e.route.label())
 	}
-	return clean(e.page.title())
+	return Clean(e.page.title())
 }
 
 // headerView is the breadcrumb trail on the left and the palette hint on the

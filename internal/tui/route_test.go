@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 )
 
 func TestCommandLine(t *testing.T) {
@@ -113,23 +112,6 @@ func TestOptionsChoices(t *testing.T) {
 		if !strings.Contains(h.screen(), want) {
 			t.Errorf("choice %q missing from the options form:\n%s", want, h.screen())
 		}
-	}
-}
-
-func TestRuleFormOffersKitFiles(t *testing.T) {
-	p := NewRuleFormPage("add rule", RuleFields{KitFile: "svc/KIT"}, []string{"KIT", "svc/KIT"}, nil).(*formPage)
-	// huh renders nothing until sized and initialized, as mount does.
-	p.setSize(100, 40)
-	_ = p.init()
-	view := ansi.Strip(p.form.View())
-	if !strings.Contains(view, "KIT file") || !strings.Contains(view, "> svc/KIT") {
-		t.Errorf("the rule form must start with the KIT file picker:\n%s", view)
-	}
-	bare := NewRuleFormPage("init", RuleFields{}, nil, nil).(*formPage)
-	bare.setSize(100, 40)
-	_ = bare.init()
-	if strings.Contains(bare.form.View(), "KIT file") {
-		t.Error("without KIT files the picker must be absent")
 	}
 }
 

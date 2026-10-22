@@ -1,0 +1,85 @@
+package match
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestFilterScope(t *testing.T) {
+	core := Scope{Name: "core", Pattern: `.*\.go`, KitFile: "KIT"}
+	nested := Scope{Name: "core", Pattern: `.*`, Directory: "svc", KitFile: "svc/KIT"}
+	docs := Scope{Name: "docs", Pattern: `.*\.md`, KitFile: "KIT"}
+	in := &Result{RepoRoot: "/repo", Files: []FileMatch{
+		{Path: "a.go", Scopes: []Scope{core, docs}, Diff: "+a"},
+		{Path: "svc/b.go", Scopes: []Scope{nested}},
+		{Path: "c.md", Scopes: []Scope{docs}},
+		{Path: "d.txt"},
+	}}
+	tests := []struct {
+		name string
+		want []FileMatch
+	}{
+		{name: "core", want: []FileMatch{
+			{Path: "a.go", Scopes: []Scope{core}, Diff: "+a"},
+			{Path: "svc/b.go", Scopes: []Scope{nested}},
+		}},
+		{name: "docs", want: []FileMatch{
+			{Path: "a.go", Scopes: []Scope{docs}, Diff: "+a"},
+			{Path: "c.md", Scopes: []Scope{docs}},
+		}},
+		{name: "absent", want: []FileMatch{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := in.FilterScope(tc.name)
+			if got.RepoRoot != in.RepoRoot || !reflect.DeepEqual(got.Files, tc.want) {
+				t.Errorf("FilterScope(%q) = %+v, want %+v", tc.name, got.Files, tc.want)
+			}
+		})
+	}
+	if len(in.Files) != 4 || len(in.Files[0].Scopes) != 2 {
+		t.Errorf("FilterScope must not modify its receiver: %+v", in.Files)
+	}
+}
+
+// TestCoverageFilterScope pins that narrowing the breakdown keeps the
+// overall numbers, which describe every rule, and leaves the receiver alone.
+func TestCoverageFilterScope(t *testing.T) {
+	report := &CoverageReport{
+		Universe: 10,
+		Covered:  7,
+		Percent:  70.0,
+		PerScope: []ScopeCoverage{
+			{Scope: Scope{Name: "core"}, Files: 5, Percent: 50},
+			{Scope: Scope{Name: "sec"}, Files: 2, Percent: 20},
+		},
+		Uncovered: []string{"x.go"},
+	}
+	got := report.FilterScope("sec")
+	want := *report
+	want.PerScope = []ScopeCoverage{{Scope: Scope{Name: "sec"}, Files: 2, Percent: 20}}
+	if !reflect.DeepEqual(*got, want) {
+		t.Errorf("FilterScope = %+v, want %+v", *got, want)
+	}
+	if len(report.PerScope) != 2 {
+		t.Errorf("FilterScope must not modify its receiver: %+v", report.PerScope)
+	}
+}
+
+func TestResultFilesOfAndOverlaps(t *testing.T) {
+	a := Scope{Name: "a", Pattern: ".*", KitFile: "KIT"}
+	b := Scope{Name: "b", Pattern: `\.go$`, KitFile: "src/KIT", Directory: "src"}
+	c := Scope{Name: "c", Pattern: `api`, KitFile: "src/KIT", Directory: "src"}
+	r := &Result{Files: []FileMatch{
+		{Path: "src/api.go", Scopes: []Scope{a, b, c}},
+		{Path: "src/x.go", Scopes: []Scope{a, b}},
+		{Path: "README", Scopes: []Scope{a}},
+	}}
+	if got, want := r.FilesOf(b), []string{"src/api.go", "src/x.go"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("FilesOf(b) = %v, want %v", got, want)
+	}
+	want := []ScopeOverlap{{Scope: b, Shared: 2}, {Scope: c, Shared: 1}}
+	if got := r.Overlaps(a); !reflect.DeepEqual(got, want) {
+		t.Errorf("Overlaps(a) = %+v, want %+v", got, want)
+	}
+}

@@ -49,7 +49,7 @@ func newOptionsPage(r Route, choices map[string][]string, replace bool) *options
 	var groups []*huh.Group
 	fields := make([]huh.Field, 0, len(r.Params))
 	for i, prm := range r.Params {
-		title, help := paramUsage(prm), clean(prm.Help)
+		title, help := paramUsage(prm), Clean(prm.Help)
 		switch {
 		case prm.Kind == ParamChoice:
 			if prm.Arg {
@@ -69,7 +69,7 @@ func newOptionsPage(r Route, choices map[string][]string, replace bool) *options
 		case prm.clearable():
 			p.texts[i], p.set[i] = r.Values.Flags[prm.Name]
 			fields = append(fields, huh.NewSelect[bool]().Title(title).Description(help).
-				Options(huh.NewOption(clean(prm.Unset), false), huh.NewOption("set", true)).Value(&p.set[i]))
+				Options(huh.NewOption(Clean(prm.Unset), false), huh.NewOption("set", true)).Value(&p.set[i]))
 			groups = append(groups, huh.NewGroup(fields...))
 			fields = nil
 			set := &p.set[i]
@@ -109,15 +109,15 @@ func choiceOptions(p Param, choices []string, current string) []huh.Option[strin
 		if unset == "" {
 			unset = allChoice
 		}
-		opts = append(opts, huh.NewOption(clean(unset), ""))
+		opts = append(opts, huh.NewOption(Clean(unset), ""))
 	}
 	found := current == ""
 	for _, c := range choices {
-		opts = append(opts, huh.NewOption(clean(c), c))
+		opts = append(opts, huh.NewOption(Clean(c), c))
 		found = found || c == current
 	}
 	if !found {
-		opts = append(opts, huh.NewOption(clean(current), current))
+		opts = append(opts, huh.NewOption(Clean(current), current))
 	}
 	return opts
 }
@@ -220,7 +220,7 @@ func (p *optionsPage) update(msg tea.Msg) tea.Cmd {
 }
 
 func (p *optionsPage) view() string {
-	preview := p.st.label.Render("Runs  ") + p.st.value.Render(clean(p.edited().CommandLine()))
+	preview := p.st.label.Render("Runs  ") + p.st.value.Render(Clean(p.edited().CommandLine()))
 	return pane(p.st, "options · "+p.route.Command, "", preview+"\n\n"+p.form.View(), p.w, p.h, true)
 }
 

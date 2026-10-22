@@ -35,7 +35,7 @@ func TestSetValidateOmitsValidFiles(t *testing.T) {
 	if n := len(got["svc/KIT"]); n != 2 {
 		t.Errorf("svc/KIT violations = %d (%v), want 2 (invalid and duplicate pattern)", n, got["svc/KIT"])
 	}
-	if err := (&KitFile{Rules: s["svc/KIT"]}).Validate(); err == nil {
+	if err := (&File{Rules: s["svc/KIT"]}).Validate(); err == nil {
 		t.Error("Validate() = nil, want the joined violations")
 	}
 }

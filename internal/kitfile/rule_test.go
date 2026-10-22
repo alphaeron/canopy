@@ -110,7 +110,7 @@ func TestOmittedStrategyRoundTrips(t *testing.T) {
 	if err := os.WriteFile(path, []byte("- '.*':\n    name: legacy\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	k, err := LoadKitFile(path)
+	k, err := Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestOmittedStrategyRoundTrips(t *testing.T) {
 	if err := k.Save(path); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	again, err := LoadKitFile(path)
+	again, err := Load(path)
 	if err != nil {
 		t.Fatalf("a saved file must load again: %v", err)
 	}

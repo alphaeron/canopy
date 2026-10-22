@@ -11,13 +11,13 @@ import (
 // the cell-exact layout of panes.
 const tabWidth = 4
 
-// clean makes caller text safe to draw. Everything the TUI shows from a
+// Clean makes caller text safe to draw. Everything the TUI shows from a
 // repository (paths, rule names, diffs) is untrusted: an escape sequence in
 // a file could retitle the terminal, write the clipboard, or corrupt the
-// screen. clean strips escape sequences and control characters, keeping
+// screen. Clean strips escape sequences and control characters, keeping
 // newlines and expanding tabs, so only the TUI's own styling reaches the
 // terminal.
-func clean(s string) string {
+func Clean(s string) string {
 	s = ansi.Strip(s)
 	if !strings.ContainsFunc(s, unicode.IsControl) {
 		return s
@@ -39,8 +39,8 @@ func clean(s string) string {
 }
 
 func cleanItem(it Item) Item {
-	it.Title = clean(it.Title)
-	it.Description = clean(it.Description)
+	it.Title = Clean(it.Title)
+	it.Description = Clean(it.Description)
 	it.Detail = cleanDetail(it.Detail)
 	return it
 }
@@ -48,7 +48,7 @@ func cleanItem(it Item) Item {
 func cleanDetail(d Detail) Detail {
 	tabs := make([]Tab, len(d.Tabs))
 	for i, t := range d.Tabs {
-		tabs[i] = Tab{Title: clean(t.Title), Fields: cleanFields(t.Fields), Sections: cleanSections(t.Sections)}
+		tabs[i] = Tab{Title: Clean(t.Title), Fields: cleanFields(t.Fields), Sections: cleanSections(t.Sections)}
 	}
 	return Detail{Fields: cleanFields(d.Fields), Sections: cleanSections(d.Sections), Tabs: tabs}
 }
@@ -56,7 +56,7 @@ func cleanDetail(d Detail) Detail {
 func cleanFields(in []Field) []Field {
 	fields := make([]Field, len(in))
 	for i, f := range in {
-		fields[i] = Field{Label: clean(f.Label), Value: clean(f.Value), Badge: f.Badge}
+		fields[i] = Field{Label: Clean(f.Label), Value: Clean(f.Value), Badge: f.Badge}
 	}
 	return fields
 }
@@ -66,14 +66,14 @@ func cleanSections(in []Section) []Section {
 	for i, s := range in {
 		lines := make([]string, len(s.Lines))
 		for j, l := range s.Lines {
-			lines[j] = clean(l)
+			lines[j] = Clean(l)
 		}
 		rows := make([]Row, len(s.Rows))
 		for j, r := range s.Rows {
-			r.Text, r.Note = clean(r.Text), clean(r.Note)
+			r.Text, r.Note = Clean(r.Text), Clean(r.Note)
 			rows[j] = r
 		}
-		sections[i] = Section{Title: clean(s.Title), Lines: lines, Diff: s.Diff, Rows: rows}
+		sections[i] = Section{Title: Clean(s.Title), Lines: lines, Diff: s.Diff, Rows: rows}
 	}
 	return sections
 }

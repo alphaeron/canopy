@@ -51,7 +51,7 @@ func (s Set) Names() []string {
 func (s Set) Validate() map[string][]error {
 	out := map[string][]error{}
 	for p, rules := range s {
-		k := KitFile{Path: p, Rules: rules}
+		k := File{Path: p, Rules: rules}
 		if errs := k.Violations(); len(errs) > 0 {
 			out[p] = errs
 		}
