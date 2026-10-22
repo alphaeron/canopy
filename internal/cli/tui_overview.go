@@ -7,7 +7,7 @@ import (
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
@@ -44,7 +44,7 @@ func repoOverview(ctx context.Context) (tui.Detail, error) {
 		d.Fields = append(d.Fields, tui.Field{Label: "Validation", Value: "valid", Badge: tui.BadgeOK})
 	}
 
-	if report, _, err := runCoverage(ctx, match.Options{}); err != nil {
+	if report, _, err := runCoverage(ctx, review.Options{}); err != nil {
 		d.Fields = append(d.Fields, failed("Coverage", err))
 	} else {
 		badge := tui.BadgeOK

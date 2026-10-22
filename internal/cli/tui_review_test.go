@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
@@ -164,13 +164,13 @@ func TestUncoveredSection(t *testing.T) {
 // TestRuleMatchesOverlaps: a rule's overlaps are the other rules matching
 // its files, most shared first.
 func TestRuleMatchesOverlaps(t *testing.T) {
-	root := match.Scope{Pattern: ".*", RulesFile: rulesfile.FileName, Name: "all"}
-	goRule := match.Scope{Pattern: `\.go$`, RulesFile: rulesfile.PathInDir("svc"), Name: "go"}
-	docs := match.Scope{Pattern: `\.md$`, RulesFile: rulesfile.FileName}
-	m := newRuleMatches(&match.Result{Files: []match.FileMatch{
-		{Path: "svc/a.go", Scopes: []match.Scope{root, goRule}},
-		{Path: "svc/b.go", Scopes: []match.Scope{root, goRule}},
-		{Path: "README.md", Scopes: []match.Scope{root, docs}},
+	root := review.Scope{Pattern: ".*", RulesFile: rulesfile.FileName, Name: "all"}
+	goRule := review.Scope{Pattern: `\.go$`, RulesFile: rulesfile.PathInDir("svc"), Name: "go"}
+	docs := review.Scope{Pattern: `\.md$`, RulesFile: rulesfile.FileName}
+	m := newRuleMatches(&review.Result{Files: []review.FileMatch{
+		{Path: "svc/a.go", Scopes: []review.Scope{root, goRule}},
+		{Path: "svc/b.go", Scopes: []review.Scope{root, goRule}},
+		{Path: "README.md", Scopes: []review.Scope{root, docs}},
 	}}, nil)
 	rows := m.overlaps(rulesfile.FileName, ".*")
 	if len(rows) != 2 || !strings.HasPrefix(rows[0].Text, "go:") || rows[0].Note != "2 shared files" || rows[1].Note != "1 shared file" {

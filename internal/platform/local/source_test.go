@@ -165,7 +165,7 @@ func TestLocalDiffContentModifiedAndAdded(t *testing.T) {
 // TestLocalSourceIsOnTheLocalPlatform: a local source reads the working
 // tree's rules and resolves approvers as themselves.
 func TestLocalSourceIsOnTheLocalPlatform(t *testing.T) {
-	rev := NewSource(nil, nil).Reviewer()
+	rev := NewSource(nil, nil).Evaluator()
 	if fetch, ok := rev.Fetch.(*approval.TreeFetcher); !ok {
 		t.Errorf("fetcher = %T, want *approval.TreeFetcher", rev.Fetch)
 	} else if _, ok := fetch.Tree.(*worktree); !ok {

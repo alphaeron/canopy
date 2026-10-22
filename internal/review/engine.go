@@ -1,7 +1,9 @@
-// Package match answers which rules govern which files: the Engine maps a
+// Package review runs the approval algorithm over a change: the Engine maps a
 // Source's file universe to rule scopes, reports coverage, and runs reviews,
-// identically for a local checkout or a pull request.
-package match
+// identically for a local checkout or a pull request. A platform supplies
+// both the change (Source) and the evaluation dependencies (an
+// approval.Evaluator with its fetcher and resolver).
+package review
 
 import (
 	"context"
@@ -86,12 +88,12 @@ func (e *Engine) RuleChain(ctx context.Context, files []string) (approval.RuleCh
 // approve it. Every approver counts as active and there are no repository
 // owners, so a file no rule covers is reported as an unsatisfiable fallback.
 func (e *Engine) Requirements(ctx context.Context, chain approval.RuleChain) *approval.ReviewState {
-	return e.Source.Reviewer().Approve(ctx, approval.ReviewInput{}, chain)
+	return e.Source.Evaluator().Approve(ctx, approval.ReviewInput{}, chain)
 }
 
 // rules loads the source's rules through its platform's fetcher.
 func (e *Engine) rules(ctx context.Context) (rulesfile.Set, error) {
-	return e.Source.Reviewer().Fetch.Execute(ctx)
+	return e.Source.Evaluator().Fetch.Execute(ctx)
 }
 
 // repoRoot is the source's on-disk repository root, or "" when it has none
@@ -232,10 +234,10 @@ func percentOf(n, total int) float64 {
 // Review runs the full approval review (fetch, sift, approve) over files on
 // the source's platform, so rules and approver resolution are local or
 // hosted together. Every error the review meets is in the returned state
-// (see approval.Reviewer.Execute). The state carries the source's
+// (see approval.Evaluator.Execute). The state carries the source's
 // repository root when it has one (see Rooted).
 func (e *Engine) Review(ctx context.Context, files []string, in approval.ReviewInput) *approval.ReviewState {
-	state := e.Source.Reviewer().Execute(ctx, in, files)
+	state := e.Source.Evaluator().Execute(ctx, in, files)
 	state.RepoRoot = e.repoRoot()
 	return state
 }

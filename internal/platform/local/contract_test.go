@@ -6,15 +6,15 @@ import (
 	"testing"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/match"
 	"github.com/alphaeron/kit/internal/platform/platformtest"
+	"github.com/alphaeron/kit/internal/review"
 )
 
 // TestLocalMeetsTheSourceContract runs the platform contract over a scratch
 // repository: the base revision committed at HEAD, the change left
 // uncommitted in the working tree.
 func TestLocalMeetsTheSourceContract(t *testing.T) {
-	platformtest.RunSourceContract(t, func(t *testing.T, f platformtest.Fixture) match.Source {
+	platformtest.RunSourceContract(t, func(t *testing.T, f platformtest.Fixture) review.Source {
 		dir, repo := newScratchRepo(t, f.Base)
 		for path, content := range f.Change.Write {
 			writeTestFile(t, dir, path, content)
@@ -48,6 +48,6 @@ func TestLocalWorktreeMeetsTheTreeContract(t *testing.T) {
 // groups and accepts every target, so only the user checks apply.
 func TestLocalResolverMeetsTheResolverContract(t *testing.T) {
 	platformtest.RunResolverContract(t, func(t *testing.T, _ []string) platformtest.ResolverHarness {
-		return platformtest.ResolverHarness{Resolver: NewReviewer(nil, nil).Resolver}
+		return platformtest.ResolverHarness{Resolver: NewEvaluator(nil, nil).Resolver}
 	})
 }

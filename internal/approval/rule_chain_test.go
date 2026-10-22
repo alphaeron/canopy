@@ -68,7 +68,7 @@ func testLogger() *slog.Logger {
 }
 
 // executeChain runs the chain with a fresh event builder and a quiet logger,
-// mirroring how Reviewer.Execute wires the approve phase.
+// mirroring how Evaluator.Execute wires the approve phase.
 func executeChain(t *testing.T, rc RuleChain, pr ReviewInput) *ReviewState {
 	t.Helper()
 	return rc.Execute(t.Context(), pr, &DefaultApproverResolver{}, NewReviewStateBuilder(), testLogger())

@@ -54,7 +54,7 @@ func TestLocalFetchReadsWorkingTree(t *testing.T) {
 	writeTestFile(t, dir, rulesfile.FileName, "- \".*\":\n  name: \"Edited\"\n")
 	writeTestFile(t, dir, rulesfile.PathInDir("svc"), "- \".*\\\\.go\":\n  name: \"New\"\n")
 
-	rules, err := NewReviewer(&gitrepo.Repository{Repository: *repo}, testLogger()).Fetch.Execute(t.Context())
+	rules, err := NewEvaluator(&gitrepo.Repository{Repository: *repo}, testLogger()).Fetch.Execute(t.Context())
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/match"
 	"github.com/alphaeron/kit/internal/platform/local"
+	"github.com/alphaeron/kit/internal/review"
 )
 
 // openEngine builds the match engine every command evaluates with: the
@@ -15,12 +15,12 @@ import (
 // is the one place the CLI chooses a platform, so reviewing a change on a
 // hosted platform from the CLI only changes this function. log may be nil
 // (slog.Default()); the TUI passes quietLog.
-func openEngine(log *slog.Logger) (*match.Engine, error) {
+func openEngine(log *slog.Logger) (*review.Engine, error) {
 	repo, err := getRepo()
 	if err != nil {
 		return nil, err
 	}
-	return match.New(local.NewSource(repo, log), log), nil
+	return review.New(local.NewSource(repo, log), log), nil
 }
 
 // rulesFileFlag registers the shared --file flag on a command that changes a

@@ -21,8 +21,8 @@ var ErrInvalidTarget = errors.New("invalid approver target")
 // the concrete members who can satisfy an approval requirement. Like
 // Fetcher, it is chosen by platform: local execution uses the pass-through
 // DefaultApproverResolver, and GitHub uses ghplatform.ApproverResolver, which
-// expands team targets to their members (see local.NewReviewer and
-// ghplatform.NewReviewer). Implementations need not cache: a review resolves
+// expands team targets to their members (see local.NewEvaluator and
+// ghplatform.NewEvaluator). Implementations need not cache: a review resolves
 // each target once (see RuleChain.Execute).
 type ApproverResolver interface {
 	// Resolve maps a target to its member set. A target the platform does

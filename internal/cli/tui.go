@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
@@ -186,7 +186,7 @@ func argParam(use string) (tui.Param, bool) {
 // Each file is also evaluated for who must approve it.
 func matchRoute(v tui.Values) tui.Route {
 	return commandRoute(matchCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
-		result, err := runMatch(ctx, match.Options{
+		result, err := runMatch(ctx, review.Options{
 			ChangedOnly: v.Bool("changed"),
 			IncludeDiff: v.Bool("diff"),
 			ScopeName:   v.Flag("scope"),
@@ -268,7 +268,7 @@ func fileRulesRoute(path string) tui.Route {
 // (name, pattern, and the rules file that declared it), who must approve it
 // and how its chain produced that, and, when the match ran with --diff, the
 // file's diff. Enter opens the file's full rule chain.
-func matchPage(result *match.Result, own ownership) tui.Page {
+func matchPage(result *review.Result, own ownership) tui.Page {
 	items := make([]tui.Item, 0, len(result.Files))
 	owned := 0
 	for _, fm := range result.Files {
@@ -292,7 +292,7 @@ func matchPage(result *match.Result, own ownership) tui.Page {
 		WithSummary(fmt.Sprintf("%d files · %d owned · %d unowned · %s", len(items), owned, len(items)-owned, own.summary()))
 }
 
-func matchByScopePage(groups []match.ScopeGroup, own ownership) tui.Page {
+func matchByScopePage(groups []review.ScopeGroup, own ownership) tui.Page {
 	tg := make([]tui.TreeGroup, 0, len(groups))
 	for _, g := range groups {
 		files := slices.Sorted(slices.Values(g.Files))
@@ -315,7 +315,7 @@ func matchByScopePage(groups []match.ScopeGroup, own ownership) tui.Page {
 
 func coverageRoute(v tui.Values) tui.Route {
 	return commandRoute(coverageCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
-		opts := match.Options{ChangedOnly: v.Bool("changed"), ScopeName: v.Flag("scope")}
+		opts := review.Options{ChangedOnly: v.Bool("changed"), ScopeName: v.Flag("scope")}
 		report, match, err := runCoverage(ctx, opts)
 		if err != nil {
 			return nil, err
@@ -336,7 +336,7 @@ const detailFilesMax = 50
 // scope with a name drills into `match --scope <name>`. The uncovered
 // files are the last row, grouped by directory, each directory linking to
 // `rules add` for its nearest rules file.
-func coveragePage(report *match.CoverageReport, match *match.Result, s *rulesSet) tui.Page {
+func coveragePage(report *review.CoverageReport, match *review.Result, s *rulesSet) tui.Page {
 	items := make([]tui.Item, 0, len(report.PerScope)+1)
 	for _, sc := range report.PerScope {
 		d := tui.Detail{
@@ -443,7 +443,7 @@ func rulesListRoute(v tui.Values) tui.Route {
 		if err != nil {
 			return nil, err
 		}
-		match, err := runMatch(ctx, match.Options{})
+		match, err := runMatch(ctx, review.Options{})
 		return rulesPage(s, only, newRuleMatches(match, err)), nil
 	})
 }
@@ -451,17 +451,17 @@ func rulesListRoute(v tui.Values) tui.Route {
 // ruleMatches is one match over the repository, from which the rules page
 // shows each rule's reach and its overlaps; err is why it is unavailable.
 type ruleMatches struct {
-	match *match.Result
+	match *review.Result
 	err   error
 }
 
-func newRuleMatches(match *match.Result, err error) ruleMatches {
+func newRuleMatches(match *review.Result, err error) ruleMatches {
 	return ruleMatches{match: match, err: err}
 }
 
 // scopeOf is the scope of the rule keyed by pattern in rulesFile.
-func scopeOf(rulesFile, pattern string) match.Scope {
-	return match.Scope{RulesFile: rulesFile, Pattern: pattern}
+func scopeOf(rulesFile, pattern string) review.Scope {
+	return review.Scope{RulesFile: rulesFile, Pattern: pattern}
 }
 
 // files are the files the rule keyed by pattern in rulesFile matched.
@@ -687,12 +687,12 @@ func withParam(r tui.Route, match func(*tui.Param) bool, change func(*tui.Param)
 // ruleChainFor resolves the rule chain for every file matching any pattern
 // at HEAD, with the engine that sifted it. A repository with no commit has
 // no files and an empty chain.
-func ruleChainFor(ctx context.Context, patterns []string) (*match.Engine, approval.RuleChain, error) {
+func ruleChainFor(ctx context.Context, patterns []string) (*review.Engine, approval.RuleChain, error) {
 	engine, err := openEngine(quietLog)
 	if err != nil {
 		return nil, approval.RuleChain{}, err
 	}
-	paths, err := engine.Files(ctx, match.Options{Patterns: patterns})
+	paths, err := engine.Files(ctx, review.Options{Patterns: patterns})
 	if err != nil {
 		return nil, approval.RuleChain{}, fmt.Errorf("find files: %w", err)
 	}
@@ -908,14 +908,14 @@ func approversLabel(targets rulesfile.ApproverTargets) string {
 	return strings.Join(parts, ", ")
 }
 
-func scopeLabel(s match.Scope) string {
+func scopeLabel(s review.Scope) string {
 	if s.Name != "" {
 		return s.Name
 	}
 	return s.Pattern
 }
 
-func scopeFields(s match.Scope) []tui.Field {
+func scopeFields(s review.Scope) []tui.Field {
 	return []tui.Field{
 		{Label: "Scope", Value: s.Name},
 		{Label: "Pattern", Value: s.Pattern},
@@ -924,7 +924,7 @@ func scopeFields(s match.Scope) []tui.Field {
 	}
 }
 
-func scopeLines(s match.Scope) []string {
+func scopeLines(s review.Scope) []string {
 	return []string{"pattern   " + s.Pattern, "declared  " + s.RulesFile}
 }
 

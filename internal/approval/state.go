@@ -51,7 +51,7 @@ func (s Status) String() string {
 type ReviewState struct {
 	// RepoRoot is the on-disk repository root when the review ran over a
 	// local checkout, and empty otherwise. The approval pipeline never
-	// knows it: the caller that does (match.Engine) sets it.
+	// knows it: the caller that does (review.Engine) sets it.
 	RepoRoot string
 	Files    map[string]FileState
 	Overall  Status

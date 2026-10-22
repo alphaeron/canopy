@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 )
 
 // rulesGetCmd resolves the review rule chain for every file/regex argument.
@@ -46,7 +46,7 @@ func runRulesGet(cmd *cobra.Command, args []string) error {
 
 	mode, _ := resolveOutputMode(cmd)
 	for _, arg := range args {
-		paths, err := engine.Files(cmd.Context(), match.Options{Patterns: []string{arg}})
+		paths, err := engine.Files(cmd.Context(), review.Options{Patterns: []string{arg}})
 		if err != nil {
 			return fmt.Errorf("find files for %q: %w", arg, err)
 		}

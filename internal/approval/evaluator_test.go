@@ -50,7 +50,7 @@ func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 				Approvers: []rulesfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}}},
 		},
 	}
-	s := &Reviewer{Fetch: fetch, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
+	s := &Evaluator{Fetch: fetch, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
 	rs := s.Execute(t.Context(), buildContext(approverSet("team-a"), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
 
 	if rs.Err != nil {
@@ -84,7 +84,7 @@ func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 
 func TestReviewerExecuteFetchErrorFailsReview(t *testing.T) {
 	fetchErr := errors.New("no rules files in repository")
-	s := &Reviewer{Fetch: &stubFetcher{err: fetchErr}, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
+	s := &Evaluator{Fetch: &stubFetcher{err: fetchErr}, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
 	rs := s.Execute(t.Context(), buildContext(approverSet(), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
 
 	if rs.Overall != StatusError {
@@ -113,7 +113,7 @@ func TestReviewerExecuteSiftErrorFailsReview(t *testing.T) {
 				Approvers: []rulesfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}}},
 		},
 	}
-	s := &Reviewer{Fetch: fetch, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
+	s := &Evaluator{Fetch: fetch, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
 	rs := s.Execute(t.Context(), buildContext(approverSet("team-a"), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
 
 	if rs.Overall != StatusError {
@@ -145,7 +145,7 @@ func TestReviewerExecuteUnresolvableTargetIsTracked(t *testing.T) {
 		},
 	}
 	resolver := failingResolver{}
-	s := &Reviewer{Fetch: fetch, Resolver: resolver, Log: testLogger()}
+	s := &Evaluator{Fetch: fetch, Resolver: resolver, Log: testLogger()}
 	rs := s.Execute(t.Context(), buildContext(approverSet("ghost-team"), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
 
 	if len(rs.Errors) == 0 {

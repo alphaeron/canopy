@@ -8,13 +8,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 )
 
 // matchCmd runs the match engine's match phase over the selected file
 // universe and renders per-file scopes, per-scope groups, or the diff
 // content. The engine runs once per invocation. --scope narrows the result
-// after matching (match.Result.FilterScope): matching always uses every
+// after matching (review.Result.FilterScope): matching always uses every
 // rule, so it changes what is reported, never what matches. --by-scope
 // regroups that one result per scope.
 var matchCmd = &cobra.Command{
@@ -30,7 +30,7 @@ func runMatchCmd(cmd *cobra.Command, args []string) error {
 	scopeName, _ := cmd.Flags().GetString("scope")
 	includeDiff, _ := cmd.Flags().GetBool("diff")
 	byScope, _ := cmd.Flags().GetBool("by-scope")
-	opts := match.Options{
+	opts := review.Options{
 		ChangedOnly: changed,
 		ScopeName:   scopeName,
 		IncludeDiff: includeDiff,
@@ -51,7 +51,7 @@ func runMatchCmd(cmd *cobra.Command, args []string) error {
 }
 
 // runMatch runs the engine's match phase against the local repository.
-func runMatch(ctx context.Context, opts match.Options) (*match.Result, error) {
+func runMatch(ctx context.Context, opts review.Options) (*review.Result, error) {
 	engine, err := openEngine(nil)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func runMatch(ctx context.Context, opts match.Options) (*match.Result, error) {
 
 // renderMatchByFile renders one row per file, optionally followed by each
 // file's matched rules and the matched diff. The TUI form is matchPage.
-func renderMatchByFile(mode outputMode, result *match.Result, includeDiff bool) error {
+func renderMatchByFile(mode outputMode, result *review.Result, includeDiff bool) error {
 	switch mode {
 	case modeJSON:
 		return writeJSON(os.Stdout, result)
@@ -92,7 +92,7 @@ func renderMatchByFile(mode outputMode, result *match.Result, includeDiff bool) 
 
 // renderMatchByScope renders one row per scope, then the files it matched.
 // The TUI form is matchByScopePage.
-func renderMatchByScope(mode outputMode, groups []match.ScopeGroup) error {
+func renderMatchByScope(mode outputMode, groups []review.ScopeGroup) error {
 	switch mode {
 	case modeJSON:
 		return writeJSON(os.Stdout, groups)
@@ -112,7 +112,7 @@ func renderMatchByScope(mode outputMode, groups []match.ScopeGroup) error {
 
 // scopeTitles returns the scope names for a file's scope set, or "none" if
 // no scope matched.
-func scopeTitles(scopes []match.Scope) string {
+func scopeTitles(scopes []review.Scope) string {
 	if len(scopes) == 0 {
 		return "none"
 	}

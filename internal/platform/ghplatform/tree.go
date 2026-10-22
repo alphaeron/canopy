@@ -16,7 +16,7 @@ import (
 
 // baseTree is a GitHub repository's tree at one revision as an
 // approval.Tree, read through the GitHub REST API. The tree is listed once
-// and then shared: a Source's AllFiles and its reviewer's fetch read the same
+// and then shared: a Source's AllFiles and its evaluator's fetch read the same
 // listing, so a review lists the base tree in one API call.
 type baseTree struct {
 	client *github.Client

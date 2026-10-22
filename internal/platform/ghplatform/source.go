@@ -10,7 +10,7 @@ import (
 	"github.com/google/go-github/v71/github"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 )
 
 // pullRequest is what a Source needs to know about one pull request: enough
@@ -38,16 +38,16 @@ type prFile struct {
 	patch        string
 }
 
-// Source implements match.Source against a GitHub pull request. It reads the
+// Source implements review.Source against a GitHub pull request. It reads the
 // rules and resolves approvers through the GitHub review platform, lists
 // the file universe from the pull request's base tree (one listing, shared
 // with the rules fetch), and reads the changed files and their patches as
 // listed when the Source was built. It has no on-disk checkout, so it does
-// not implement match.Rooted.
+// not implement review.Rooted.
 type Source struct {
-	pr       *pullRequest
-	tree     *baseTree // the base revision; the reviewer's fetch shares it
-	reviewer *approval.Reviewer
+	pr        *pullRequest
+	tree      *baseTree // the base revision; the evaluator's fetch shares it
+	evaluator *approval.Evaluator
 }
 
 // NewSourceFromEvent converts a pull_request webhook event into a Source on
@@ -77,9 +77,9 @@ func NewSourceFromEvent(ctx context.Context, event *github.PullRequestEvent, cli
 func newSource(pr *pullRequest, client *github.Client, log *slog.Logger) *Source {
 	tree := newBaseTree(client, pr.owner, pr.repo, pr.baseSHA)
 	return &Source{
-		pr:       pr,
-		tree:     tree,
-		reviewer: newReviewer(tree, client, log),
+		pr:        pr,
+		tree:      tree,
+		evaluator: newEvaluator(tree, client, log),
 	}
 }
 
@@ -126,9 +126,9 @@ func listFiles(ctx context.Context, client *github.Client, owner, repo string, n
 	return files, nil
 }
 
-// Reviewer is the GitHub review platform for the pull request: rules files
+// Evaluator is the GitHub review platform for the pull request: rules files
 // from its base tree, and team targets resolved through the GitHub API.
-func (r *Source) Reviewer() *approval.Reviewer { return r.reviewer }
+func (r *Source) Evaluator() *approval.Evaluator { return r.evaluator }
 
 // AllFiles lists the pull request's base tree, i.e. the complete file set
 // that the rules will match against when the PR is merged. This is the
@@ -171,4 +171,4 @@ func (r *Source) DiffContent(ctx context.Context, path string) (string, error) {
 	return "", nil
 }
 
-var _ match.Source = (*Source)(nil)
+var _ review.Source = (*Source)(nil)

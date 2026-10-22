@@ -21,7 +21,7 @@ type RuleChain struct {
 // the target directory. It records "approve" phase events and every error
 // condition into the supplied builder and assembles the complete review
 // state for the input files. resolver is the platform's (see
-// local.NewReviewer and ghplatform.NewReviewer) and is required. Every name
+// local.NewEvaluator and ghplatform.NewEvaluator) and is required. Every name
 // in the review is compared in the resolver's canonical form, and each
 // target is resolved at most once.
 func (rc *RuleChain) Execute(

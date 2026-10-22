@@ -181,7 +181,7 @@ func (r *Repository) headFiles(visit func(path string)) error {
 // (typically "HEAD"). The returned boolean is false when the file is not
 // present at that revision — an expected case, with a nil error. Errors are
 // returned only for unexpected failures to resolve the revision, its commit,
-// its tree, or to read the tree's entries. This lets match.Source.DiffContent read
+// its tree, or to read the tree's entries. This lets review.Source.DiffContent read
 // a HEAD blob without materializing a replacement tree.
 func (r *Repository) FileContentAt(path string, revision string) (string, bool, error) {
 	h, err := r.ResolveRevision(plumbing.Revision(revision))

@@ -2,12 +2,12 @@
 
 A **platform** is where a change under review lives: the local working tree, a GitHub pull
 request, and in future a GitLab merge request or similar. The review algorithm (`internal/approval`)
-and the match engine (`internal/match`) never branch on the platform. Each platform supplies four
+and the review engine (`internal/review`) never branch on the platform. Each platform supplies four
 things through small interfaces, and everything else is shared:
 
 | What | Interface | Defined in |
 |---|---|---|
-| The files under review and their diffs | `match.Source` | `internal/match/source.go` |
+| The files under review and their diffs | `review.Source` | `internal/review/source.go` |
 | Where rules files are read from | `approval.Tree` | `internal/approval/fetcher.go` |
 | What an approver target means, and who is the same user | `approval.ApproverResolver` | `internal/approval/resolver.go` |
 | Turning the platform's own data into a `Source` | a constructor in the platform package | — |
@@ -44,7 +44,7 @@ good files. Don't write your own fetcher.
 - Pick the revision deliberately. A hosted platform reads the **base** revision, as GitHub's
   `baseTree` does.
 - List the tree once per review and share the listing with `Source.AllFiles`. `ghplatform`
-  builds one `baseTree` and passes it to both the source and the reviewer.
+  builds one `baseTree` and passes it to both the source and the evaluator.
 - A failed listing must not be cached, so a later call retries.
 
 ### `approval.ApproverResolver`: approver targets
@@ -79,11 +79,11 @@ type ApproverResolver interface {
   `ErrUnknownTarget` and `ErrInvalidTarget` without reaching the API. This matters most when
   the client library puts the target into a URL path unescaped, as go-github does.
 
-### `match.Source`: the change
+### `review.Source`: the change
 
 ```go
 type Source interface {
-    Reviewer() *approval.Reviewer
+    Evaluator() *approval.Evaluator
     AllFiles(ctx context.Context) ([]string, error)
     ChangedFiles(ctx context.Context) ([]string, error)
     DiffContent(ctx context.Context, path string) (string, error)
@@ -92,15 +92,15 @@ type Source interface {
 
 | Method | Must return |
 |---|---|
-| `Reviewer` | `&approval.Reviewer{Fetch: &approval.TreeFetcher{...}, Resolver: ..., Log: log}`, built once in the constructor |
+| `Evaluator` | `&approval.Evaluator{Fetch: &approval.TreeFetcher{...}, Resolver: ..., Log: log}`, built once in the constructor |
 | `AllFiles` | every file at the base revision, sorted |
 | `ChangedFiles` | every path the change adds, modifies, or removes, sorted. A rename lists **both** paths, so the rules over the place it left still apply. Added paths are not in `AllFiles`. Empty when nothing changed. |
 | `DiffContent` | the unified diff for `path`, or `""` when the change doesn't touch it. It may also be `""` for a binary file, a diff too large for the platform, or either side of a rename. |
 
-- Implement `match.Rooted` (`RepoRoot() string`) only if the source is an on-disk checkout. A
+- Implement `review.Rooted` (`RepoRoot() string`) only if the source is an on-disk checkout. A
   hosted platform doesn't.
 - Keep the `Source`'s fields private. Everything it needs comes through its constructor, so
-  its reviewer can't drift out of sync with it.
+  its evaluator can't drift out of sync with it.
 
 ### The constructor: the platform's own data to a `Source`
 
@@ -133,11 +133,11 @@ The steps use GitLab as the example.
    `Canonical` and, if targets have a syntax, `ValidateTarget`. Map "not found" to
    `approval.ErrUnknownTarget`, using `errors.As` on the client's error type and never matching
    strings.
-4. **Implement the reviewer** in `reviewer.go`: `NewReviewer(...)` returning
-   `*approval.Reviewer` with a `TreeFetcher` over your tree and your resolver. Add an unexported
+4. **Implement the evaluator** in `evaluator.go`: `NewEvaluator(...)` returning
+   `*approval.Evaluator` with a `TreeFetcher` over your tree and your resolver. Add an unexported
    variant that accepts an existing tree, so the source can share its listing.
 5. **Implement the source** in `source.go`: a `Source` with private fields, the constructor from
-   the platform's own data, and `var _ match.Source = (*Source)(nil)`.
+   the platform's own data, and `var _ review.Source = (*Source)(nil)`.
 6. **Configure it**: add a section to `internal/config`:
 
    ```go
@@ -172,7 +172,7 @@ them. Put the calls in `contract_test.go`:
 
 ```go
 func TestGitLabMeetsTheSourceContract(t *testing.T) {
-    platformtest.RunSourceContract(t, func(t *testing.T, f platformtest.Fixture) match.Source {
+    platformtest.RunSourceContract(t, func(t *testing.T, f platformtest.Fixture) review.Source {
         // Serve f.Base as the base revision and f.Change as the merge request
         // from a fake API, then build the Source the way production does.
     })
@@ -197,7 +197,7 @@ func TestGitLabResolverMeetsTheResolverContract(t *testing.T) {
 
 | Suite | Checks |
 |---|---|
-| `RunSourceContract` | `AllFiles` is the base revision; `ChangedFiles` covers a modify, an add, a delete and both sides of a rename, and is empty with no change; diffs show each change and are `""` for untouched paths; the reviewer fetches the rules files |
+| `RunSourceContract` | `AllFiles` is the base revision; `ChangedFiles` covers a modify, an add, a delete and both sides of a rename, and is empty with no change; diffs show each change and are `""` for untouched paths; the evaluator fetches the rules files |
 | `RunTreeContract` | `Files` is complete and sorted; `ReadFile` round-trips contents; a missing path is `fs.ErrNotExist` |
 | `RunResolverContract` | a user resolves to itself; `Canonical` is idempotent; a group resolves to its members; an unknown group is `ErrUnknownTarget`; a malformed target is rejected offline, without an API call |
 

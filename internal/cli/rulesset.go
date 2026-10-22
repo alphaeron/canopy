@@ -42,7 +42,7 @@ func openRulesSet(ctx context.Context) (*rulesSet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get repository root: %w", err)
 	}
-	rules, err := local.NewReviewer(repo, nil).Fetch.Execute(ctx)
+	rules, err := local.NewEvaluator(repo, nil).Fetch.Execute(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load rules files: %w", err)
 	}

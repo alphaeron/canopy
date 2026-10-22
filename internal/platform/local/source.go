@@ -12,31 +12,31 @@ import (
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/gitrepo"
 	"github.com/alphaeron/kit/internal/logx"
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 )
 
-// Source implements match.Source against a local go-git checkout. The file
+// Source implements review.Source against a local go-git checkout. The file
 // universe is the working tree (AllFiles) and its diff against HEAD
 // (ChangedFiles); rules and approvers come from the local review platform
-// (NewReviewer), so local CLI analysis and local reviews read the same
+// (NewEvaluator), so local CLI analysis and local reviews read the same
 // rules files and resolve approvers the same way.
 type Source struct {
-	repo     *gitrepo.Repository // file listings and diffs; the reviewer shares it
-	log      *slog.Logger        // diagnostics; nil means slog.Default()
-	reviewer *approval.Reviewer
+	repo      *gitrepo.Repository // file listings and diffs; the evaluator shares it
+	log       *slog.Logger        // diagnostics; nil means slog.Default()
+	evaluator *approval.Evaluator
 }
 
 // NewSource builds a Source bound to a repository, on the local
 // review platform.
 func NewSource(repo *gitrepo.Repository, log *slog.Logger) *Source {
-	return &Source{repo: repo, log: log, reviewer: NewReviewer(repo, log)}
+	return &Source{repo: repo, log: log, evaluator: NewEvaluator(repo, log)}
 }
 
-// Reviewer is the local review platform: the working tree's rules files and
+// Evaluator is the local review platform: the working tree's rules files and
 // pass-through approver resolution.
-func (l *Source) Reviewer() *approval.Reviewer { return l.reviewer }
+func (l *Source) Evaluator() *approval.Evaluator { return l.evaluator }
 
-// RepoRoot returns the on-disk repository root (match.Rooted). A repository
+// RepoRoot returns the on-disk repository root (review.Rooted). A repository
 // that does not expose a filesystem root is logged as an error and yields "".
 func (l *Source) RepoRoot() string {
 	root, err := l.repo.Root()
@@ -153,6 +153,6 @@ func (l *Source) logger() *slog.Logger {
 }
 
 var (
-	_ match.Source = (*Source)(nil)
-	_ match.Rooted = (*Source)(nil)
+	_ review.Source = (*Source)(nil)
+	_ review.Rooted = (*Source)(nil)
 )

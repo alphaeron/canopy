@@ -1,5 +1,5 @@
 // Package platformtest is the contract every review platform under
-// internal/platform must meet. A platform's tests build its match.Source,
+// internal/platform must meet. A platform's tests build its review.Source,
 // approval.Tree, and approval.ApproverResolver over the fixtures this
 // package defines, and the suites check them against the documented
 // behavior of those interfaces, so a new platform is verified to plug into
@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
@@ -42,10 +42,10 @@ type Change struct {
 	Rename map[string]string
 }
 
-// SourceFactory builds the platform's match.Source over f: f.Base as the
+// SourceFactory builds the platform's review.Source over f: f.Base as the
 // base revision and f.Change as the change under review. It fails t when it
 // cannot.
-type SourceFactory func(t *testing.T, f Fixture) match.Source
+type SourceFactory func(t *testing.T, f Fixture) review.Source
 
 // TreeFactory builds the platform's approval.Tree holding files. It fails t
 // when it cannot.
@@ -85,9 +85,9 @@ func fixture() Fixture {
 	}
 }
 
-// RunSourceContract checks the match.Source that newSource builds against
+// RunSourceContract checks the review.Source that newSource builds against
 // the Source contract: the base revision's files, every changed path
-// (both sides of a rename), per-file diffs, and a complete reviewer that
+// (both sides of a rename), per-file diffs, and a complete evaluator that
 // reads the rules files.
 func RunSourceContract(t *testing.T, newSource SourceFactory) {
 	t.Helper()
@@ -153,10 +153,10 @@ func RunSourceContract(t *testing.T, newSource SourceFactory) {
 		}
 	})
 
-	t.Run("Reviewer fetches the rules files", func(t *testing.T) {
-		rev := newSource(t, f).Reviewer()
+	t.Run("Evaluator fetches the rules files", func(t *testing.T) {
+		rev := newSource(t, f).Evaluator()
 		if rev == nil || rev.Fetch == nil || rev.Resolver == nil {
-			t.Fatalf("Reviewer = %+v, want a fetcher and a resolver", rev)
+			t.Fatalf("Evaluator = %+v, want a fetcher and a resolver", rev)
 		}
 		rules, err := rev.Fetch.Execute(t.Context())
 		if err != nil {

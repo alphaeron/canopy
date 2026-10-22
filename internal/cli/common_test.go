@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
@@ -102,7 +102,7 @@ func TestScopeTitles(t *testing.T) {
 	if got := scopeTitles(nil); got != "none" {
 		t.Errorf("empty set should read 'none', got %q", got)
 	}
-	s := []match.Scope{{Name: "core"}, {Name: "sec"}}
+	s := []review.Scope{{Name: "core"}, {Name: "sec"}}
 	if got := scopeTitles(s); got != "core sec" {
 		t.Errorf("got %q, want 'core sec'", got)
 	}

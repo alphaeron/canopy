@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
@@ -107,7 +107,7 @@ func runReview(ctx context.Context, opts reviewOptions, log *slog.Logger) (*appr
 	if err != nil {
 		return nil, err
 	}
-	files, err := engine.Files(ctx, match.Options{ChangedOnly: opts.changed, Patterns: opts.patterns})
+	files, err := engine.Files(ctx, review.Options{ChangedOnly: opts.changed, Patterns: opts.patterns})
 	if err != nil {
 		return nil, fmt.Errorf("list files: %w", err)
 	}

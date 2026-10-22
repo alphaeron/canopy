@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 )
 
 // coverageCmd computes the fraction of the file universe every rule covers,
@@ -27,7 +27,7 @@ var coverageCmd = &cobra.Command{
 func runCoverageCmd(cmd *cobra.Command, args []string) error {
 	changed, _ := cmd.Flags().GetBool("changed")
 	scopeName, _ := cmd.Flags().GetString("scope")
-	opts := match.Options{ChangedOnly: changed, ScopeName: scopeName}
+	opts := review.Options{ChangedOnly: changed, ScopeName: scopeName}
 
 	mode, _ := resolveOutputMode(cmd)
 	if mode == modeTUI {
@@ -43,7 +43,7 @@ func runCoverageCmd(cmd *cobra.Command, args []string) error {
 // runCoverage computes the coverage report against the local repository,
 // with the unfiltered match it was computed from. opts.ScopeName narrows
 // the per-scope breakdown in the engine.
-func runCoverage(ctx context.Context, opts match.Options) (*match.CoverageReport, *match.Result, error) {
+func runCoverage(ctx context.Context, opts review.Options) (*review.CoverageReport, *review.Result, error) {
 	engine, err := openEngine(nil)
 	if err != nil {
 		return nil, nil, err
@@ -57,7 +57,7 @@ func runCoverage(ctx context.Context, opts match.Options) (*match.CoverageReport
 
 // renderCoverage renders the engine's coverage report as JSON or a table.
 // The TUI form is coveragePage.
-func renderCoverage(mode outputMode, report *match.CoverageReport) error {
+func renderCoverage(mode outputMode, report *review.CoverageReport) error {
 	switch mode {
 	case modeJSON:
 		return writeJSON(os.Stdout, report)

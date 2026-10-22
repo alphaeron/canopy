@@ -1,4 +1,4 @@
-package match
+package review
 
 import (
 	"context"
@@ -28,9 +28,9 @@ type stubSource struct {
 
 func (s *stubSource) RepoRoot() string { return s.root }
 
-// Reviewer is a local-style platform over the stub's rules.
-func (s *stubSource) Reviewer() *approval.Reviewer {
-	return &approval.Reviewer{
+// Evaluator is a local-style platform over the stub's rules.
+func (s *stubSource) Evaluator() *approval.Evaluator {
+	return &approval.Evaluator{
 		Fetch:    &stubFetch{rules: s.rules, err: s.err},
 		Resolver: &approval.DefaultApproverResolver{},
 		Log:      slog.New(slog.DiscardHandler),

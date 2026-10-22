@@ -1,4 +1,4 @@
-package match
+package review
 
 import (
 	"context"
@@ -17,11 +17,11 @@ import (
 // request, a merge request). Every path is repository-relative and
 // slash-separated, and every list is sorted.
 type Source interface {
-	// Reviewer is the source's review platform: how its rules are
+	// Evaluator is the source's review platform: how its rules are
 	// fetched and how its approver targets resolve. Each source builds its
-	// own platform's reviewer, so the engine never chooses a fetcher or
+	// own platform's evaluator, so the engine never chooses a fetcher or
 	// resolver itself.
-	Reviewer() *approval.Reviewer
+	Evaluator() *approval.Evaluator
 
 	// AllFiles returns every file at the base revision: the universe over
 	// which to match and evaluate coverage.

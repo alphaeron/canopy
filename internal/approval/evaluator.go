@@ -3,7 +3,8 @@
 // request's approvals (fetch, sift, approve), recording every step in a
 // ReviewState. Where rules come from and how approver targets resolve to
 // people are supplied through the Fetcher and ApproverResolver interfaces;
-// the platform packages (internal/platform/...) implement them.
+// the platform packages (internal/platform/...) implement them. Package
+// review builds on this one to run the algorithm over a change.
 package approval
 
 import (
@@ -14,16 +15,16 @@ import (
 	"github.com/alphaeron/kit/internal/logx"
 )
 
-// Reviewer orchestrates a code review: it fetches the repository's rules,
+// Evaluator orchestrates a code review: it fetches the repository's rules,
 // sifts them into per-file rule chains, and approves them against the
 // current state of the change (ReviewInput). All phases are traced as events
 // in the resulting ReviewState and logged as structured JSON.
 //
-// A Reviewer is bound to one platform, which decides both where rules come
-// from and how approver targets resolve to people. local.NewReviewer and
-// ghplatform.NewReviewer build the two platforms, so a review never mixes a local fetcher with a
+// An Evaluator is bound to one platform, which decides both where rules come
+// from and how approver targets resolve to people. local.NewEvaluator and
+// ghplatform.NewEvaluator build the two platforms, so a review never mixes a local fetcher with a
 // GitHub resolver or the reverse. Fetch and Resolver are both required.
-type Reviewer struct {
+type Evaluator struct {
 	Fetch Fetcher
 	// Resolver maps approver targets to their members.
 	Resolver ApproverResolver
@@ -37,7 +38,7 @@ type Reviewer struct {
 // error encountered along the way is accumulated in the returned state and
 // forces the final approval status to StatusError, so the caller can block
 // the review and surface the full failure history to the user.
-func (s *Reviewer) Execute(ctx context.Context, in ReviewInput, files []string) *ReviewState {
+func (s *Evaluator) Execute(ctx context.Context, in ReviewInput, files []string) *ReviewState {
 	log := s.log()
 	events := NewReviewStateBuilder()
 
@@ -74,11 +75,11 @@ func (s *Reviewer) Execute(ctx context.Context, in ReviewInput, files []string) 
 // Approve runs only the approve phase over an already sifted chain, with
 // this platform's resolver: for callers that sifted the rules themselves
 // and want who must approve each file under in.
-func (s *Reviewer) Approve(ctx context.Context, in ReviewInput, chain RuleChain) *ReviewState {
+func (s *Evaluator) Approve(ctx context.Context, in ReviewInput, chain RuleChain) *ReviewState {
 	return chain.Execute(ctx, in, s.Resolver, NewReviewStateBuilder(), s.log())
 }
 
 // log returns the configured logger or the default one.
-func (s *Reviewer) log() *slog.Logger {
+func (s *Evaluator) log() *slog.Logger {
 	return logx.OrDefault(s.Log)
 }

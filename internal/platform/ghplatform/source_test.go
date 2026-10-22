@@ -8,7 +8,7 @@ import (
 	"github.com/google/go-github/v71/github"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
@@ -38,7 +38,7 @@ func TestGitHubSourceListsBaseTreeOnce(t *testing.T) {
 	if _, err := src.AllFiles(t.Context()); err != nil {
 		t.Fatalf("AllFiles: %v", err)
 	}
-	if _, err := src.Reviewer().Fetch.Execute(t.Context()); err != nil {
+	if _, err := src.Evaluator().Fetch.Execute(t.Context()); err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 	if got := fake.callCount("tree"); got != 1 {
@@ -77,18 +77,18 @@ func TestGitHubChangedFilesAndDiffFromListedFiles(t *testing.T) {
 // it has no on-disk root.
 func TestGitHubSourceIsOnTheGitHubPlatform(t *testing.T) {
 	src := newSource(&pullRequest{owner: "o", repo: "r", baseSHA: "x"}, github.NewClient(nil), nil)
-	fetch, ok := src.Reviewer().Fetch.(*approval.TreeFetcher)
+	fetch, ok := src.Evaluator().Fetch.(*approval.TreeFetcher)
 	if !ok {
-		t.Fatalf("fetcher = %T, want *approval.TreeFetcher", src.Reviewer().Fetch)
+		t.Fatalf("fetcher = %T, want *approval.TreeFetcher", src.Evaluator().Fetch)
 	}
 	if tree, ok := fetch.Tree.(*baseTree); !ok || tree != src.tree || tree.owner != "o" || tree.repo != "r" || tree.sha != "x" {
 		t.Errorf("fetch tree = %#v, want the source's base tree of o/r@x", fetch.Tree)
 	}
-	if _, ok := src.Reviewer().Resolver.(*ApproverResolver); !ok {
-		t.Errorf("resolver = %T, want *ApproverResolver", src.Reviewer().Resolver)
+	if _, ok := src.Evaluator().Resolver.(*ApproverResolver); !ok {
+		t.Errorf("resolver = %T, want *ApproverResolver", src.Evaluator().Resolver)
 	}
-	if _, ok := any(src).(match.Rooted); ok {
-		t.Error("a GitHub source must not be match.Rooted")
+	if _, ok := any(src).(review.Rooted); ok {
+		t.Error("a GitHub source must not be review.Rooted")
 	}
 }
 
