@@ -14,16 +14,29 @@ import (
 type Status int
 
 const (
+	// StatusUnknown is the zero value: no status has been assigned.
 	StatusUnknown Status = iota
+	// StatusUnresolved means approvers could not be determined, such as
+	// when an approver target fails to resolve or no rule applies.
 	StatusUnresolved
+	// StatusError means evaluation failed or a rule was skipped; it forces
+	// the overall review status to StatusError.
 	StatusError
+	// StatusSatisfied means every requirement for the node is met.
 	StatusSatisfied
+	// StatusMissingApprovers means at least one requirement still needs
+	// approvals.
 	StatusMissingApprovers
+	// StatusActive marks a step that took effect, such as an applied rule.
 	StatusActive
+	// StatusInactive marks a target that can never be satisfied, such as
+	// the author when self-approval is disallowed.
 	StatusInactive
+	// StatusDone marks a completed evaluation phase.
 	StatusDone
 )
 
+// String returns the lowercase name of the status.
 func (s Status) String() string {
 	switch s {
 	case StatusUnknown:

@@ -1,4 +1,4 @@
-.PHONY: test cover cover-html fmt lint vulncheck smoke deadcode
+.PHONY: test cover cover-html fmt lint vulncheck smoke deadcode doc doc-all doc-serve
 
 test:
 	@go test -v ./...
@@ -26,3 +26,21 @@ deadcode:
 
 vulncheck:
 	govulncheck -show verbose ./...
+
+# PKG selects the package for doc and doc-all, e.g. make doc PKG=./internal/approval.
+PKG ?= ./...
+PKGSITE_VERSION ?= latest
+DOC_ADDR ?= localhost:6060
+
+# doc prints the exported API of PKG with go doc.
+doc:
+	@go list $(PKG) | xargs -n1 go doc -short
+
+# doc-all prints the full documentation, including unexported declarations.
+doc-all:
+	@go list $(PKG) | xargs -n1 go doc -all -u
+
+# doc-serve browses the module's documentation as HTML at DOC_ADDR.
+doc-serve:
+	@echo "Serving docs at http://$(DOC_ADDR)/github.com/alphaeron/kit"
+	@go run golang.org/x/pkgsite/cmd/pkgsite@$(PKGSITE_VERSION) -http=$(DOC_ADDR) .

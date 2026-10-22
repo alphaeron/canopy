@@ -153,24 +153,24 @@ func fakeFromFixture(fx platformtest.Fixture) *fakeGitHub {
 			status = "modified"
 		}
 		files = append(files, &github.CommitFile{
-			Filename: github.Ptr(p),
-			Status:   github.Ptr(status),
-			Patch:    github.Ptr("@@ @@\n" + prefixLines("-", old) + prefixLines("+", fx.Change.Write[p])),
+			Filename: new(p),
+			Status:   new(status),
+			Patch:    new("@@ @@\n" + prefixLines("-", old) + prefixLines("+", fx.Change.Write[p])),
 		})
 	}
 	for _, p := range fx.Change.Delete {
 		files = append(files, &github.CommitFile{
-			Filename: github.Ptr(p),
-			Status:   github.Ptr("removed"),
-			Patch:    github.Ptr("@@ @@\n" + prefixLines("-", fx.Base[p])),
+			Filename: new(p),
+			Status:   new("removed"),
+			Patch:    new("@@ @@\n" + prefixLines("-", fx.Base[p])),
 		})
 	}
 	for _, from := range slices.Sorted(maps.Keys(fx.Change.Rename)) {
 		// An unchanged rename carries no patch.
 		files = append(files, &github.CommitFile{
-			Filename:         github.Ptr(fx.Change.Rename[from]),
-			PreviousFilename: github.Ptr(from),
-			Status:           github.Ptr("renamed"),
+			Filename:         new(fx.Change.Rename[from]),
+			PreviousFilename: new(from),
+			Status:           new("renamed"),
 		})
 	}
 	return &fakeGitHub{base: fx.Base, prPages: [][]*github.CommitFile{files}}
@@ -188,10 +188,10 @@ func prefixLines(prefix, s string) string {
 // pullRequestEvent builds a pull_request event for o/r#7 at base revision base.
 func pullRequestEvent(base string) *github.PullRequestEvent {
 	return &github.PullRequestEvent{
-		Repo: &github.Repository{Name: github.Ptr("r"), Owner: &github.User{Login: github.Ptr("o")}},
+		Repo: &github.Repository{Name: new("r"), Owner: &github.User{Login: new("o")}},
 		PullRequest: &github.PullRequest{
-			Number: github.Ptr(7),
-			Base:   &github.PullRequestBranch{SHA: github.Ptr(base)},
+			Number: new(7),
+			Base:   &github.PullRequestBranch{SHA: new(base)},
 		},
 	}
 }

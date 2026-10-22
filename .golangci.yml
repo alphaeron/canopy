@@ -1,0 +1,15 @@
+version: "2"
+
+linters:
+  # Keep golangci-lint's standard linters and add doc-comment enforcement.
+  default: standard
+  enable:
+    - revive
+  settings:
+    revive:
+      rules:
+        # Every exported declaration needs a doc comment that starts with
+        # its name (e.g. "// Foo does ...").
+        - name: exported
+        # Every package needs a "// Package x ..." comment.
+        - name: package-comments

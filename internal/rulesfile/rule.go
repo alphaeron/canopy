@@ -8,7 +8,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Rule is a single approval rule from a rules file. It applies to files
+// whose path matches Pattern and requires approval from its Approvers.
 type Rule struct {
+	// Pattern is the regular expression the rule matches file paths
+	// against. It is the rule's mapping key in YAML, not a field.
 	Pattern          string `yaml:"-"`
 	Name             string `yaml:"name"`
 	IgnoreParentDirs bool   `yaml:"ignore_parent_dirs"`
@@ -21,8 +25,10 @@ type Rule struct {
 	Approvers            ApproverTargets     `yaml:"approvers"`
 }
 
+// Rules is an ordered list of rules.
 type Rules []Rule
 
+// String returns a debug representation of the rule.
 func (r Rule) String() string {
 	return fmt.Sprintf(`Rule{
   Pattern: "%v",
@@ -42,6 +48,9 @@ func (r Rule) String() string {
 		r.Approvers)
 }
 
+// UnmarshalYAML implements yaml.Unmarshaler. It accepts the rule's fields
+// either nested under its pattern key or alongside it, and takes the one
+// key that is not a known field as the rule's Pattern.
 func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
 		return fmt.Errorf("expected a mapping node block")

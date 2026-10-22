@@ -102,9 +102,9 @@ func TestGitHubSourceIsOnTheGitHubPlatform(t *testing.T) {
 // repository and base revision.
 func TestNewSourceFromEventListsAllPages(t *testing.T) {
 	fake := &fakeGitHub{prPages: [][]*github.CommitFile{
-		{{Filename: github.Ptr("a.go"), Patch: github.Ptr("+a\n")}},
-		{{Filename: github.Ptr("b.go"), Patch: github.Ptr("+b\n")}, {Filename: github.Ptr("bin.png")}},
-		{{Filename: github.Ptr("new/c.go"), PreviousFilename: github.Ptr("old/c.go"), Status: github.Ptr("renamed"), Patch: github.Ptr("+c\n")}},
+		{{Filename: new("a.go"), Patch: new("+a\n")}},
+		{{Filename: new("b.go"), Patch: new("+b\n")}, {Filename: new("bin.png")}},
+		{{Filename: new("new/c.go"), PreviousFilename: new("old/c.go"), Status: new("renamed"), Patch: new("+c\n")}},
 	}}
 
 	src, err := NewSourceFromEvent(t.Context(), pullRequestEvent("deadbeef"), fake.client(t), nil)

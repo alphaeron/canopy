@@ -73,6 +73,7 @@ type Meter struct {
 type Badge int
 
 const (
+	// BadgeNone draws no glyph.
 	BadgeNone Badge = iota
 	// BadgeOK is a satisfied or healthy state.
 	BadgeOK

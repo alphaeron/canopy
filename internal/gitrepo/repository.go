@@ -37,6 +37,9 @@ func (r *Repository) HasCommits() bool {
 	return err == nil
 }
 
+// Root returns the repository's directory on local disk: the worktree root,
+// or the storage directory for a bare repository. It errors when neither
+// filesystem exposes a local path, as with an in-memory repository.
 func (r *Repository) Root() (string, error) {
 	// 1. Check if the worktree filesystem exposes a Root path
 	if wt, err := r.Worktree(); err == nil {
