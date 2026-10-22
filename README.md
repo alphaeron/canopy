@@ -175,11 +175,15 @@ The CLI and the review server read the same configuration, in decreasing precede
 | `verbose` | `KIT_VERBOSE` | `false` | Debug-level logging |
 | `serve_addr` | `KIT_SERVE_ADDR` | `:8080` | Review server listen address |
 | `review_timeout` | `KIT_REVIEW_TIMEOUT` | `50s` | Longest one review may run |
+| `report_timeout` | `KIT_REPORT_TIMEOUT` | `30s` | Longest reporting the status of a timed-out review may take |
 | `review_workers` | `KIT_REVIEW_WORKERS` | `4` | Reviews the server runs at once |
+| `review_queue_per_worker` | `KIT_REVIEW_QUEUE_PER_WORKER` | `16` | Webhooks that may wait per worker; beyond that the server answers 503. `review_workers` × `review_queue_per_worker` may be at most 4096 |
+| `shutdown_timeout` | `KIT_SHUTDOWN_TIMEOUT` | `10s` | Longest the server waits for open requests when stopping |
 | `github.app_id` | `KIT_GITHUB_APP_ID` | | GitHub App ID |
 | `github.private_key` | `KIT_GITHUB_PRIVATE_KEY` | | GitHub App private key (PEM, PKCS #1 or #8) |
 | `github.webhook_secret` | `KIT_GITHUB_WEBHOOK_SECRET` | | GitHub webhook signing secret |
 | `github.api_url` | `KIT_GITHUB_API_URL` | `https://api.github.com/` | REST API base URL, for GitHub Enterprise Server |
+| `github.request_timeout` | `KIT_GITHUB_REQUEST_TIMEOUT` | `30s` | Longest one REST API request may wait for a response |
 
 ```yaml
 verbose: false
@@ -195,7 +199,7 @@ The platform is deployment configuration: a repository under review has no say i
 
 ## Review Server
 
-`kitweb` is the review server, a separate binary from the CLI (`go build ./cmd/kitweb`). At startup it loads the configuration, selects the platform, and refuses to start unless that platform's section is complete and valid (GitHub: `app_id`, `private_key`, and `webhook_secret` all set, `app_id` numeric, `private_key` an RSA key). `--addr` overrides `serve_addr`, and `--config` names the configuration file.
+`kitweb` is the review server, a separate binary from the CLI (`go build ./cmd/kitweb`). At startup it loads the configuration, selects the platform, and refuses to start unless that platform's section is complete and valid (GitHub: `app_id`, `private_key`, and `webhook_secret` all set, `app_id` numeric, `private_key` an RSA key), and unless `review_workers` × `review_queue_per_worker` is at most 4096. `--addr` overrides `serve_addr`, and `--config` names the configuration file.
 
 | Route | Purpose |
 |---|---|
@@ -205,4 +209,4 @@ The platform is deployment configuration: a repository under review has no say i
 
 On GitHub, the server runs as a GitHub App. It needs these repository permissions: *Contents* (read), *Pull requests* (read), *Commit statuses* (read and write), and *Members* (organization, read) to expand `org/team` targets. It reviews on `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`, and `edited` when the base branch changes) and `pull_request_review` (`submitted`, `dismissed`) events. Requests that GitHub rate-limits with `Retry-After` are retried after the delay; other errors are not retried.
 
-Each review runs with a timeout (`review_timeout`); a review that times out reports an `error` status. Stopping the server (SIGINT or SIGTERM) cancels reviews in flight. A pull request whose files GitHub lists only partially (over 3000 files), or whose base tree GitHub truncates, gets an `error` status rather than being reviewed incompletely.
+Each review runs with a timeout (`review_timeout`); a review that times out reports an `error` status, allowing up to `report_timeout` to post it. Stopping the server (SIGINT or SIGTERM) cancels reviews in flight and waits up to `shutdown_timeout` for open requests. A pull request whose files GitHub lists only partially (over 3000 files), or whose base tree GitHub truncates, gets an `error` status rather than being reviewed incompletely.

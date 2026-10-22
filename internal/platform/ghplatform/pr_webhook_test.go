@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-github/v93/github"
 
@@ -62,6 +63,26 @@ func changeFromEvent(t *testing.T, fake *fakeGitHub, event *github.PullRequestEv
 		t.Fatalf("Change = %v, %v; want a reviewable change", ok, err)
 	}
 	return c
+}
+
+// TestAPITransportKeepsTheDefaults: the API transport keeps the default
+// transport's proxy and timeouts, adds the response header timeout, and
+// leaves the default transport untouched.
+func TestAPITransportKeepsTheDefaults(t *testing.T) {
+	def := http.DefaultTransport.(*http.Transport)
+	got := apiTransport(7 * time.Second)
+	if got == def {
+		t.Fatal("apiTransport returned http.DefaultTransport, want a copy")
+	}
+	if got.ResponseHeaderTimeout != 7*time.Second {
+		t.Errorf("ResponseHeaderTimeout = %v, want 7s", got.ResponseHeaderTimeout)
+	}
+	if got.Proxy == nil || got.TLSHandshakeTimeout != def.TLSHandshakeTimeout || got.MaxIdleConns != def.MaxIdleConns {
+		t.Error("apiTransport dropped the default transport's proxy, TLS handshake timeout, or connection pooling")
+	}
+	if def.ResponseHeaderTimeout != 0 {
+		t.Errorf("http.DefaultTransport.ResponseHeaderTimeout = %v, want it unmodified", def.ResponseHeaderTimeout)
+	}
 }
 
 func TestNewPRWebhookValidatesItsSection(t *testing.T) {

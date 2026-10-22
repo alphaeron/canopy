@@ -29,10 +29,6 @@ var (
 	reviewActions      = []string{"submitted", "dismissed"}
 )
 
-// requestTimeout bounds each GitHub API request, so one stuck request
-// cannot hold a review until its own timeout.
-const requestTimeout = 30 * time.Second
-
 // PRWebhook is GitHub's pull request webhook (server.PRWebhook): it
 // verifies GitHub's webhook signatures and turns pull request events into
 // pull requests to review, acting as a GitHub App. Each installation of
@@ -75,12 +71,25 @@ func NewPRWebhook(cfg config.GitHub, log *slog.Logger) (*PRWebhook, error) {
 			id:        id,
 			key:       key,
 			baseURL:   cfg.BaseURL(),
-			transport: &retryTransport{base: &http.Transport{ResponseHeaderTimeout: requestTimeout}},
+			transport: &retryTransport{base: apiTransport(cfg.APITimeout())},
 			now:       time.Now,
 		},
 		log:      log,
 		installs: map[int64]*installation{},
 	}, nil
+}
+
+// apiTransport is the HTTP transport for GitHub API requests: a copy of
+// http.DefaultTransport, keeping its proxy-from-environment, dial and TLS
+// handshake timeouts, and connection pooling, whose response headers must
+// arrive within timeout. It never modifies http.DefaultTransport.
+func apiTransport(timeout time.Duration) *http.Transport {
+	t := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	if d, ok := http.DefaultTransport.(*http.Transport); ok {
+		t = d.Clone()
+	}
+	t.ResponseHeaderTimeout = timeout
+	return t
 }
 
 // Name is the platform's name in logs and the OpenAPI document.

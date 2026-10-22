@@ -102,6 +102,12 @@ type Options struct {
 	Queue int
 	// ReviewTimeout bounds each review.
 	ReviewTimeout time.Duration
+	// ReportTimeout bounds reporting the outcome of a review that ran out
+	// of time, which can no longer use the review's own context.
+	ReportTimeout time.Duration
+	// ShutdownTimeout bounds how long ListenAndServe waits for open
+	// requests once its context is done.
+	ShutdownTimeout time.Duration
 	// Version is the server's version, shown in the OpenAPI document.
 	Version string
 	// Log receives the server's structured logs; nil means slog.Default().
@@ -116,10 +122,6 @@ const (
 	// DocsPath is the interactive API documentation.
 	DocsPath = "/swagger"
 )
-
-// shutdownTimeout bounds how long ListenAndServe waits for open requests
-// once its context is done.
-const shutdownTimeout = 10 * time.Second
 
 // Server is the review server. Create it with New.
 type Server struct {
@@ -136,9 +138,9 @@ func New(ctx context.Context, opts Options, webhook PRWebhook) (*Server, error) 
 	if webhook == nil {
 		return nil, errors.New("no platform to serve")
 	}
-	if opts.Workers <= 0 || opts.Queue <= 0 || opts.ReviewTimeout <= 0 {
-		return nil, fmt.Errorf("workers, queue, and review timeout must be positive, got %d, %d, %s",
-			opts.Workers, opts.Queue, opts.ReviewTimeout)
+	if opts.Workers <= 0 || opts.Queue <= 0 || opts.ReviewTimeout <= 0 || opts.ReportTimeout <= 0 || opts.ShutdownTimeout <= 0 {
+		return nil, fmt.Errorf("workers, queue, review timeout, report timeout, and shutdown timeout must be positive, got %d, %d, %s, %s, %s",
+			opts.Workers, opts.Queue, opts.ReviewTimeout, opts.ReportTimeout, opts.ShutdownTimeout)
 	}
 	s := &Server{opts: opts, log: logx.OrDefault(opts.Log)}
 
@@ -176,7 +178,7 @@ func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) Wait() { s.pool.wait() }
 
 // ListenAndServe serves on Options.Addr until ctx is done, then stops
-// accepting requests, waits up to shutdownTimeout for open ones, and waits
+// accepting requests, waits up to Options.ShutdownTimeout for open ones, and waits
 // for the review workers (whose reviews ctx cancelled when it is the
 // context New was given).
 func (s *Server) ListenAndServe(ctx context.Context) error {
@@ -195,7 +197,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		return fmt.Errorf("serve: %w", err)
 	case <-ctx.Done():
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.opts.ShutdownTimeout)
 	defer cancel()
 	err := srv.Shutdown(shutdownCtx)
 	s.Wait()
@@ -308,10 +310,6 @@ type job struct {
 	pr       PullRequest
 }
 
-// reportTimeout bounds reporting the outcome of a review that ran out of
-// time, which can no longer use the review's own context.
-const reportTimeout = 30 * time.Second
-
 // review runs one queued review and reports its outcome as the pull
 // request's status. A review that ran out of time still reports, under a
 // fresh deadline; one cancelled because the server is stopping does not.
@@ -322,7 +320,7 @@ func (s *Server) review(ctx context.Context, j job) {
 	reportCtx := ctx
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		var cancel context.CancelFunc
-		reportCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), reportTimeout)
+		reportCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), s.opts.ReportTimeout)
 		defer cancel()
 	} else if ctx.Err() != nil {
 		log.Info("review cancelled", "error", ctx.Err())

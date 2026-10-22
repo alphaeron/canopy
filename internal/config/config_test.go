@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -86,8 +87,8 @@ func TestLoadPlatformSectionFromEnv(t *testing.T) {
 		t.Errorf("github = %+v, want the environment's app_id and webhook_secret", got.GitHub)
 	}
 	if !reflect.DeepEqual(configKeys(reflect.TypeFor[Config](), ""), []string{
-		"verbose", "serve_addr", "review_timeout", "review_workers",
-		"github.app_id", "github.private_key", "github.webhook_secret", "github.api_url",
+		"verbose", "serve_addr", "review_timeout", "report_timeout", "review_workers", "review_queue_per_worker", "shutdown_timeout",
+		"github.app_id", "github.private_key", "github.webhook_secret", "github.api_url", "github.request_timeout",
 	}) {
 		t.Errorf("configKeys = %v, want every tagged field, sections dotted", configKeys(reflect.TypeFor[Config](), ""))
 	}
@@ -299,6 +300,15 @@ func TestGitHubEnabledAndBaseURL(t *testing.T) {
 	if got := (GitHub{APIURL: "https://ghe/api/v3"}).BaseURL(); got != "https://ghe/api/v3/" {
 		t.Errorf("BaseURL = %q, want a trailing slash", got)
 	}
+	if (GitHub{RequestTimeout: time.Second}).Enabled() {
+		t.Error("section with only request_timeout Enabled = true")
+	}
+	if got := (GitHub{}).APITimeout(); got != DefaultGitHubRequestTimeout {
+		t.Errorf("APITimeout = %v, want %v", got, DefaultGitHubRequestTimeout)
+	}
+	if got := (GitHub{RequestTimeout: time.Second}).APITimeout(); got != time.Second {
+		t.Errorf("APITimeout = %v, want the configured 1s", got)
+	}
 }
 
 func TestSelectedPlatform(t *testing.T) {
@@ -370,22 +380,60 @@ func TestLoadServerSettings(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if got.ReviewTimeout != DefaultReviewTimeout || got.ReviewWorkers != DefaultReviewWorkers {
-			t.Errorf("review_timeout, review_workers = %v, %d; want the defaults", got.ReviewTimeout, got.ReviewWorkers)
+		if got.ReviewTimeout != DefaultReviewTimeout || got.ReportTimeout != DefaultReportTimeout ||
+			got.ReviewWorkers != DefaultReviewWorkers || got.ReviewQueuePerWorker != DefaultReviewQueuePerWorker ||
+			got.ShutdownTimeout != DefaultShutdownTimeout || got.GitHub.APITimeout() != DefaultGitHubRequestTimeout {
+			t.Errorf("config = %+v; want the server defaults", got)
 		}
 	})
 	t.Run("from the environment", func(t *testing.T) {
 		withEnv(t, map[string]string{
-			brand.EnvPrefix + "REVIEW_TIMEOUT": "30s",
-			brand.EnvPrefix + "REVIEW_WORKERS": "9",
-			brand.EnvPrefix + "GITHUB_API_URL": "https://ghe/api/v3/",
+			brand.EnvPrefix + "REVIEW_TIMEOUT":          "30s",
+			brand.EnvPrefix + "REVIEW_WORKERS":          "9",
+			brand.EnvPrefix + "REVIEW_QUEUE_PER_WORKER": "3",
+			brand.EnvPrefix + "SHUTDOWN_TIMEOUT":        "5s",
+			brand.EnvPrefix + "REPORT_TIMEOUT":          "7s",
+			brand.EnvPrefix + "GITHUB_REQUEST_TIMEOUT":  "11s",
+			brand.EnvPrefix + "GITHUB_API_URL":          "https://ghe/api/v3/",
 		})
 		got, err := Load(writeConfig(t, "verbose: false\n"))
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if got.ReviewTimeout != 30*time.Second || got.ReviewWorkers != 9 || got.GitHub.APIURL != "https://ghe/api/v3/" {
+		if got.ReviewTimeout != 30*time.Second || got.ReviewWorkers != 9 || got.ReviewQueuePerWorker != 3 ||
+			got.ShutdownTimeout != 5*time.Second || got.ReportTimeout != 7*time.Second ||
+			got.GitHub.RequestTimeout != 11*time.Second ||
+			got.GitHub.APIURL != "https://ghe/api/v3/" {
 			t.Errorf("config = %+v, want the environment's server settings", got)
 		}
 	})
+}
+
+func TestReviewQueue(t *testing.T) {
+	tests := []struct {
+		name               string
+		workers, perWorker int
+		want               int
+		wantErr            bool
+	}{
+		{name: "defaults", workers: DefaultReviewWorkers, perWorker: DefaultReviewQueuePerWorker, want: 64},
+		{name: "at the limit", workers: 4, perWorker: MaxReviewQueue / 4, want: MaxReviewQueue},
+		{name: "over the limit", workers: 4, perWorker: MaxReviewQueue/4 + 1, wantErr: true},
+		{name: "too many workers", workers: MaxReviewQueue + 1, perWorker: 1, wantErr: true},
+		{name: "would overflow", workers: math.MaxInt, perWorker: math.MaxInt, wantErr: true},
+		{name: "zero workers", workers: 0, perWorker: 16, wantErr: true},
+		{name: "zero per worker", workers: 4, perWorker: 0, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{ReviewWorkers: tt.workers, ReviewQueuePerWorker: tt.perWorker}
+			got, err := cfg.ReviewQueue()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ReviewQueue() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("ReviewQueue() = %d, want %d", got, tt.want)
+			}
+		})
+	}
 }

@@ -33,8 +33,8 @@ import (
 // environment variables, where environment wins over file and file wins over
 // defaults. Each hosted platform has its own section, so adding a platform
 // adds a section rather than top-level keys. Every key is documented in the
-// "Environment variables" README section so the same table serves
-// deployment of the REST API.
+// README's "Configuration" section so the same table serves deployment of
+// the REST API.
 type Config struct {
 	// Verbose selects debug-level structured logging; false selects info.
 	Verbose bool `mapstructure:"verbose"`
@@ -43,9 +43,19 @@ type Config struct {
 	// ReviewTimeout bounds one webhook-triggered review; defaults to 50
 	// seconds.
 	ReviewTimeout time.Duration `mapstructure:"review_timeout"`
+	// ReportTimeout bounds reporting the outcome of a review that ran out
+	// of time, which can no longer use the review's own deadline; defaults
+	// to 30 seconds.
+	ReportTimeout time.Duration `mapstructure:"report_timeout"`
 	// ReviewWorkers is how many reviews the REST API runs at once;
 	// defaults to 4.
 	ReviewWorkers int `mapstructure:"review_workers"`
+	// ReviewQueuePerWorker is how many accepted webhooks may wait per
+	// review worker; defaults to 16. See ReviewQueue for the total.
+	ReviewQueuePerWorker int `mapstructure:"review_queue_per_worker"`
+	// ShutdownTimeout bounds how long the REST API waits for open requests
+	// once it is told to stop; defaults to 10 seconds.
+	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
 	// GitHub configures the GitHub platform for the REST API.
 	GitHub GitHub `mapstructure:"github"`
 	// Path is the file the configuration was read from, when one existed.
@@ -72,17 +82,33 @@ type GitHub struct {
 	// (e.g. "https://github.example.com/api/v3/"); empty means
 	// DefaultGitHubAPIURL.
 	APIURL string `mapstructure:"api_url"`
+	// RequestTimeout bounds waiting for each REST API response's headers,
+	// so one stuck request cannot hold a review until its own timeout;
+	// zero or negative means DefaultGitHubRequestTimeout. Setting it alone
+	// does not enable the section.
+	RequestTimeout time.Duration `mapstructure:"request_timeout"`
 }
 
-// DefaultGitHubAPIURL is github.com's REST API.
-const DefaultGitHubAPIURL = "https://api.github.com/"
+// Defaults for the GitHub platform's settings.
+const (
+	// DefaultGitHubAPIURL is github.com's REST API.
+	DefaultGitHubAPIURL         = "https://api.github.com/"
+	DefaultGitHubRequestTimeout = 30 * time.Second
+)
 
 // Defaults for the review server's settings.
 const (
-	DefaultServeAddr     = ":8080"
-	DefaultReviewTimeout = 50 * time.Second
-	DefaultReviewWorkers = 4
+	DefaultServeAddr            = ":8080"
+	DefaultReviewTimeout        = 50 * time.Second
+	DefaultReportTimeout        = 30 * time.Second
+	DefaultReviewWorkers        = 4
+	DefaultReviewQueuePerWorker = 16
+	DefaultShutdownTimeout      = 10 * time.Second
 )
+
+// MaxReviewQueue caps ReviewQueue, the webhooks that may wait for a review
+// worker, so a misconfigured server cannot reserve an unbounded queue.
+const MaxReviewQueue = 4096
 
 // Platform is a hosted platform the review server can review on, as
 // SelectedPlatform returns it. Its value is also the platform's webhook
@@ -170,6 +196,33 @@ func (g GitHub) BaseURL() string {
 	return strings.TrimSuffix(g.APIURL, "/") + "/"
 }
 
+// ReviewQueue is how many accepted webhooks may wait for a review worker in
+// all: ReviewWorkers times ReviewQueuePerWorker. It is an error when either
+// is not positive or the total exceeds MaxReviewQueue. Load does not call
+// it, so the CLI never fails on server settings; the review server does, at
+// startup.
+func (c *Config) ReviewQueue() (int, error) {
+	if c.ReviewWorkers <= 0 || c.ReviewQueuePerWorker <= 0 {
+		return 0, fmt.Errorf("review_workers and review_queue_per_worker must be positive, got %d and %d",
+			c.ReviewWorkers, c.ReviewQueuePerWorker)
+	}
+	// Dividing rather than multiplying keeps huge values from overflowing.
+	if c.ReviewQueuePerWorker > MaxReviewQueue/c.ReviewWorkers {
+		return 0, fmt.Errorf("review_workers (%d) times review_queue_per_worker (%d) exceeds the review queue limit of %d",
+			c.ReviewWorkers, c.ReviewQueuePerWorker, MaxReviewQueue)
+	}
+	return c.ReviewWorkers * c.ReviewQueuePerWorker, nil
+}
+
+// APITimeout is RequestTimeout, or DefaultGitHubRequestTimeout when it is
+// not positive.
+func (g GitHub) APITimeout() time.Duration {
+	if g.RequestTimeout <= 0 {
+		return DefaultGitHubRequestTimeout
+	}
+	return g.RequestTimeout
+}
+
 // SelectedPlatform is the platform the deployment reviews on: the one
 // platform whose section has any key set (Enabled), identified from the
 // configuration alone. That section must then be complete and valid, so a
@@ -228,7 +281,10 @@ func Load(explicitPath string) (*Config, error) {
 
 	v.SetDefault("serve_addr", DefaultServeAddr)
 	v.SetDefault("review_timeout", DefaultReviewTimeout)
+	v.SetDefault("report_timeout", DefaultReportTimeout)
 	v.SetDefault("review_workers", DefaultReviewWorkers)
+	v.SetDefault("review_queue_per_worker", DefaultReviewQueuePerWorker)
+	v.SetDefault("shutdown_timeout", DefaultShutdownTimeout)
 	for _, key := range configKeys(reflect.TypeFor[Config](), "") {
 		if err := v.BindEnv(key, envName(key)); err != nil {
 			return nil, err
@@ -260,8 +316,17 @@ func Load(explicitPath string) (*Config, error) {
 	if cfg.ReviewTimeout <= 0 {
 		cfg.ReviewTimeout = DefaultReviewTimeout
 	}
+	if cfg.ReportTimeout <= 0 {
+		cfg.ReportTimeout = DefaultReportTimeout
+	}
 	if cfg.ReviewWorkers <= 0 {
 		cfg.ReviewWorkers = DefaultReviewWorkers
+	}
+	if cfg.ReviewQueuePerWorker <= 0 {
+		cfg.ReviewQueuePerWorker = DefaultReviewQueuePerWorker
+	}
+	if cfg.ShutdownTimeout <= 0 {
+		cfg.ShutdownTimeout = DefaultShutdownTimeout
 	}
 
 	slog.SetDefault(loggerFor(cfg.Verbose, os.Stderr))

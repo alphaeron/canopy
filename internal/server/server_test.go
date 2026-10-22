@@ -178,7 +178,10 @@ func (*usersOnly) ValidateTarget(target string) error {
 
 // testOptions are server options for tests: one worker, a short queue.
 func testOptions() Options {
-	return Options{Workers: 1, Queue: 4, ReviewTimeout: time.Minute, Version: "test", Log: slog.New(slog.DiscardHandler)}
+	return Options{
+		Workers: 1, Queue: 4, ReviewTimeout: time.Minute, ReportTimeout: time.Second, ShutdownTimeout: time.Second,
+		Version: "test", Log: slog.New(slog.DiscardHandler),
+	}
 }
 
 // newTestServer starts a server over webhook whose reviews run until the
@@ -285,6 +288,23 @@ func TestServerServesThePlatformsPath(t *testing.T) {
 	}
 	if _, err := New(t.Context(), testOptions(), nil); err == nil {
 		t.Error("New with no platform succeeded, want an error")
+	}
+}
+
+// TestNewRefusesNonPositiveOptions: every size and timeout must be positive.
+func TestNewRefusesNonPositiveOptions(t *testing.T) {
+	for name, zero := range map[string]func(*Options){
+		"workers":          func(o *Options) { o.Workers = 0 },
+		"queue":            func(o *Options) { o.Queue = 0 },
+		"review timeout":   func(o *Options) { o.ReviewTimeout = 0 },
+		"report timeout":   func(o *Options) { o.ReportTimeout = 0 },
+		"shutdown timeout": func(o *Options) { o.ShutdownTimeout = 0 },
+	} {
+		opts := testOptions()
+		zero(&opts)
+		if _, err := New(t.Context(), opts, &stubWebhook{name: "stub"}); err == nil {
+			t.Errorf("New with zero %s succeeded, want an error", name)
+		}
 	}
 }
 

@@ -30,9 +30,6 @@ var platforms = map[config.Platform]func(cfg *config.Config, log *slog.Logger) (
 	},
 }
 
-// queuePerWorker is how many accepted webhooks may wait per review worker.
-const queuePerWorker = 16
-
 func main() {
 	if err := run(); err != nil {
 		slog.Error("kitweb stopped", "error", err)
@@ -57,6 +54,10 @@ func run() error {
 		log.Info("using config file", "component", "config", "path", cfg.Path)
 	}
 
+	queue, err := cfg.ReviewQueue()
+	if err != nil {
+		return err
+	}
 	name, err := cfg.SelectedPlatform()
 	if err != nil {
 		return err
@@ -74,12 +75,14 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	srv, err := server.New(ctx, server.Options{
-		Addr:          cfg.ServeAddr,
-		Workers:       cfg.ReviewWorkers,
-		Queue:         cfg.ReviewWorkers * queuePerWorker,
-		ReviewTimeout: cfg.ReviewTimeout,
-		Version:       version(),
-		Log:           log,
+		Addr:            cfg.ServeAddr,
+		Workers:         cfg.ReviewWorkers,
+		Queue:           queue,
+		ReviewTimeout:   cfg.ReviewTimeout,
+		ReportTimeout:   cfg.ReportTimeout,
+		ShutdownTimeout: cfg.ShutdownTimeout,
+		Version:         version(),
+		Log:             log,
 	}, platform)
 	if err != nil {
 		return err
