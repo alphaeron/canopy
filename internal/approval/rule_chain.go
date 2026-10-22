@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"slices"
 
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
@@ -281,40 +280,20 @@ func (rc *RuleChain) evaluateFallback(
 // RuleFiles is one rule of a RuleChain with every file whose chain includes
 // it: the chain inverted from "which rules apply to this file" to "which
 // files does this rule apply to".
-type RuleFiles struct {
-	rulesfile.DeclaredRule
-	// Files is sorted and holds each file once.
-	Files []string
-}
+type RuleFiles = rulesfile.RuleFiles
 
 // ByRule inverts the chain into one entry per distinct rule, by
 // rulesfile.RuleKey, sorted by pattern, then rules file. A pattern declared
 // twice in one rules file (a Validate violation) is reported once, under the
 // first declaration.
 func (rc *RuleChain) ByRule() []RuleFiles {
-	byKey := map[rulesfile.RuleKey]*RuleFiles{}
+	byFile := make(map[string][]rulesfile.DeclaredRule, len(rc.FileChains))
 	for file, layers := range rc.FileChains {
 		for _, layer := range layers {
 			for _, rule := range layer.Rules {
-				d := rulesfile.DeclaredRule{RulesFile: layer.RulesFile(), Rule: rule.Rule}
-				rf, ok := byKey[d.Key()]
-				if !ok {
-					rf = &RuleFiles{DeclaredRule: d}
-					byKey[d.Key()] = rf
-				}
-				// Files are visited one at a time, so a repeat (a pattern
-				// declared twice in one rules file) is always the last entry.
-				if n := len(rf.Files); n == 0 || rf.Files[n-1] != file {
-					rf.Files = append(rf.Files, file)
-				}
+				byFile[file] = append(byFile[file], rulesfile.DeclaredRule{RulesFile: layer.RulesFile(), Rule: rule.Rule})
 			}
 		}
 	}
-	out := make([]RuleFiles, 0, len(byKey))
-	for _, rf := range byKey {
-		slices.Sort(rf.Files)
-		out = append(out, *rf)
-	}
-	slices.SortFunc(out, func(a, b RuleFiles) int { return a.Key().Compare(b.Key()) })
-	return out
+	return rulesfile.GroupByRule(byFile)
 }

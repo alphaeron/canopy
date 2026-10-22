@@ -44,6 +44,28 @@ func TestFilterScope(t *testing.T) {
 	}
 }
 
+// TestGroupByScope pins the by-scope view: one group per scope identity,
+// ordered by name, then identity, each with its sorted files.
+func TestGroupByScope(t *testing.T) {
+	docs := Scope{Name: "docs", Pattern: `.*\.md`, RulesFile: rulesfile.FileName}
+	core := Scope{Name: "core", Pattern: `.*\.go`, RulesFile: rulesfile.FileName}
+	nested := Scope{Name: "core", Pattern: `.*`, Directory: "svc", RulesFile: rulesfile.PathInDir("svc")}
+	r := &Result{Files: []FileMatch{
+		{Path: "svc/b.go", Scopes: []Scope{core, nested}},
+		{Path: "a.go", Scopes: []Scope{core, docs}},
+		{Path: "c.md", Scopes: []Scope{docs}},
+		{Path: "d.txt"},
+	}}
+	want := []ScopeGroup{
+		{Scope: nested, Files: []string{"svc/b.go"}},
+		{Scope: core, Files: []string{"a.go", "svc/b.go"}},
+		{Scope: docs, Files: []string{"a.go", "c.md"}},
+	}
+	if got := r.GroupByScope(); !reflect.DeepEqual(got, want) {
+		t.Errorf("GroupByScope() = %+v, want %+v", got, want)
+	}
+}
+
 // TestCoverageFilterScope pins that narrowing the breakdown keeps the
 // overall numbers, which describe every rule, and leaves the receiver alone.
 func TestCoverageFilterScope(t *testing.T) {

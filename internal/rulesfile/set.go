@@ -87,6 +87,52 @@ func (d DeclaredRule) Key() RuleKey {
 	return RuleKey{RulesFile: d.RulesFile, Pattern: d.Rule.Pattern}
 }
 
+// String gives a human-facing reference to the rule: its pattern, the rules
+// file declaring it, and its name when it has one.
+func (d DeclaredRule) String() string {
+	out := d.Rule.Pattern + " in " + d.RulesFile
+	if d.Rule.Name != "" {
+		out += " (" + d.Rule.Name + ")"
+	}
+	return out
+}
+
+// RuleFiles is one declared rule with every file it applies to.
+type RuleFiles struct {
+	DeclaredRule
+	// Files is sorted and holds each file once.
+	Files []string
+}
+
+// GroupByRule inverts byFile, each file's applicable rules, into one entry
+// per distinct rule by RuleKey, sorted by key. A key declared twice in one
+// rules file (a Validate violation) is reported once, under the declaration
+// that comes first in a file's list.
+func GroupByRule(byFile map[string][]DeclaredRule) []RuleFiles {
+	byKey := map[RuleKey]*RuleFiles{}
+	for file, rules := range byFile {
+		for _, d := range rules {
+			rf, ok := byKey[d.Key()]
+			if !ok {
+				rf = &RuleFiles{DeclaredRule: d}
+				byKey[d.Key()] = rf
+			}
+			// Files are visited one at a time, so a repeat (a key listed
+			// twice for one file) is always the last entry.
+			if n := len(rf.Files); n == 0 || rf.Files[n-1] != file {
+				rf.Files = append(rf.Files, file)
+			}
+		}
+	}
+	out := make([]RuleFiles, 0, len(byKey))
+	for _, rf := range byKey {
+		slices.Sort(rf.Files)
+		out = append(out, *rf)
+	}
+	slices.SortFunc(out, func(a, b RuleFiles) int { return a.Key().Compare(b.Key()) })
+	return out
+}
+
 // Dir is the directory of the rules file at the repo-relative path p, the
 // inverse of PathInDir: "" for the repository-root rules file.
 func Dir(p string) string {

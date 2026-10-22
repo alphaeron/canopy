@@ -58,3 +58,42 @@ func TestDeclaredRuleKeyIgnoresName(t *testing.T) {
 		t.Error("root rules file must sort before svc's for the same pattern")
 	}
 }
+
+func TestDeclaredRuleString(t *testing.T) {
+	tests := []struct {
+		d    DeclaredRule
+		want string
+	}{
+		{DeclaredRule{RulesFile: FileName, Rule: Rule{Pattern: `.*`}}, `.* in ` + FileName},
+		{DeclaredRule{RulesFile: PathInDir("svc"), Rule: Rule{Pattern: `\.go$`, Name: "go"}}, `\.go$ in ` + PathInDir("svc") + ` (go)`},
+	}
+	for _, tc := range tests {
+		if got := tc.d.String(); got != tc.want {
+			t.Errorf("String() = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+// TestGroupByRule pins the inversion: one entry per RuleKey sorted by key,
+// files sorted and de-duplicated, and a key declared twice reported under its
+// first declaration.
+func TestGroupByRule(t *testing.T) {
+	all := DeclaredRule{RulesFile: FileName, Rule: Rule{Pattern: `.*`, Name: "first"}}
+	dup := DeclaredRule{RulesFile: FileName, Rule: Rule{Pattern: `.*`, Name: "second"}}
+	goRule := DeclaredRule{RulesFile: PathInDir("src"), Rule: Rule{Pattern: `\.go$`}}
+	got := GroupByRule(map[string][]DeclaredRule{
+		"src/b.go":  {all, dup, goRule},
+		"README.md": {all, dup},
+		"src/a.go":  {all, dup, goRule},
+	})
+	want := []RuleFiles{
+		{DeclaredRule: all, Files: []string{"README.md", "src/a.go", "src/b.go"}},
+		{DeclaredRule: goRule, Files: []string{"src/a.go", "src/b.go"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("GroupByRule() = %+v, want %+v", got, want)
+	}
+	if got := GroupByRule(nil); got == nil || len(got) != 0 {
+		t.Errorf("GroupByRule(nil) = %#v, want empty non-nil", got)
+	}
+}

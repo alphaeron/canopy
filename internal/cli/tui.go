@@ -716,12 +716,8 @@ func rulesGetPage(chain approval.RuleChain, own ownership) tui.Page {
 			own.annotate(&it, f)
 			items = append(items, it)
 		}
-		title := rf.Rule.Pattern + " in " + rf.RulesFile
-		if rf.Rule.Name != "" {
-			title += " (" + rf.Rule.Name + ")"
-		}
 		groups = append(groups, tui.TreeGroup{
-			Title:  title,
+			Title:  rf.String(),
 			Detail: tui.Detail{Fields: append(ruleFieldsDetail(rf.RulesFile, rf.Rule), tui.Field{Label: "Files", Value: strconv.Itoa(len(rf.Files))})},
 			Items:  items,
 		})

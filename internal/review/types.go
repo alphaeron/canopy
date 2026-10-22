@@ -38,20 +38,22 @@ func newScope(d rulesfile.DeclaredRule) Scope {
 	}
 }
 
+// declared is the inverse of newScope, up to the rule configuration a scope
+// does not carry: only the name and pattern of the rule are set.
+func (s Scope) declared() rulesfile.DeclaredRule {
+	return rulesfile.DeclaredRule{RulesFile: s.RulesFile, Rule: rulesfile.Rule{Name: s.Name, Pattern: s.Pattern}}
+}
+
 // String gives a human-facing reference to the scope, used in TUI rendering.
 func (s Scope) String() string {
-	out := s.Pattern + " in " + s.RulesFile
-	if s.Name != "" {
-		out += " (" + s.Name + ")"
-	}
-	return out
+	return s.declared().String()
 }
 
 // Identity is the scope's rule identity, shared with approval.RuleChain.ByRule:
 // two scopes compare equal by identity when they came from the same rule in
 // the same rules file.
 func (s Scope) Identity() rulesfile.RuleKey {
-	return rulesfile.RuleKey{RulesFile: s.RulesFile, Pattern: s.Pattern}
+	return s.declared().Key()
 }
 
 // FileMatch pairs one file in the universe with the scopes that matched it.
@@ -100,25 +102,21 @@ func (r *Result) FilterScope(name string) *Result {
 // per distinct scope, each with its sorted file list. Scopes are listed in
 // stable order (by Name, then identity).
 func (r *Result) GroupByScope() []ScopeGroup {
-	byID := map[rulesfile.RuleKey]*ScopeGroup{}
-	var order []rulesfile.RuleKey
+	byFile := make(map[string][]rulesfile.DeclaredRule, len(r.Files))
 	for _, fm := range r.Files {
 		for _, s := range fm.Scopes {
-			id := s.Identity()
-			if _, exists := byID[id]; !exists {
-				byID[id] = &ScopeGroup{Scope: s}
-				order = append(order, id)
-			}
+			byFile[fm.Path] = append(byFile[fm.Path], s.declared())
 		}
 	}
-	slices.SortFunc(order, func(a, b rulesfile.RuleKey) int {
-		return cmp.Or(cmp.Compare(byID[a].Scope.Name, byID[b].Scope.Name), a.Compare(b))
+	groups := rulesfile.GroupByRule(byFile)
+	// GroupByRule orders by identity; a stable sort by name keeps that as
+	// the tiebreak.
+	slices.SortStableFunc(groups, func(a, b rulesfile.RuleFiles) int {
+		return cmp.Compare(a.Rule.Name, b.Rule.Name)
 	})
-	out := make([]ScopeGroup, 0, len(byID))
-	for _, id := range order {
-		g := byID[id]
-		g.Files = r.filesFor(func(s Scope) bool { return s.Identity() == id })
-		out = append(out, *g)
+	out := make([]ScopeGroup, len(groups))
+	for i, g := range groups {
+		out[i] = ScopeGroup{Scope: newScope(g.DeclaredRule), Files: g.Files}
 	}
 	return out
 }
