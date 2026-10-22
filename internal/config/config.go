@@ -152,7 +152,7 @@ func envName(key string) string {
 	return brand.EnvPrefix + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
 }
 
-// loggerFor builds the standard structured logger for the process at the
+// loggerFor builds the standard JSON structured logger for the process at the
 // level implied by verbose (debug when true, info when false) writing to w.
 // Load calls this against os.Stderr to set the default logger, and tests
 // call it with an in-memory buffer to observe the output contract directly.
@@ -161,5 +161,5 @@ func loggerFor(verbose bool, w io.Writer) *slog.Logger {
 	if verbose {
 		level = slog.LevelDebug
 	}
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}))
+	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}))
 }

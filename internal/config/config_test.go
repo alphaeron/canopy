@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -202,6 +203,18 @@ func TestLoggerForQuietDropsDebug(t *testing.T) {
 	}
 	if !bytes.Contains(buf.Bytes(), []byte("info-message")) {
 		t.Errorf("info line missing from quiet logger output")
+	}
+}
+
+func TestLoggerForWritesJSON(t *testing.T) {
+	var buf bytes.Buffer
+	loggerFor(false, &buf).Info("info-message", "key", "value")
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("log line is not JSON: %v (%q)", err, buf.String())
+	}
+	if got["msg"] != "info-message" || got["key"] != "value" || got["level"] != "INFO" {
+		t.Errorf("unexpected JSON log record: %v", got)
 	}
 }
 
