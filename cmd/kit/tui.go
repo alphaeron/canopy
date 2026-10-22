@@ -19,9 +19,10 @@ import (
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// The TUI mirrors the command tree: every command `kit --help` lists is a
-// route (see routeFor) whose options form (o) offers exactly the command's
-// arguments and flags, derived from its cobra definition. The home page and
+// The TUI mirrors the command tree: every command `kit --help` lists, except
+// the CLI-only shell completion, is a route (see routeFor) whose options form
+// (o) offers exactly the command's arguments and flags, derived from its cobra
+// definition. The home page and
 // command palette list each command once, with default values; running a
 // read-only command on a terminal opens the TUI on its route with the given
 // values. A command that changes something (init, rules add/edit/remove) is
@@ -34,10 +35,9 @@ import (
 // appRoutes is the home page and command palette: one route per command, in
 // `kit --help` order.
 func appRoutes() []tui.Route {
-	// Execute adds the built-in help and completion commands when it runs;
-	// adding them here too (both are idempotent) lists them regardless.
+	// Execute adds the built-in help command when it runs; adding it here
+	// too (it is idempotent) lists it regardless.
 	rootCmd.InitDefaultHelpCmd()
-	rootCmd.InitDefaultCompletionCmd()
 	var routes []tui.Route
 	var walk func(*cobra.Command)
 	walk = func(c *cobra.Command) {

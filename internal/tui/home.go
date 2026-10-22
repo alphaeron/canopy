@@ -90,7 +90,7 @@ type homePage struct {
 
 // newHomePage builds the home tree from routes, which are listed in
 // `kit --help` order: "rules list" is an item of the "rules" group. Utility
-// commands (help, completion) come last, their groups collapsed.
+// commands (help) come last, their groups collapsed.
 func newHomePage(ctx context.Context, routes []Route, overview func(context.Context) (Detail, error)) *homePage {
 	type group struct {
 		route    *Route

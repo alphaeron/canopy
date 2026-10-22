@@ -20,12 +20,17 @@ import (
 
 // TestRoutesMirrorCommandTree is the parity contract: every command `kit
 // --help` lists, at any depth, is a TUI route whose options are exactly the
-// command's argument and visible flags.
+// command's argument and visible flags. Shell completion is CLI only.
 func TestRoutesMirrorCommandTree(t *testing.T) {
+	// Execute adds completion when it runs; add it so the TUI must skip it.
+	rootCmd.InitDefaultCompletionCmd()
 	routes := map[string]tui.Route{}
 	for _, r := range appRoutes() {
 		if _, dup := routes[r.Command]; dup {
 			t.Errorf("route %q listed twice", r.Command)
+		}
+		if r.Command == "completion" || strings.HasPrefix(r.Command, "completion ") {
+			t.Errorf("route %q: shell completion is CLI only", r.Command)
 		}
 		routes[r.Command] = r
 	}
@@ -33,6 +38,9 @@ func TestRoutesMirrorCommandTree(t *testing.T) {
 	var walk func(*cobra.Command)
 	walk = func(c *cobra.Command) {
 		for _, sub := range visibleCommands(c) {
+			if isCompletion(sub) {
+				continue
+			}
 			commands++
 			walk(sub)
 			// cobra adds --help to a command it executes; it must not
@@ -72,7 +80,6 @@ func TestRoutesMirrorCommandTree(t *testing.T) {
 	// Pin the tree too, so a change to how commands are listed cannot
 	// empty both sides of the comparison.
 	for _, name := range []string{
-		"completion", "completion bash", "completion fish", "completion powershell", "completion zsh",
 		"coverage", "help", "init", "match", "rules", "rules add", "rules edit", "rules files",
 		"review", "rules get", "rules list", "rules remove", "validate",
 	} {
@@ -257,34 +264,12 @@ func TestInitFromValues(t *testing.T) {
 	}
 }
 
-func TestCompletionAndHelpRoutes(t *testing.T) {
+func TestHelpRoutes(t *testing.T) {
 	routes := map[string]tui.Route{}
 	for _, r := range appRoutes() {
 		routes[r.Command] = r
 	}
 	ctx := context.Background()
-	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
-		r := routes["completion "+shell]
-		for _, v := range []tui.Values{{}, {Flags: map[string]string{"no-descriptions": "true"}}} {
-			if page, err := r.Load(ctx, v); err != nil || page == nil {
-				t.Errorf("completion %s %v: %v", shell, v.Flags, err)
-			}
-		}
-	}
-	var desc, noDesc strings.Builder
-	if err := genCompletion(&desc, "zsh", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := genCompletion(&noDesc, "zsh", false); err != nil {
-		t.Fatal(err)
-	}
-	if desc.String() == noDesc.String() {
-		t.Error("--no-descriptions must change the script")
-	}
-	if err := genCompletion(&desc, "tcsh", true); err == nil {
-		t.Error("an unknown shell must fail")
-	}
-
 	help := routes["help"]
 	for _, args := range [][]string{nil, {"rules"}, {"rules", "add"}} {
 		if _, err := help.Load(ctx, tui.Values{Args: args}); err != nil {

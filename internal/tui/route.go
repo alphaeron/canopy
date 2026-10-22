@@ -24,8 +24,8 @@ type Route struct {
 	Description string
 	// Long is the command's full help text, shown on the home page.
 	Long string
-	// Utility marks a command that is not about the repository (help,
-	// shell completion): the home page lists it last, its group collapsed.
+	// Utility marks a command that is not about the repository (help):
+	// the home page lists it last, its group collapsed.
 	Utility bool
 	// Summary, when set, is the live one-line description the home page
 	// previews for the route, for a route whose page is not itself a good

@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/csv"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,10 +14,13 @@ import (
 )
 
 // routeFor is c's TUI route opened with v. Every command `kit --help` lists
-// has one (TestRoutesMirrorCommandTree); ok is false for the root, whose
-// TUI form is the home page itself.
+// has one (TestRoutesMirrorCommandTree) except shell completion, which is
+// CLI only; ok is also false for the root, whose TUI form is the home page
+// itself.
 func routeFor(c *cobra.Command, v tui.Values) (tui.Route, bool) {
 	switch {
+	case isCompletion(c):
+		return tui.Route{}, false
 	case c == matchCmd:
 		return matchRoute(v), true
 	case c == reviewCmd:
@@ -46,20 +47,26 @@ func routeFor(c *cobra.Command, v tui.Values) (tui.Route, bool) {
 		r := helpRoute(c, v)
 		r.Utility = true
 		return r, true
-	case c.Parent() != nil && c.Parent().Parent() == rootCmd && c.Parent().Name() == "completion":
-		r := completionRoute(c, v)
-		r.Utility = true
-		return r, true
 	case c != rootCmd && !c.Runnable() && c.HasAvailableSubCommands():
 		// A command group such as `kit rules` prints its help.
 		r := commandRoute(c, v, func(context.Context, tui.Values) (tui.Page, error) { return helpPage(c), nil })
-		r.Utility = c.Name() == "completion"
 		if c == rulesCmd {
 			r.Summary = rulesSummary
 		}
 		return r, true
 	}
 	return tui.Route{}, false
+}
+
+// isCompletion reports whether c is cobra's `kit completion` command or one
+// of its shells. Completion scripts are for the shell, so the TUI omits them.
+func isCompletion(c *cobra.Command) bool {
+	for ; c != nil; c = c.Parent() {
+		if c.Parent() == rootCmd {
+			return c.Name() == "completion"
+		}
+	}
+	return false
 }
 
 // rulesSummary is the home page's live line for `kit rules`.
@@ -300,54 +307,6 @@ func commandName(c *cobra.Command) string {
 		return rootCmd.Name()
 	}
 	return strings.TrimPrefix(c.CommandPath(), rootCmd.Name()+" ")
-}
-
-// completionRoute is `kit completion <shell>`: the script the command
-// prints, and how to install it.
-func completionRoute(c *cobra.Command, v tui.Values) tui.Route {
-	shell := c.Name()
-	return commandRoute(c, v, func(_ context.Context, v tui.Values) (tui.Page, error) {
-		var buf bytes.Buffer
-		if err := genCompletion(&buf, shell, !v.Bool("no-descriptions")); err != nil {
-			return nil, err
-		}
-		script := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-		items := []tui.Item{
-			{
-				Title:       shell + " completion script",
-				Description: countOf(len(script), "line"),
-				Detail:      tui.Detail{Sections: []tui.Section{{Title: "Script", Lines: script}}},
-			},
-			{
-				Title:       "Installing it",
-				Description: c.Short,
-				Detail:      tui.Detail{Sections: []tui.Section{{Title: "Install", Lines: strings.Split(strings.TrimSpace(c.Long), "\n")}}},
-			},
-		}
-		return tui.NewListPage(shell+" completion", items).WithSummary("kit " + commandName(c) + " prints this script"), nil
-	})
-}
-
-// genCompletion writes the completion script for shell exactly as cobra's
-// `completion <shell>` command does.
-func genCompletion(w io.Writer, shell string, descriptions bool) error {
-	switch shell {
-	case "bash":
-		return rootCmd.GenBashCompletionV2(w, descriptions)
-	case "zsh":
-		if descriptions {
-			return rootCmd.GenZshCompletion(w)
-		}
-		return rootCmd.GenZshCompletionNoDesc(w)
-	case "fish":
-		return rootCmd.GenFishCompletion(w, descriptions)
-	case "powershell":
-		if descriptions {
-			return rootCmd.GenPowerShellCompletionWithDesc(w)
-		}
-		return rootCmd.GenPowerShellCompletion(w)
-	}
-	return fmt.Errorf("no completion script for shell %q", shell)
 }
 
 // joinList encodes a repeatable flag's values as one comma-separated value,
