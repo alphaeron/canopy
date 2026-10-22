@@ -157,24 +157,24 @@ func TestKitFileRemove(t *testing.T) {
 	}
 }
 
-func TestKitFileValidateDetectsDuplicateAndBrokenPattern(t *testing.T) {
+func TestKitFileViolationsDetectsDuplicateAndBrokenPattern(t *testing.T) {
 	dup := Rules{{Pattern: ".*.go$"}, {Pattern: ".*.go$"}}
-	if err := (&File{Rules: dup}).Validate(); err == nil {
-		t.Errorf("Validate missed duplicate pattern")
+	if errs := (&File{Rules: dup}).Violations(); len(errs) == 0 {
+		t.Errorf("Violations missed duplicate pattern")
 	}
 	bad := Rules{{Pattern: "("}}
-	if err := (&File{Rules: bad}).Validate(); err == nil {
-		t.Errorf("Validate missed invalid pattern")
+	if errs := (&File{Rules: bad}).Violations(); len(errs) == 0 {
+		t.Errorf("Violations missed invalid pattern")
 	}
-	if err := (&File{Rules: fixtureRules}).Validate(); err != nil {
-		t.Errorf("Validate over a clean file: %v", err)
+	if errs := (&File{Rules: fixtureRules}).Violations(); len(errs) != 0 {
+		t.Errorf("Violations over a clean file: %v", errs)
 	}
 }
 
-func TestKitFileValidateRejectsMissingApproverFields(t *testing.T) {
+func TestKitFileViolationsRejectsMissingApproverFields(t *testing.T) {
 	fixture := Rules{{Pattern: "x", Approvers: []ApproverTarget{{}}}}
-	if err := (&File{Rules: fixture}).Validate(); err == nil {
-		t.Errorf("Validate missed empty approver")
+	if errs := (&File{Rules: fixture}).Violations(); len(errs) == 0 {
+		t.Errorf("Violations missed empty approver")
 	}
 }
 

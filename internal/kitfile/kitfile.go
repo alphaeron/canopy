@@ -63,7 +63,7 @@ func (k *File) Save(path string) error {
 }
 
 // RuleByPattern returns the rule registered under the exact pattern string.
-// Patterns are unique within a file (Validate enforces this).
+// Patterns are unique within a file (Violations reports duplicates).
 func (k *File) RuleByPattern(pattern string) (*Rule, bool) {
 	for i := range k.Rules {
 		if k.Rules[i].Pattern == pattern {
@@ -75,7 +75,7 @@ func (k *File) RuleByPattern(pattern string) (*Rule, bool) {
 
 // Add appends rule at the end of the file's rule list. It rejects rules
 // whose pattern is already registered or whose pattern is not a valid
-// regular expression, so Validate invariants hold after every mutation.
+// regular expression, so Violations stays empty after every mutation.
 func (k *File) Add(rule Rule) error {
 	if _, exists := k.RuleByPattern(rule.Pattern); exists {
 		return fmt.Errorf("add rule: pattern %q is already registered", rule.Pattern)
@@ -108,13 +108,6 @@ func (k *File) Remove(pattern string) error {
 		}
 	}
 	return fmt.Errorf("remove: %w: %q", ErrPatternNotFound, pattern)
-}
-
-// Validate reports every integrity violation in the file (see Violations)
-// as one combined error, never just the first one, so a user can fix every
-// problem in one pass. It is nil when the file is valid.
-func (k *File) Validate() error {
-	return errors.Join(k.Violations()...)
 }
 
 // Violations lists every integrity violation in the file: duplicate

@@ -137,5 +137,3 @@ func TestRemoteRepoRootIsEmpty(t *testing.T) {
 		t.Errorf("remote RepoRoot must be empty, got %q", src.RepoRoot())
 	}
 }
-
-var _ = sort.Strings // imported for tests that sort before asserting

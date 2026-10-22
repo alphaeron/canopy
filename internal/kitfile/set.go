@@ -45,7 +45,7 @@ func (s Set) Names() []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
-// Validate reports each KIT file's violations (see KitFile.Violations),
+// Validate reports each KIT file's violations (see File.Violations),
 // keyed by path. A file with none is omitted, so an empty map means every
 // file in the set is valid.
 func (s Set) Validate() map[string][]error {

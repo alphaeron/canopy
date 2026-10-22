@@ -11,8 +11,6 @@ import (
 	"testing"
 
 	"github.com/google/go-github/v71/github"
-
-	"github.com/alphaeron/kit/internal/kitfile"
 )
 
 // fakeGitHubAPI stands up an httptest server that answers the two endpoints
@@ -173,8 +171,6 @@ func keysOf[V any](m map[string]V) []string {
 	}
 	return out
 }
-
-var _ = kitfile.Rule{} // keep the kitfile import explicit in the fixture blob
 
 // testLogger returns a logger that discards all output so tests stay quiet.
 func testLogger() *slog.Logger {

@@ -1,7 +1,6 @@
 package kitfile
 
 import (
-	"errors"
 	"os"
 	"reflect"
 	"testing"
@@ -84,9 +83,7 @@ func TestParseApproversRoundTrip(t *testing.T) {
 func TestApproverTargetRequiredCountValidation(t *testing.T) {
 	r := Rule{Pattern: `.*`, Approvers: ApproverTargets{{Target: "a", RequiredCount: 0}}}
 	kf := &File{Rules: Rules{r}}
-	if kf.Validate() == nil {
+	if len(kf.Violations()) == 0 {
 		t.Fatal("expected a required_count validation error")
 	}
 }
-
-var _ = errors.Is // validate returns a combined error; tests assert its presence
