@@ -15,16 +15,8 @@ import (
 // since a local review has no platform to expand groups against.
 func NewReviewer(repo *gitrepo.Repository, log *slog.Logger) *approval.Reviewer {
 	return &approval.Reviewer{
-		Fetch:    &Fetcher{Repo: repo, Log: log},
+		Fetch:    &approval.TreeFetcher{Tree: &worktree{repo: repo}, Log: log},
 		Resolver: &approval.DefaultApproverResolver{},
 		Log:      log,
 	}
-}
-
-// logOrDefault returns l, or slog.Default() when l is nil.
-func logOrDefault(l *slog.Logger) *slog.Logger {
-	if l != nil {
-		return l
-	}
-	return slog.Default()
 }

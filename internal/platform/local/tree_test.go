@@ -26,11 +26,11 @@ func writeTestFile(t *testing.T, dir, p, content string) {
 	}
 }
 
-// TestLocalFetcherReadsWorkingTree pins that a local review sees the working
+// TestLocalFetchReadsWorkingTree pins that a local review sees the working
 // tree's rules files: it used to list rules files at HEAD only, so a new
 // uncommitted rules file was invisible to every command, and look-alike names
 // must not be read as rules.
-func TestLocalFetcherReadsWorkingTree(t *testing.T) {
+func TestLocalFetchReadsWorkingTree(t *testing.T) {
 	dir := t.TempDir()
 	repo, err := git.PlainInit(dir, false)
 	if err != nil {
@@ -54,8 +54,7 @@ func TestLocalFetcherReadsWorkingTree(t *testing.T) {
 	writeTestFile(t, dir, rulesfile.FileName, "- \".*\":\n  name: \"Edited\"\n")
 	writeTestFile(t, dir, rulesfile.PathInDir("svc"), "- \".*\\\\.go\":\n  name: \"New\"\n")
 
-	fetcher := &Fetcher{Repo: &gitrepo.Repository{Repository: *repo}, Log: testLogger()}
-	_, rules, err := fetcher.Execute(t.Context())
+	rules, err := NewReviewer(&gitrepo.Repository{Repository: *repo}, testLogger()).Fetch.Execute(t.Context())
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

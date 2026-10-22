@@ -31,7 +31,7 @@ func (s *stubSource) RepoRoot() string { return s.root }
 // Reviewer is a local-style platform over the stub's rules.
 func (s *stubSource) Reviewer() *approval.Reviewer {
 	return &approval.Reviewer{
-		Fetch:    &stubFetch{root: s.root, rules: s.rules, err: s.err},
+		Fetch:    &stubFetch{rules: s.rules, err: s.err},
 		Resolver: &approval.DefaultApproverResolver{},
 		Log:      slog.New(slog.DiscardHandler),
 	}
@@ -51,17 +51,19 @@ func (s *stubSource) DiffContent(_ context.Context, path string) (string, error)
 	return s.diffs[path], nil
 }
 
-var _ Source = (*stubSource)(nil)
+var (
+	_ Source = (*stubSource)(nil)
+	_ Rooted = (*stubSource)(nil)
+)
 
 // stubFetch is a Fetcher over a fixed rule map.
 type stubFetch struct {
-	root  string
 	rules map[string]rulesfile.Rules
 	err   error
 }
 
-func (s *stubFetch) Execute(context.Context) (string, rulesfile.Set, error) {
-	return s.root, s.rules, s.err
+func (s *stubFetch) Execute(context.Context) (rulesfile.Set, error) {
+	return s.rules, s.err
 }
 
 // shared fixture rules: a root rules file rule matching .go and a nested /src
@@ -349,5 +351,38 @@ func TestCoverageKeepsTheFullMatch(t *testing.T) {
 	}
 	if len(match.Files) != 3 {
 		t.Errorf("match has %d files, want the whole universe of 3", len(match.Files))
+	}
+}
+
+// unrootedSource hides stubSource's RepoRoot, standing in for a source on a
+// hosted platform.
+type unrootedSource struct{ Source }
+
+// TestRepoRootOnlyFromRootedSources: the match result and the review state
+// carry the repository root of a Rooted source, and none for any other.
+func TestRepoRootOnlyFromRootedSources(t *testing.T) {
+	stub := &stubSource{root: "/repo", rules: fixtureRules, allFiles: []string{"main.go"}}
+	tests := []struct {
+		name string
+		src  Source
+		want string
+	}{
+		{name: "rooted", src: stub, want: "/repo"},
+		{name: "unrooted", src: unrootedSource{stub}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := New(tt.src, nil)
+			res, err := e.Match(t.Context(), Options{})
+			if err != nil {
+				t.Fatalf("Match: %v", err)
+			}
+			if res.RepoRoot != tt.want {
+				t.Errorf("Match RepoRoot = %q, want %q", res.RepoRoot, tt.want)
+			}
+			if got := e.Review(t.Context(), []string{"main.go"}, ReviewInput{}).RepoRoot; got != tt.want {
+				t.Errorf("Review RepoRoot = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

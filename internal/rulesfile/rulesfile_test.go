@@ -179,7 +179,7 @@ func TestRulesFileViolationsRejectsMissingApproverFields(t *testing.T) {
 	}
 }
 
-// TestIsRulesFile pins whole-name matching: the remote fetcher used to match
+// TestIsRulesFile pins whole-name matching: the GitHub fetcher used to match
 // any path containing FileName, so look-alike files were parsed as rules.
 func TestIsRulesFile(t *testing.T) {
 	tests := map[string]bool{

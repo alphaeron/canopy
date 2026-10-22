@@ -1,4 +1,4 @@
-package remote
+package ghplatform
 
 import (
 	"fmt"
@@ -45,7 +45,7 @@ func teamAPI(t *testing.T) (*github.Client, *atomic.Int32) {
 	return client, &calls
 }
 
-func TestRemoteApproverResolverExpandsTeams(t *testing.T) {
+func TestGitHubApproverResolverExpandsTeams(t *testing.T) {
 	client, calls := teamAPI(t)
 	r := NewApproverResolver(client, testLogger())
 
@@ -60,7 +60,7 @@ func TestRemoteApproverResolverExpandsTeams(t *testing.T) {
 	}
 }
 
-func TestRemoteApproverResolverTargets(t *testing.T) {
+func TestGitHubApproverResolverTargets(t *testing.T) {
 	client, calls := teamAPI(t)
 	r := NewApproverResolver(client, testLogger())
 

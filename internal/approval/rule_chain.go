@@ -20,15 +20,14 @@ type RuleChain struct {
 // rule-specific combination strategies sequentially from the root down to
 // the target directory. It records "approve" phase events and every error
 // condition into the supplied builder and assembles the complete review
-// state, including the repository root, for the input files. resolver is
-// the platform's (see local.NewReviewer and remote.NewReviewer) and is required.
+// state for the input files. resolver is the platform's (see
+// local.NewReviewer and ghplatform.NewReviewer) and is required.
 func (rc *RuleChain) Execute(
 	ctx context.Context,
 	pr PullRequest,
 	resolver ApproverResolver,
 	events *ReviewStateBuilder,
 	log *slog.Logger,
-	repoRoot string,
 ) *ReviewState {
 	log.Info("approve: evaluating rule chain",
 		"component", "rule_chain", "phase", "approve", "files", len(rc.FileChains))
@@ -142,8 +141,7 @@ func (rc *RuleChain) Execute(
 
 	// The builder forces Overall to StatusError and combines accumulated
 	// errors into Err when anything went wrong.
-	return events.WithRepoRoot(repoRoot).
-		WithFiles(files).
+	return events.WithFiles(files).
 		WithOverall(overallStatus).
 		Build(overallErr)
 }

@@ -66,7 +66,7 @@ func testLogger() *slog.Logger {
 // mirroring how Reviewer.Execute wires the approve phase.
 func executeChain(t *testing.T, rc RuleChain, pr PullRequest) *ReviewState {
 	t.Helper()
-	return rc.Execute(t.Context(), pr, &DefaultApproverResolver{}, NewReviewStateBuilder(), testLogger(), "/repo")
+	return rc.Execute(t.Context(), pr, &DefaultApproverResolver{}, NewReviewStateBuilder(), testLogger())
 }
 
 func inactiveAllOwners() func(string) bool {
@@ -246,7 +246,7 @@ func TestFallbackUnsatisfiableWhenAllOwnersInactive(t *testing.T) {
 // exercise resolution failures.
 func executeChainWithResolver(t *testing.T, rc RuleChain, pr PullRequest, resolver ApproverResolver) *ReviewState {
 	t.Helper()
-	return rc.Execute(t.Context(), pr, resolver, NewReviewStateBuilder(), testLogger(), "/repo")
+	return rc.Execute(t.Context(), pr, resolver, NewReviewStateBuilder(), testLogger())
 }
 
 func TestFallbackUnresolvableOwnerIsUnresolved(t *testing.T) {

@@ -11,13 +11,12 @@ import (
 // stubFetcher is a controllable Fetcher for exercising the full
 // fetch -> sift -> approve workflow without a git repository.
 type stubFetcher struct {
-	root  string
 	rules map[string]rulesfile.Rules
 	err   error
 }
 
-func (f *stubFetcher) Execute(context.Context) (string, rulesfile.Set, error) {
-	return f.root, f.rules, f.err
+func (f *stubFetcher) Execute(context.Context) (rulesfile.Set, error) {
+	return f.rules, f.err
 }
 
 // phaseSet returns the set of distinct phases present in the event trace.
@@ -45,7 +44,6 @@ func eventAt(rs *ReviewState, phase, path string, status Status) bool {
 
 func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 	fetch := &stubFetcher{
-		root: "/repo",
 		rules: map[string]rulesfile.Rules{
 			rulesfile.FileName: {{Name: "root", Pattern: `.*\.go$`, CombineStrategy: rulesfile.RuleCombineStrategyUnion,
 				Approvers: []rulesfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}}},
@@ -66,8 +64,8 @@ func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 			t.Errorf("expected events for phase %q, got phases %v", want, phases)
 		}
 	}
-	if !eventAt(rs, "fetch", "/repo", StatusDone) {
-		t.Errorf("expected a completed fetch event for repo root /repo")
+	if !eventAt(rs, "fetch", "", StatusDone) {
+		t.Errorf("expected a completed fetch event")
 	}
 	if !eventAt(rs, "sift", "/src/api.go", StatusDone) {
 		t.Errorf("expected a sift event for file /src/api.go")
@@ -78,9 +76,6 @@ func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 	if rs.Overall != StatusSatisfied {
 		t.Errorf("overall status = %s, want satisfied", rs.Overall)
 	}
-	if rs.RepoRoot != "/repo" {
-		t.Errorf("repo root = %q, want /repo", rs.RepoRoot)
-	}
 	if fs := rs.Files["/src/api.go"]; fs.Status != StatusSatisfied {
 		t.Errorf("file status = %s, want satisfied", fs.Status)
 	}
@@ -88,7 +83,7 @@ func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 
 func TestReviewerExecuteFetchErrorFailsReview(t *testing.T) {
 	fetchErr := errors.New("no rules files in repository")
-	s := &Reviewer{Fetch: &stubFetcher{root: "/repo", err: fetchErr}, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
+	s := &Reviewer{Fetch: &stubFetcher{err: fetchErr}, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
 	rs := s.Execute(t.Context(), buildContext(approverSet(), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
 
 	if rs.Overall != StatusError {
@@ -103,7 +98,7 @@ func TestReviewerExecuteFetchErrorFailsReview(t *testing.T) {
 	if len(rs.Errors) == 0 {
 		t.Errorf("fetched fetch error must be accumulated in Errors, got none")
 	}
-	if !eventAt(rs, "fetch", "/repo", StatusError) {
+	if !eventAt(rs, "fetch", "", StatusError) {
 		t.Errorf("expected a fetch phase error event")
 	}
 }
@@ -112,7 +107,6 @@ func TestReviewerExecuteSiftErrorFailsReview(t *testing.T) {
 	// A rules file with an invalid regular expression is a sift-phase error:
 	// the state must carry it, log it, and the review must be blocked.
 	fetch := &stubFetcher{
-		root: "/repo",
 		rules: map[string]rulesfile.Rules{
 			rulesfile.FileName: {{Name: "broken", Pattern: `(`, CombineStrategy: rulesfile.RuleCombineStrategyUnion,
 				Approvers: []rulesfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}}},
@@ -138,16 +132,12 @@ func TestReviewerExecuteSiftErrorFailsReview(t *testing.T) {
 	if !eventAt(rs, "approve", "/src/api.go", StatusUnresolved) {
 		t.Errorf("expected the approve phase to fall back after the sift failure")
 	}
-	if rs.RepoRoot != "/repo" {
-		t.Errorf("repo root = %q, want /repo", rs.RepoRoot)
-	}
 }
 
 func TestReviewerExecuteUnresolvableTargetIsTracked(t *testing.T) {
 	// A resolver that cannot resolve a target must surface the failure in
 	// both the approver target state and the accumulated errors.
 	fetch := &stubFetcher{
-		root: "/repo",
 		rules: map[string]rulesfile.Rules{
 			rulesfile.FileName: {{Name: "root", Pattern: `.*\.go$`, CombineStrategy: rulesfile.RuleCombineStrategyUnion,
 				Approvers: []rulesfile.ApproverTarget{{Target: "ghost-team", RequiredCount: 1}}}},

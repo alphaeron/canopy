@@ -49,6 +49,9 @@ func (s Status) String() string {
 
 // ReviewState is the complete, renderable outcome of one review run.
 type ReviewState struct {
+	// RepoRoot is the on-disk repository root when the review ran over a
+	// local checkout, and empty otherwise. The approval pipeline never
+	// knows it: the caller that does (match.Engine) sets it.
 	RepoRoot string
 	HeadRef  string
 	Files    map[string]FileState
@@ -136,11 +139,10 @@ type Event struct {
 // encountered during fetch, sift, and approve so that the resulting
 // ReviewState exposes the full failure picture.
 type ReviewStateBuilder struct {
-	events   []Event
-	errors   []string
-	repoRoot string
-	files    map[string]FileState
-	overall  Status
+	events  []Event
+	errors  []string
+	files   map[string]FileState
+	overall Status
 }
 
 // NewReviewStateBuilder creates a new review state builder.
@@ -176,15 +178,6 @@ func (b *ReviewStateBuilder) AddError(err error) {
 	b.errors = append(b.errors, err.Error())
 }
 
-// WithRepoRoot sets the repository root on the state being built. It is a no-op on a nil builder, mirroring AddEvent, and returns the receiver so the remaining steps chain together.
-func (b *ReviewStateBuilder) WithRepoRoot(repoRoot string) *ReviewStateBuilder {
-	if b == nil {
-		return b
-	}
-	b.repoRoot = repoRoot
-	return b
-}
-
 // WithFiles sets the per-file states on the state being built. It returns the receiver so the remaining steps chain together.
 func (b *ReviewStateBuilder) WithFiles(files map[string]FileState) *ReviewStateBuilder {
 	if b == nil {
@@ -214,12 +207,11 @@ func (b *ReviewStateBuilder) Build(baseErr error) *ReviewState {
 		}
 	}
 	return &ReviewState{
-		RepoRoot: b.repoRoot,
-		Files:    b.files,
-		Overall:  overall,
-		Events:   b.events,
-		Errors:   errors,
-		Err:      baseErr,
+		Files:   b.files,
+		Overall: overall,
+		Events:  b.events,
+		Errors:  errors,
+		Err:     baseErr,
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"sort"
 
 	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/kit/internal/logx"
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
@@ -77,7 +78,7 @@ func (e *Engine) RuleChain(ctx context.Context, files []string) (approval.RuleCh
 	if err != nil {
 		return approval.RuleChain{}, err
 	}
-	return approval.GetFileRuleChain(rules, files, nil, logOrDefault(e.Log)), nil
+	return approval.GetFileRuleChain(rules, files, nil, logx.OrDefault(e.Log)), nil
 }
 
 // Requirements runs the approve phase over chain with no approvals
@@ -93,8 +94,16 @@ func (e *Engine) Requirements(ctx context.Context, chain approval.RuleChain) *ap
 
 // rules loads the source's rules through its platform's fetcher.
 func (e *Engine) rules(ctx context.Context) (rulesfile.Set, error) {
-	_, rules, err := e.Source.Reviewer().Fetch.Execute(ctx)
-	return rules, err
+	return e.Source.Reviewer().Fetch.Execute(ctx)
+}
+
+// repoRoot is the source's on-disk repository root, or "" when it has none
+// (see Rooted).
+func (e *Engine) repoRoot() string {
+	if r, ok := e.Source.(Rooted); ok {
+		return r.RepoRoot()
+	}
+	return ""
 }
 
 // ErrUnknownScope reports a scope filter (Match or Coverage) naming a rule
@@ -125,7 +134,7 @@ func (e *Engine) Match(ctx context.Context, opts Options) (*Result, error) {
 		res = res.FilterScope(opts.ScopeName)
 	}
 	if opts.IncludeDiff {
-		log := logOrDefault(e.Log)
+		log := logx.OrDefault(e.Log)
 		for i := range res.Files {
 			path := res.Files[i].Path
 			if diff, derr := e.Source.DiffContent(ctx, path); derr == nil {
@@ -155,8 +164,8 @@ func (e *Engine) match(ctx context.Context, opts Options) (*Result, error) {
 	if opts.ScopeName != "" && !slices.Contains(rules.Names(), opts.ScopeName) {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownScope, opts.ScopeName)
 	}
-	chain := approval.GetFileRuleChain(rules, universe, nil, logOrDefault(e.Log))
-	res := &Result{RepoRoot: e.Source.RepoRoot()}
+	chain := approval.GetFileRuleChain(rules, universe, nil, logx.OrDefault(e.Log))
+	res := &Result{RepoRoot: e.repoRoot()}
 	for _, file := range universe {
 		fm := FileMatch{Path: file}
 		for _, layer := range chain.FileChains[file] {
@@ -246,10 +255,13 @@ func (in ReviewInput) pullRequest() approval.PullRequest {
 
 // Review runs the full approval review (fetch, sift, approve) over files on
 // the source's platform, so rules and approver resolution are local or
-// remote together. Every error the review meets is in the returned state
-// (see approval.Reviewer.Execute).
+// GitHub together. Every error the review meets is in the returned state
+// (see approval.Reviewer.Execute). The state carries the source's
+// repository root when it has one (see Rooted).
 func (e *Engine) Review(ctx context.Context, files []string, in ReviewInput) *approval.ReviewState {
-	return e.Source.Reviewer().Execute(ctx, in.pullRequest(), files)
+	state := e.Source.Reviewer().Execute(ctx, in.pullRequest(), files)
+	state.RepoRoot = e.repoRoot()
+	return state
 }
 
 // setOf is the set of items, for membership tests.

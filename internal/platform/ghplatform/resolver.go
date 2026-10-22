@@ -1,4 +1,4 @@
-package remote
+package ghplatform
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/google/go-github/v71/github"
 
 	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/kit/internal/logx"
 )
 
 // githubName is what GitHub allows in an organization login or team slug.
@@ -65,7 +66,7 @@ func (r *ApproverResolver) Resolve(ctx context.Context, target string, _ approva
 	}
 	members, err := r.teamMembers(ctx, org, slug)
 	if err != nil {
-		logOrDefault(r.log).Error("resolve: could not list team members",
+		logx.OrDefault(r.log).Error("resolve: could not list team members",
 			"component", "resolver", "phase", "approve", "target", target, "error", err)
 	}
 	t := resolvedTeam{members: members, ok: err == nil}

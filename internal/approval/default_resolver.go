@@ -5,7 +5,7 @@ import "context"
 // DefaultApproverResolver is the pass-through resolver for local execution:
 // it resolves each approver target to itself, so the target name is what
 // gets checked against the current approver set. Local reviews have no
-// platform to expand groups against; remote.ApproverResolver is the remote
+// platform to expand groups against; ghplatform.ApproverResolver is the GitHub
 // counterpart.
 type DefaultApproverResolver struct{}
 

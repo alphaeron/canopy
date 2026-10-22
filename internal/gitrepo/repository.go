@@ -18,8 +18,8 @@ import (
 )
 
 // Repository embeds the go-git repository and adds helpers shared by
-// every local consumer: the CLI commands, local.Source, and
-// local.Fetcher. A repository with no commit at all (a plain-init
+// every local consumer: the CLI commands and the local platform
+// (internal/platform/local). A repository with no commit at all (a plain-init
 // with nothing committed) is first-class state, never an error: HEAD-reading
 // call sites ask HasCommits before resolving and behave as if the tracked
 // universe is empty, because a repository with no commit has no tracked files

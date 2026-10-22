@@ -6,12 +6,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/local"
 	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/platform/local"
 )
 
 // newLocalEngine builds the match engine bound to the current repository's
-// worktree. The same engine type is driven by the REST server with a remote
+// worktree. The same engine type is driven by the REST server with a GitHub
 // source; this constructor is the CLI's fixed point. log may be nil
 // (slog.Default()); the TUI passes quietLog.
 func newLocalEngine(repo *gitRepo, log *slog.Logger) *match.Engine {

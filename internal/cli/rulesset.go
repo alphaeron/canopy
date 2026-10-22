@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/local"
+	"github.com/alphaeron/kit/internal/platform/local"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
@@ -38,7 +38,11 @@ func openRulesSet(ctx context.Context) (*rulesSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	root, rules, err := local.NewReviewer(repo, nil).Fetch.Execute(ctx)
+	root, err := repo.Root()
+	if err != nil {
+		return nil, fmt.Errorf("get repository root: %w", err)
+	}
+	rules, err := local.NewReviewer(repo, nil).Fetch.Execute(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load rules files: %w", err)
 	}

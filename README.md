@@ -81,7 +81,7 @@ The approve phase is a chain of independent layers. Each layer consumes only the
 
 | Layer | Type | Command | State it returns |
 |---|---|---|---|
-| Fetch | `Fetcher` (interface), `local.Fetcher`, `remote.Fetcher` | `Execute(ctx)` | repository root + parsed `KIT` rules |
+| Fetch | `Fetcher` (interface), `TreeFetcher` over each platform's `Tree` | `Execute(ctx)` | parsed `KIT` rules |
 | Sift | `RuleChain` builder | `GetFileRuleChain` | per-file ordered rule layers |
 | Chain | `RuleChain` | `Execute` | `ReviewState` (consumes only `LayerState`) |
 | Layer | `RuleLayer` | `Execute` | `LayerState` incl. per-rule states and the combined target footprint (`Required`) for the next layer |
@@ -129,7 +129,7 @@ The runtime application processes PR approval status utilizing a three-tiered pi
 ### Phase Breakdown
 
 #### Phase 1: Fetch
-1. Parse the incoming GitHub PR payload to isolate all modified file pathways.
+1. List the PR's changed file paths through the GitHub API (the webhook does not carry them), counting a renamed file at both its old and new paths.
 2. For each unique file path, systematically map the trajectory from its local leaf directory vertically upward to the root repository level.
 3. Read the `KIT` files along the path sequentially.
 4. If a file specifies `settings.ignore_parent_dirs: true`, halt tree traversal immediately.

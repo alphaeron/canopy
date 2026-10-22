@@ -3,6 +3,7 @@ package local
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -165,10 +166,54 @@ func TestLocalDiffContentModifiedAndAdded(t *testing.T) {
 // tree's rules and resolves approvers as themselves.
 func TestLocalSourceIsOnTheLocalPlatform(t *testing.T) {
 	rev := NewSource(nil, nil).Reviewer()
-	if _, ok := rev.Fetch.(*Fetcher); !ok {
-		t.Errorf("fetcher = %T, want *Fetcher", rev.Fetch)
+	if fetch, ok := rev.Fetch.(*approval.TreeFetcher); !ok {
+		t.Errorf("fetcher = %T, want *approval.TreeFetcher", rev.Fetch)
+	} else if _, ok := fetch.Tree.(*worktree); !ok {
+		t.Errorf("fetch tree = %T, want the working tree", fetch.Tree)
 	}
 	if _, ok := rev.Resolver.(*approval.DefaultApproverResolver); !ok {
 		t.Errorf("resolver = %T, want *approval.DefaultApproverResolver", rev.Resolver)
+	}
+}
+
+// TestLocalChangedFilesListsBothPathsOfARename pins that a rename reports the
+// path it left as well as the path it arrived at, so the rules over the old
+// directory still apply to the change, whether or not the move is staged.
+func TestLocalChangedFilesListsBothPathsOfARename(t *testing.T) {
+	tests := []struct {
+		name string
+		move func(t *testing.T, dir string, repo *gitrepo.Repository)
+	}{
+		{name: "unstaged", move: func(t *testing.T, dir string, _ *gitrepo.Repository) {
+			if err := os.MkdirAll(filepath.Join(dir, "new"), 0o755); err != nil {
+				t.Fatalf("MkdirAll: %v", err)
+			}
+			if err := os.Rename(filepath.Join(dir, "old", "a.go"), filepath.Join(dir, "new", "a.go")); err != nil {
+				t.Fatalf("Rename: %v", err)
+			}
+		}},
+		{name: "staged", move: func(t *testing.T, _ string, repo *gitrepo.Repository) {
+			wt, err := repo.Worktree()
+			if err != nil {
+				t.Fatalf("Worktree: %v", err)
+			}
+			if _, err := wt.Move("old/a.go", "new/a.go"); err != nil {
+				t.Fatalf("Move: %v", err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, repo := newScratchRepo(t, map[string]string{"old/a.go": "package a"})
+			tt.move(t, dir, repo)
+
+			changed, err := NewSource(repo, nil).ChangedFiles(t.Context())
+			if err != nil {
+				t.Fatalf("ChangedFiles: %v", err)
+			}
+			if want := []string{"new/a.go", "old/a.go"}; !slices.Equal(changed, want) {
+				t.Errorf("ChangedFiles = %v, want %v", changed, want)
+			}
+		})
 	}
 }

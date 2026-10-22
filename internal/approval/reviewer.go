@@ -3,13 +3,15 @@
 // request's approvals (fetch, sift, approve), recording every step in a
 // ReviewState. Where rules come from and how approver targets resolve to
 // people are supplied through the Fetcher and ApproverResolver interfaces;
-// the local and remote packages implement them.
+// the platform packages (internal/platform/...) implement them.
 package approval
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+
+	"github.com/alphaeron/kit/internal/logx"
 )
 
 // Reviewer orchestrates a code review: it fetches the repository's rules,
@@ -19,8 +21,8 @@ import (
 //
 // A Reviewer is bound to one platform, which decides both where rules come
 // from and how approver targets resolve to people. local.NewReviewer and
-// remote.NewReviewer build the two platforms, so a review never mixes a local fetcher with a
-// remote resolver or the reverse. Fetch and Resolver are both required.
+// ghplatform.NewReviewer build the two platforms, so a review never mixes a local fetcher with a
+// GitHub resolver or the reverse. Fetch and Resolver are both required.
 type Reviewer struct {
 	Fetch Fetcher
 	// Resolver maps approver targets to their members.
@@ -39,23 +41,22 @@ func (s *Reviewer) Execute(ctx context.Context, pr PullRequest, files []string) 
 	log := s.log()
 	events := NewReviewStateBuilder()
 
-	// Fetch phase: retrieve the repository root and all rules.
+	// Fetch phase: retrieve all rules.
 	log.Info("review starting", "component", "approval", "phase", "fetch", "files", len(files))
-	repoRoot, repoRules, err := s.Fetch.Execute(ctx)
+	repoRules, err := s.Fetch.Execute(ctx)
 	if err != nil {
 		log.Error("review: fetching rules failed",
-			"component", "approval", "phase", "fetch", "repo_root", repoRoot, "error", err)
-		events.AddEvent("fetch", repoRoot, "", "", StatusError, err.Error())
+			"component", "approval", "phase", "fetch", "error", err)
+		events.AddEvent("fetch", "", "", "", StatusError, err.Error())
 		events.AddError(err)
-		return events.WithRepoRoot(repoRoot).
-			WithFiles(map[string]FileState{}).
+		return events.WithFiles(map[string]FileState{}).
 			WithOverall(StatusError).
 			Build(err)
 	}
-	events.AddEvent("fetch", repoRoot, "", "", StatusDone,
+	events.AddEvent("fetch", "", "", "", StatusDone,
 		fmt.Sprintf("fetched rules from %d rules file(s)", len(repoRules)))
 	log.Info("review: rules fetched",
-		"component", "approval", "phase", "fetch", "repo_root", repoRoot, "rules_files", len(repoRules))
+		"component", "approval", "phase", "fetch", "rules_files", len(repoRules))
 
 	// Sift phase: build the per-file rule chains from the fetched rules.
 	log.Info("review: sifting rules for files",
@@ -63,7 +64,7 @@ func (s *Reviewer) Execute(ctx context.Context, pr PullRequest, files []string) 
 	ruleChain := GetFileRuleChain(repoRules, files, events, log)
 
 	// Approve phase: evaluate the rule chains and assemble the final state.
-	reviewState := ruleChain.Execute(ctx, pr, s.Resolver, events, log, repoRoot)
+	reviewState := ruleChain.Execute(ctx, pr, s.Resolver, events, log)
 	log.Info("review complete",
 		"component", "approval", "phase", "approve",
 		"status", reviewState.Overall, "errors", len(reviewState.Errors))
@@ -74,18 +75,10 @@ func (s *Reviewer) Execute(ctx context.Context, pr PullRequest, files []string) 
 // this platform's resolver: for callers that sifted the rules themselves
 // and want who must approve each file under pr.
 func (s *Reviewer) Approve(ctx context.Context, pr PullRequest, chain RuleChain) *ReviewState {
-	return chain.Execute(ctx, pr, s.Resolver, NewReviewStateBuilder(), s.log(), "")
+	return chain.Execute(ctx, pr, s.Resolver, NewReviewStateBuilder(), s.log())
 }
 
 // log returns the configured logger or the default one.
 func (s *Reviewer) log() *slog.Logger {
-	return logOrDefault(s.Log)
-}
-
-// logOrDefault returns l, or slog.Default() when l is nil.
-func logOrDefault(l *slog.Logger) *slog.Logger {
-	if l != nil {
-		return l
-	}
-	return slog.Default()
+	return logx.OrDefault(s.Log)
 }
