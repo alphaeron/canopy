@@ -46,13 +46,14 @@ $BIN rules edit ".*\.md" --name "docs-v2" --self-approve | grep -q "edited rule"
 $BIN rules list --json | grep -q '"Name": "docs-v2"' || fail "rules edit persisted"
 
 # --- 6. rules files / match / coverage ------------------------------------
-$BIN rules files "main\.go" | grep -q "^main.go$" || fail "rules files"
+$BIN rules files "KIT" | grep -q "^KIT$" || fail "rules files"
+$BIN rules files "main\.go" | grep -q "main.go" && fail "rules files lists only KIT files"
 $BIN match --json | grep -q '"path": "main.go"' || fail "match --json"
 $BIN match --by-scope --scope "go review" --json | grep -q '"files"' || fail "match --by-scope"
 $BIN coverage --json | grep -q '"universe"' || fail "coverage --json"
 
-# --- 7. kitfiles list ------------------------------------------------------
-$BIN kitfiles list --json | grep -q '"kit_files"' || fail "kitfiles list --json"
+# --- 7. rules files lists every KIT file without a pattern ----------------
+$BIN rules files --json | grep -q '"KIT"' || fail "rules files --json"
 
 # --- 8. validate flags a malformed rule and exits nonzero -----------------
 # The malformed file must be tracked before validate --all can see it: the

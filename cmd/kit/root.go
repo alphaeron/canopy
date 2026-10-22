@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 
+	"github.com/go-git/go-git/v6"
 	"github.com/spf13/cobra"
 
 	"github.com/alphaeron/kit/internal/config"
@@ -14,6 +17,21 @@ import (
 // alias so the import list stays explicit and the type is documented at the
 // point where it is first used.
 type gitRepo = gitutil.KitGitRepository
+
+// getRepo opens the git repository at the current working directory, or the
+// nearest parent that contains one. It is the single repository entry point
+// for every CLI command; the returned wrapper carries FindFiles and other
+// helpers that the commands share.
+func getRepo() (*gitRepo, error) {
+	repo, err := git.PlainOpenWithOptions(".", &git.PlainOpenOptions{DetectDotGit: true})
+	if err != nil {
+		if errors.Is(err, git.ErrRepositoryNotExists) {
+			return nil, fmt.Errorf("not a git repository (or any of the parent directories)")
+		}
+		return nil, fmt.Errorf("open repository: %w", err)
+	}
+	return &gitRepo{Repository: *repo}, nil
+}
 
 var cfgFile string
 

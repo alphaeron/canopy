@@ -51,17 +51,21 @@ func openKitSet() (*kitSet, error) {
 
 // paths lists the KIT files: the repository-root KIT first, then by path.
 func (s *kitSet) paths() []string {
-	return slices.SortedFunc(maps.Keys(s.rules), func(a, b string) int {
-		switch {
-		case a == b:
-			return 0
-		case a == kitfile.FileName:
-			return -1
-		case b == kitfile.FileName:
-			return 1
-		}
-		return strings.Compare(a, b)
-	})
+	return slices.SortedFunc(maps.Keys(s.rules), compareKitPaths)
+}
+
+// compareKitPaths orders KIT file paths: the repository-root KIT first, then
+// by path.
+func compareKitPaths(a, b string) int {
+	switch {
+	case a == b:
+		return 0
+	case a == kitfile.FileName:
+		return -1
+	case b == kitfile.FileName:
+		return 1
+	}
+	return strings.Compare(a, b)
 }
 
 // entries lists every rule in paths order, or only only's rules when it is

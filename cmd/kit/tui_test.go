@@ -242,3 +242,25 @@ func TestRulesListOutput(t *testing.T) {
 		t.Errorf("notice = %q", got)
 	}
 }
+
+// TestRulesGetRouteAsksForPattern pins that `rules get` and `rules files`
+// opened from the TUI ask for their regex first, while the CLI argument
+// stays optional.
+func TestRulesGetRouteAsksForPattern(t *testing.T) {
+	for _, r := range []tui.Route{rulesGetRoute(tui.Values{}), rulesFilesRoute(tui.Values{})} {
+		var arg tui.Param
+		for _, p := range r.Params {
+			if p.Arg {
+				arg = p
+			}
+		}
+		if !arg.Required {
+			t.Errorf("%s: pattern param must be required in the TUI: %+v", r.Command, arg)
+		}
+	}
+	for _, cmd := range []*cobra.Command{rulesGetCmd, rulesFilesCmd} {
+		if err := cmd.ValidateArgs(nil); err != nil {
+			t.Errorf("%s: the CLI pattern argument must stay optional: %v", cmd.Name(), err)
+		}
+	}
+}

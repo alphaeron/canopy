@@ -35,7 +35,6 @@ func appRoutes() []tui.Route {
 		rulesListRoute(none),
 		rulesGetRoute(none),
 		rulesFilesRoute(none),
-		kitfilesRoute(none),
 		validateRoute(none),
 	}
 }
@@ -277,9 +276,10 @@ func rulesPage(s *kitSet, only string) tui.Page {
 }
 
 // ruleItem is a rule row: the detail shows the full rule, and enter drills
-// into `kit rules files <pattern>`.
+// into `kit rules get <pattern>`, the files the pattern matches and their
+// rule chains.
 func ruleItem(e ruleEntry) tui.Item {
-	files := rulesFilesRoute(tui.Values{Args: []string{e.rule.Pattern}})
+	files := rulesGetRoute(tui.Values{Args: []string{e.rule.Pattern}})
 	return tui.Item{
 		Title:       e.rule.Pattern,
 		Description: orNone(e.rule.Name) + " · " + e.kitFile,
@@ -423,8 +423,10 @@ func fieldsFromRule(r kitfile.Rule) tui.RuleFields {
 
 // rulesGetRoute resolves the rule chain for the files matching the pattern
 // arguments (every file when there are none) and shows it as rule → files.
+// The CLI argument is optional, but opening the route without one asks for
+// the regex first, as `rules files` does, rather than loading every file.
 func rulesGetRoute(v tui.Values) tui.Route {
-	return commandRoute(rulesGetCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+	r := commandRoute(rulesGetCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
 		patterns := v.Args
 		if len(patterns) == 0 {
 			patterns = []string{`.*`}
@@ -435,6 +437,19 @@ func rulesGetRoute(v tui.Values) tui.Route {
 		}
 		return rulesGetPage(chain), nil
 	})
+	return requirePattern(r)
+}
+
+// requirePattern makes r's optional pattern argument required in the TUI,
+// so opening the route asks for the regex first instead of loading every
+// file; the CLI argument stays optional.
+func requirePattern(r tui.Route) tui.Route {
+	for i := range r.Params {
+		if r.Params[i].Arg {
+			r.Params[i].Required = true
+		}
+	}
+	return r
 }
 
 // ruleChainFor resolves the rule chain for every file matching any pattern
@@ -513,45 +528,34 @@ func provenance(file string, layers []shonin.RuleLayer) tui.Detail {
 	return d
 }
 
-// rulesFilesRoute lists the files a pattern matches; the pattern argument
-// is required, so opening it from home asks for it first.
+// rulesFilesRoute lists the KIT files a pattern matches (`.*` for every one)
+// and asks for the pattern first when opened from home. Enter opens the KIT
+// file's rules.
 func rulesFilesRoute(v tui.Values) tui.Route {
 	r := commandRoute(rulesFilesCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
-		if len(v.Args) == 0 {
-			return nil, fmt.Errorf("rules files needs a pattern")
+		var pattern string
+		if len(v.Args) > 0 {
+			pattern = v.Args[0]
 		}
-		pattern := v.Args[0]
-		files, err := findPatternFiles(pattern, v.Flag("revision"))
-		if err != nil {
-			return nil, err
-		}
-		items := make([]tui.Item, len(files))
-		for i, f := range files {
-			r := fileRulesRoute(f)
-			items[i] = tui.Item{Title: f, Detail: tui.Detail{Fields: []tui.Field{{Label: "File", Value: f}, {Label: "Matched by", Value: pattern}}}, Route: &r}
-		}
-		return tui.NewListPage("Files matching "+pattern, items).WithSummary(countOf(len(files), "file")), nil
-	})
-	if len(v.Args) > 0 {
-		r.Title = "files " + v.Args[0]
-	}
-	return r
-}
-
-// kitfilesRoute lists the KIT files; enter opens `kit rules list --file`.
-func kitfilesRoute(v tui.Values) tui.Route {
-	return commandRoute(kitfilesListCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
-		files, err := listKitFiles()
+		files, err := findKitFiles(pattern, v.Flag("revision"))
 		if err != nil {
 			return nil, err
 		}
 		items := make([]tui.Item, len(files))
 		for i, f := range files {
 			r := rulesListRoute(tui.Values{Flags: map[string]string{"file": f}})
-			items[i] = tui.Item{Title: f, Description: "KIT file", Detail: tui.Detail{Fields: []tui.Field{{Label: "Path", Value: f}}}, Route: &r}
+			items[i] = tui.Item{Title: f, Description: "KIT file", Detail: tui.Detail{Fields: []tui.Field{{Label: "Path", Value: f}, {Label: "Matched by", Value: orNone(pattern)}}}, Route: &r}
 		}
-		return tui.NewListPage("KIT files", items).WithSummary(countOf(len(files), "KIT file")), nil
+		title := "KIT files"
+		if pattern != "" {
+			title += " matching " + pattern
+		}
+		return tui.NewListPage(title, items).WithSummary(countOf(len(files), "KIT file")), nil
 	})
+	if len(v.Args) > 0 {
+		r.Title = "files " + v.Args[0]
+	}
+	return requirePattern(r)
 }
 
 // validateRoute shows every KIT file (or the one --file names) with its
