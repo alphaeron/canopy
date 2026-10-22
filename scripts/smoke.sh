@@ -36,14 +36,14 @@ git add -A && git commit -qm init
 $BIN validate --all | grep -q "are valid" || fail "validate --all"
 
 # --- 4. rules list / get --------------------------------------------------
-$BIN rules list --json | grep -q '"Pattern": ".*\\\\\.go"' || fail "rules list --json"
+$BIN rules list --json | grep -q '"pattern": ".*\\\\\.go"' || fail "rules list --json"
 $BIN rules get ".*\.go" --json | grep -q 'main.go' || fail "rules get --json"
 
 # --- 5. rules add / edit --------------------------------------------------
 $BIN rules add --pattern ".*\.md" --name "docs" --strategy intersect \
     --approver "team/docs" --approver "1" | grep -q "added rule" || fail "rules add"
 $BIN rules edit ".*\.md" --name "docs-v2" --self-approve | grep -q "edited rule" || fail "rules edit"
-$BIN rules list --json | grep -q '"Name": "docs-v2"' || fail "rules edit persisted"
+$BIN rules list --json | grep -q '"name": "docs-v2"' || fail "rules edit persisted"
 
 # --- 6. rules files / match / coverage ------------------------------------
 $BIN rules files "KIT" | grep -q "^KIT$" || fail "rules files"
@@ -64,11 +64,14 @@ mkdir -p src/kit-bad
 printf '.*\\(unclosed:\n  name: bad\n' > src/kit-bad/KIT
 git add -A && git commit -qm "add malformed rule"
 if $BIN validate --all >/dev/null 2>&1; then fail "validate should fail on malformed rule"; fi
+# Every command that loads KIT files fails closed on a malformed one, so drop
+# it before exercising the rest of the surface.
+git rm -q src/kit-bad/KIT && git commit -qm "drop malformed rule"
 
 # --- 9. rules remove: declined without confirm, applied with --force ------
 printf 'n\n' | $BIN rules remove ".*\.md" 2>&1 | grep -q "remove aborted" || fail "remove aborted"
-$BIN rules list --json | grep -q '"Name": "docs-v2"' || fail "declined remove left rule intact"
+$BIN rules list --json | grep -q '"name": "docs-v2"' || fail "declined remove left rule intact"
 $BIN rules remove ".*\.md" --force | grep -q "removed rule" || fail "remove --force"
-$BIN rules list --json | grep -q '"Pattern": ".*\\\\\.go"' || fail "original rule retained"
+$BIN rules list --json | grep -q '"pattern": ".*\\\\\.go"' || fail "original rule retained"
 
 echo "smoke: ok"
