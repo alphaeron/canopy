@@ -2,9 +2,7 @@ package ghplatform
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/http"
 	"regexp"
 	"strings"
 
@@ -51,8 +49,7 @@ func (r *ApproverResolver) Resolve(ctx context.Context, target string) ([]string
 	users, err := paginate(&opts.ListOptions, func() ([]*github.User, *github.Response, error) {
 		return r.client.Teams.ListTeamMembersBySlug(ctx, org, slug, opts)
 	})
-	var ghErr *github.ErrorResponse
-	if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
+	if isNotFound(err) {
 		return nil, fmt.Errorf("%w: team %s: %w", approval.ErrUnknownTarget, target, err)
 	}
 	if err != nil {

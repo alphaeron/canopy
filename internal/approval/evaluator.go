@@ -21,9 +21,10 @@ import (
 // in the resulting ReviewState and logged as structured JSON.
 //
 // An Evaluator is bound to one platform, which decides both where rules come
-// from and how approver targets resolve to people. local.NewEvaluator and
-// ghplatform.NewEvaluator build the two platforms, so a review never mixes a local fetcher with a
-// GitHub resolver or the reverse. Fetch and Resolver are both required.
+// from and how approver targets resolve to people. Each platform under
+// internal/platform builds its own evaluator, so a review never mixes one
+// platform's fetcher with another's resolver. Fetch and Resolver are both
+// required.
 type Evaluator struct {
 	Fetch Fetcher
 	// Resolver maps approver targets to their members.

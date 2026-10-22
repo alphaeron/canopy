@@ -54,16 +54,12 @@ func TestGitHubApproverResolverExpandsTeams(t *testing.T) {
 	}
 }
 
-func TestGitHubApproverResolverTargets(t *testing.T) {
+// TestGitHubApproverResolverRejectsMalformedTargets: every shape GitHub
+// does not allow is rejected offline, past the contract's one example.
+func TestGitHubApproverResolverRejectsMalformedTargets(t *testing.T) {
 	client, calls := teamAPI(t)
 	r := NewApproverResolver(client)
 
-	if members, err := r.Resolve(t.Context(), "dana"); err != nil || !reflect.DeepEqual(members, []string{"dana"}) {
-		t.Errorf("a login must resolve to itself, got %v, %v", members, err)
-	}
-	if _, err := r.Resolve(t.Context(), "acme/ghosts"); !errors.Is(err, approval.ErrUnknownTarget) {
-		t.Errorf("an unknown team err = %v, want approval.ErrUnknownTarget", err)
-	}
 	before := calls.Load()
 	for _, bad := range []string{"acme/../../user", "acme/", "/team", "acme/a/b", "ac me/team", "da na"} {
 		_, err := r.Resolve(t.Context(), bad)

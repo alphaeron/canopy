@@ -6,7 +6,8 @@ import "context"
 // it resolves each approver target to itself, so the target name is what
 // gets checked against the current approver set. Local reviews have no
 // platform to expand groups against or to define identity, so names are
-// compared exactly; ghplatform.ApproverResolver is the GitHub counterpart.
+// compared exactly; each hosted platform under internal/platform supplies
+// its own resolver.
 type DefaultApproverResolver struct{}
 
 // Resolve returns the target unchanged as its own member set.

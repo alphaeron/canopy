@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
-	"strings"
 	"testing"
 
 	git "github.com/go-git/go-git/v6"
@@ -13,7 +11,6 @@ import (
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/gitrepo"
-	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // newScratchRepo creates a go-git repository in a temp dir, seeded with the
@@ -77,91 +74,6 @@ func TestLocalNoCommitYieldsEmptyUniverses(t *testing.T) {
 	}
 }
 
-func TestLocalAllFilesMatchesCommittedSet(t *testing.T) {
-	_, repo := newScratchRepo(t, map[string]string{
-		"a.go":             "one",
-		"src/b.go":         "two",
-		rulesfile.FileName: "- \"a$\":\n  name: \"n\"\n",
-	})
-	src := NewSource(repo, nil)
-	files, err := src.AllFiles(t.Context())
-	if err != nil {
-		t.Fatalf("AllFiles: %v", err)
-	}
-	sort.Strings(files)
-	want := []string{rulesfile.FileName, "a.go", "src/b.go"}
-	if strings.Join(files, ",") != strings.Join(want, ",") {
-		t.Errorf("AllFiles = %v, want %v", files, want)
-	}
-}
-
-func TestLocalChangedFilesUntrackedAndModified(t *testing.T) {
-	dir, repo := newScratchRepo(t, map[string]string{
-		"one.go": "hello",
-	})
-	src := NewSource(repo, nil)
-
-	// Before any changes there are no changed files.
-	changed, err := src.ChangedFiles(t.Context())
-	if err != nil {
-		t.Fatalf("ChangedFiles clean: %v", err)
-	}
-	if len(changed) != 0 {
-		t.Errorf("clean worktree reported changed files: %v", changed)
-	}
-
-	// Modify one tracked file and add one untracked file.
-	if err := os.WriteFile(filepath.Join(dir, "one.go"), []byte("goodbye"), 0o644); err != nil {
-		t.Fatalf("modify: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "two.go"), []byte("fresh"), 0o644); err != nil {
-		t.Fatalf("new file: %v", err)
-	}
-	changed, err = src.ChangedFiles(t.Context())
-	if err != nil {
-		t.Fatalf("ChangedFiles after edits: %v", err)
-	}
-	sort.Strings(changed)
-	if len(changed) != 2 || changed[0] != "one.go" || changed[1] != "two.go" {
-		t.Errorf("ChangedFiles = %v, want [one.go two.go]", changed)
-	}
-}
-
-func TestLocalDiffContentModifiedAndAdded(t *testing.T) {
-	dir, repo := newScratchRepo(t, map[string]string{
-		"one.go": "a\nb\nc\n",
-	})
-	src := NewSource(repo, nil)
-
-	// Before edits, no diff content.
-	if diff, err := src.DiffContent(t.Context(), "one.go"); err != nil || diff != "" {
-		t.Errorf("no-change diff = %q (err %v), want empty", diff, err)
-	}
-
-	// Modify one line and add a new file.
-	if err := os.WriteFile(filepath.Join(dir, "one.go"), []byte("a\nB\nc\n"), 0o644); err != nil {
-		t.Fatalf("modify: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "two.go"), []byte("line1\n"), 0o644); err != nil {
-		t.Fatalf("new file: %v", err)
-	}
-
-	oneDiff, err := src.DiffContent(t.Context(), "one.go")
-	if err != nil {
-		t.Fatalf("diff one.go: %v", err)
-	}
-	if !strings.Contains(oneDiff, "-b\n") || !strings.Contains(oneDiff, "+B\n") {
-		t.Errorf("one.go diff = %q, want -b and +B", oneDiff)
-	}
-	twoDiff, err := src.DiffContent(t.Context(), "two.go")
-	if err != nil {
-		t.Fatalf("diff two.go: %v", err)
-	}
-	if !strings.Contains(twoDiff, "+line1\n") {
-		t.Errorf("two.go diff = %q, want +line1", twoDiff)
-	}
-}
-
 // TestLocalSourceIsOnTheLocalPlatform: a local source reads the working
 // tree's rules and resolves approvers as themselves.
 func TestLocalSourceIsOnTheLocalPlatform(t *testing.T) {
@@ -176,22 +88,15 @@ func TestLocalSourceIsOnTheLocalPlatform(t *testing.T) {
 	}
 }
 
-// TestLocalChangedFilesListsBothPathsOfARename pins that a rename reports the
-// path it left as well as the path it arrived at, so the rules over the old
-// directory still apply to the change, whether or not the move is staged.
+// TestLocalChangedFilesListsBothPathsOfARename pins that a staged rename
+// reports the path it left as well as the path it arrived at, so the rules
+// over the old directory still apply. The source contract covers an
+// unstaged rename.
 func TestLocalChangedFilesListsBothPathsOfARename(t *testing.T) {
 	tests := []struct {
 		name string
 		move func(t *testing.T, dir string, repo *gitrepo.Repository)
 	}{
-		{name: "unstaged", move: func(t *testing.T, dir string, _ *gitrepo.Repository) {
-			if err := os.MkdirAll(filepath.Join(dir, "new"), 0o755); err != nil {
-				t.Fatalf("MkdirAll: %v", err)
-			}
-			if err := os.Rename(filepath.Join(dir, "old", "a.go"), filepath.Join(dir, "new", "a.go")); err != nil {
-				t.Fatalf("Rename: %v", err)
-			}
-		}},
 		{name: "staged", move: func(t *testing.T, _ string, repo *gitrepo.Repository) {
 			wt, err := repo.Worktree()
 			if err != nil {

@@ -3,9 +3,12 @@ package ghplatform
 import (
 	"testing"
 
+	"github.com/google/go-github/v93/github"
+
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/platform/platformtest"
 	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/kit/internal/server"
 )
 
 // TestGitHubMeetsTheSourceContract runs the platform contract against a fake
@@ -13,11 +16,7 @@ import (
 // change, built the way the server builds it: from a pull_request event.
 func TestGitHubMeetsTheSourceContract(t *testing.T) {
 	platformtest.RunSourceContract(t, func(t *testing.T, f platformtest.Fixture) review.Source {
-		src, err := NewSourceFromEvent(t.Context(), pullRequestEvent("base"), fakeFromFixture(f).client(t), testLogger())
-		if err != nil {
-			t.Fatalf("NewSourceFromEvent: %v", err)
-		}
-		return src
+		return changeFromEvent(t, fakeFromFixture(f), pullRequestEvent("base"))
 	})
 }
 
@@ -37,5 +36,45 @@ func TestGitHubResolverMeetsTheResolverContract(t *testing.T) {
 			Invalid:      "acme/../admin",
 			Calls:        func() int { return fake.callCount("teams") },
 		}
+	})
+}
+
+// reviewStates are GitHub's review states for each contract decision. A
+// dismissal is the dismissed approval itself, listed in its place.
+var reviewStates = map[platformtest.Decision]string{
+	platformtest.Approve:        "APPROVED",
+	platformtest.RequestChanges: "CHANGES_REQUESTED",
+	platformtest.Dismiss:        "DISMISSED",
+	platformtest.Comment:        "COMMENTED",
+}
+
+func TestGitHubMeetsTheReviewInputContract(t *testing.T) {
+	platformtest.RunReviewInputContract(t, func(t *testing.T, r platformtest.Reviews) server.PullRequest {
+		var reviews []*github.PullRequestReview
+		for _, rev := range r.Reviews {
+			reviews = append(reviews, &github.PullRequestReview{User: &github.User{Login: new(rev.Reviewer)}, State: new(reviewStates[rev.Decision])})
+		}
+		// Served over two pages, so the latest decision spans pages.
+		half := len(reviews) / 2
+		fake := &fakeGitHub{reviewPages: [][]*github.PullRequestReview{reviews[:half], reviews[half:]}}
+		pr := testPR()
+		pr.author = r.Author
+		return newSource(pr, fake.client(t), NewApproverResolver(fake.client(t)), testLogger())
+	})
+}
+
+func TestGitHubMeetsTheStatusReporterContract(t *testing.T) {
+	platformtest.RunStatusReporterContract(t, func(t *testing.T) (server.PullRequest, func() []platformtest.StatusReport) {
+		fake := &fakeGitHub{}
+		observe := func() []platformtest.StatusReport {
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			out := make([]platformtest.StatusReport, len(fake.statuses))
+			for i, s := range fake.statuses {
+				out[i] = platformtest.StatusReport{Name: s.GetContext(), State: s.GetState(), Summary: s.GetDescription()}
+			}
+			return out
+		}
+		return testSource(fake.client(t)), observe
 	})
 }

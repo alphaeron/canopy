@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-github/v93/github"
 
 	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/kit/internal/review"
 )
 
 // baseTree is a GitHub repository's tree at one revision as an
@@ -73,7 +74,9 @@ func (b *baseTree) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	}
 }
 
-// list returns the tree's blobs, listing them on first use. A failed listing
+// list returns the tree's blobs, listing them on first use. A listing GitHub
+// truncated is review.ErrTreeTruncated, never a partial tree: a missing
+// rules file would silently drop required approvers. A failed listing
 // is not cached, so a later call retries it. The lock is held across the
 // call so concurrent first uses share one listing.
 func (b *baseTree) list(ctx context.Context) (map[string]string, error) {
@@ -85,6 +88,9 @@ func (b *baseTree) list(ctx context.Context) (map[string]string, error) {
 	tree, _, err := b.client.Git.GetTree(ctx, b.owner, b.repo, b.sha, true)
 	if err != nil {
 		return nil, fmt.Errorf("list tree %s/%s@%s: %w", b.owner, b.repo, b.sha, err)
+	}
+	if tree.GetTruncated() {
+		return nil, fmt.Errorf("list tree %s/%s@%s: %w", b.owner, b.repo, b.sha, review.ErrTreeTruncated)
 	}
 	blobs := make(map[string]string, len(tree.Entries))
 	for _, entry := range tree.Entries {

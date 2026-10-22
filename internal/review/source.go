@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 
 	"github.com/alphaeron/kit/internal/approval"
 )
@@ -24,14 +25,16 @@ type Source interface {
 	Evaluator() *approval.Evaluator
 
 	// AllFiles returns every file at the base revision: the universe over
-	// which to match and evaluate coverage.
+	// which to match and evaluate coverage. A listing the platform
+	// truncated is ErrTreeTruncated, never a partial result.
 	AllFiles(ctx context.Context) ([]string, error)
 
 	// ChangedFiles returns every path the change adds, modifies, or
 	// removes relative to the base revision. A renamed file is listed at
 	// both its old and its new path, so the rules over the place it left
 	// still apply. Paths the change adds are not in AllFiles, so this is
-	// not a subset of it. Empty when nothing changed.
+	// not a subset of it. Empty when nothing changed. A listing the
+	// platform cut short is ErrFileListIncomplete.
 	ChangedFiles(ctx context.Context) ([]string, error)
 
 	// DiffContent returns the unified diff of the change to path, or ""
@@ -49,3 +52,14 @@ type Rooted interface {
 	// RepoRoot returns the on-disk repository root.
 	RepoRoot() string
 }
+
+// ErrTreeTruncated reports that the platform listed a revision's files only
+// partially, as a platform may for a very large repository. The listing is
+// never used: a missing rules file would silently drop required
+// approvers, so a review over a truncated tree fails.
+var ErrTreeTruncated = errors.New("repository tree listing is truncated")
+
+// ErrFileListIncomplete reports that the platform listed a change's files
+// only partially, as a platform may past its own limit. The partial listing
+// is never presented as complete.
+var ErrFileListIncomplete = errors.New("changed file listing is incomplete")

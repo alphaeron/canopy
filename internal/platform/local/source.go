@@ -19,7 +19,9 @@ import (
 // universe is the working tree (AllFiles) and its diff against HEAD
 // (ChangedFiles); rules and approvers come from the local review platform
 // (NewEvaluator), so local CLI analysis and local reviews read the same
-// rules files and resolve approvers the same way.
+// rules files and resolve approvers the same way. Rules are read from the
+// working tree, uncommitted changes included, so the CLI previews the rules
+// a branch proposes.
 type Source struct {
 	repo      *gitrepo.Repository // file listings and diffs; the evaluator shares it
 	log       *slog.Logger        // diagnostics; nil means slog.Default()

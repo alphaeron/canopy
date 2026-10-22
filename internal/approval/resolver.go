@@ -20,18 +20,18 @@ var ErrInvalidTarget = errors.New("invalid approver target")
 // ApproverResolver resolves approver targets (usernames or group names) to
 // the concrete members who can satisfy an approval requirement. Like
 // Fetcher, it is chosen by platform: local execution uses the pass-through
-// DefaultApproverResolver, and GitHub uses ghplatform.ApproverResolver, which
-// expands team targets to their members (see local.NewEvaluator and
-// ghplatform.NewEvaluator). Implementations need not cache: a review resolves
-// each target once (see RuleChain.Execute).
+// DefaultApproverResolver, and each hosted platform under internal/platform
+// supplies its own, which may expand group targets to their members.
+// Implementations need not cache: a review resolves each target once (see
+// RuleChain.Execute).
 type ApproverResolver interface {
 	// Resolve maps a target to its member set. A target the platform does
 	// not know is an error wrapping ErrUnknownTarget; any other error is an
 	// operational failure.
 	Resolve(ctx context.Context, target string) ([]string, error)
 	// Canonical returns name in the platform's canonical form, so names
-	// that denote the same user compare equal: GitHub logins are
-	// case-insensitive, for example. It must be idempotent.
+	// that denote the same user compare equal, e.g. by folding case on a
+	// platform whose usernames are case-insensitive. It must be idempotent.
 	Canonical(name string) string
 }
 

@@ -1,4 +1,4 @@
-.PHONY: test cover cover-html fmt lint vulncheck smoke deadcode doc doc-all doc-serve
+.PHONY: test cover cover-html fmt lint vulncheck smoke smoke-serve deadcode doc doc-all doc-serve
 
 test:
 	@go test -v ./...
@@ -14,6 +14,11 @@ smoke:
 	@tmp=$$(mktemp -d) && trap "rm -rf $$tmp" EXIT && \
 	go build -o $$tmp/kit ./cmd/kit && \
 	scripts/smoke.sh $$tmp/kit
+
+smoke-serve:
+	@tmp=$$(mktemp -d) && trap "rm -rf $$tmp" EXIT && \
+	go build -o $$tmp/kitweb ./cmd/kitweb && \
+	scripts/smoke-serve.sh $$tmp/kitweb
 
 fmt:
 	@go fmt github.com/alphaeron/...

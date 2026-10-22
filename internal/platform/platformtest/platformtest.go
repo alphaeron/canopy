@@ -1,7 +1,8 @@
 // Package platformtest is the contract every review platform under
 // internal/platform must meet. A platform's tests build its review.Source,
-// approval.Tree, and approval.ApproverResolver over the fixtures this
-// package defines, and the suites check them against the documented
+// approval.Tree, and approval.ApproverResolver (and, for a hosted platform,
+// its server.PullRequest) over the fixtures
+// this package defines, and the suites check them against the documented
 // behavior of those interfaces, so a new platform is verified to plug into
 // the engine rather than assumed to.
 package platformtest
@@ -17,6 +18,7 @@ import (
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/kit/internal/server"
 )
 
 // Fixture is a repository state: the files at the base revision, and the
@@ -335,4 +337,165 @@ func calls(h ResolverHarness) int {
 		return 0
 	}
 	return h.Calls()
+}
+
+// Decision is a reviewer's decision in a review scenario.
+type Decision string
+
+// The decisions a reviewer can make.
+const (
+	Approve        Decision = "approve"
+	RequestChanges Decision = "request_changes"
+	Dismiss        Decision = "dismiss" // dismisses the reviewer's earlier approval
+	Comment        Decision = "comment"
+)
+
+// Review is one review in a scenario: who reviewed and what they decided.
+type Review struct {
+	Reviewer string
+	Decision Decision
+}
+
+// Reviews is a change's review history: its author and its reviews, in the
+// order they were made.
+type Reviews struct {
+	Author  string
+	Reviews []Review
+}
+
+// ReviewInputFactory builds the platform's server.PullRequest over a pull
+// request whose author and review history are r. It fails t when it cannot.
+type ReviewInputFactory func(t *testing.T, r Reviews) server.PullRequest
+
+// RunReviewInputContract checks a hosted platform's
+// PullRequest.ReviewInput: the author is reported; each reviewer's latest
+// decision counts, so a later change request or dismissal cancels an
+// approval and a comment changes nothing; approvals are sorted and
+// deduplicated; and the author's own approval is left to self_approve
+// rules.
+func RunReviewInputContract(t *testing.T, newReader ReviewInputFactory) {
+	t.Helper()
+	scenario := Reviews{
+		Author: "Author",
+		Reviews: []Review{
+			{"ann", Approve},
+			{"bo", Approve},
+			{"ann", Approve},
+			{"cy", Approve},
+			{"cy", RequestChanges},
+			{"dee", Approve},
+			{"dee", Dismiss},
+			{"eve", Comment},
+			{"fay", Approve},
+			{"fay", Comment},
+			{"gil", RequestChanges},
+			{"gil", Approve},
+			{"Author", Approve},
+		},
+	}
+
+	t.Run("the author is reported", func(t *testing.T) {
+		in, err := newReader(t, scenario).ReviewInput(t.Context())
+		if err != nil {
+			t.Fatalf("ReviewInput: %v", err)
+		}
+		if !strings.EqualFold(in.Author, "Author") {
+			t.Errorf("Author = %q, want Author", in.Author)
+		}
+	})
+
+	t.Run("approvals are each reviewer's latest decision", func(t *testing.T) {
+		in, err := newReader(t, scenario).ReviewInput(t.Context())
+		if err != nil {
+			t.Fatalf("ReviewInput: %v", err)
+		}
+		got := make([]string, len(in.Approvers))
+		for i, a := range in.Approvers {
+			got[i] = strings.ToLower(a)
+		}
+		if want := []string{"ann", "bo", "fay", "gil"}; !slices.Equal(got, want) {
+			t.Errorf("Approvers = %v, want %v (sorted, deduplicated; change requests and dismissals cancel, comments don't, the author's own approval is left out)", in.Approvers, want)
+		}
+	})
+
+	t.Run("no reviews, no approvals", func(t *testing.T) {
+		in, err := newReader(t, Reviews{Author: "Author"}).ReviewInput(t.Context())
+		if err != nil {
+			t.Fatalf("ReviewInput: %v", err)
+		}
+		if len(in.Approvers) != 0 {
+			t.Errorf("Approvers = %v, want none", in.Approvers)
+		}
+	})
+}
+
+// StatusReport is one status a platform recorded: the name it is reported
+// under (later reports under the same name replace earlier ones), the
+// platform's state, and the summary as published.
+type StatusReport struct {
+	Name    string
+	State   string
+	Summary string
+}
+
+// StatusReporterFactory builds the platform's server.PullRequest, and a
+// function returning every status the platform's fake has recorded, in
+// order. It fails t when it cannot.
+type StatusReporterFactory func(t *testing.T) (server.PullRequest, func() []StatusReport)
+
+// RunStatusReporterContract checks a hosted platform's
+// PullRequest.Report: each Report publishes exactly one status, each
+// verdict maps to a distinct platform state, a later report replaces the
+// earlier one, and an oversized summary is cut rather than rejected.
+func RunStatusReporterContract(t *testing.T, newReporter StatusReporterFactory) {
+	t.Helper()
+
+	t.Run("each verdict is one report in a distinct state", func(t *testing.T) {
+		r, observe := newReporter(t)
+		verdicts := []review.Verdict{review.Passed, review.Pending, review.Failed, review.Errored}
+		for _, v := range verdicts {
+			if err := r.Report(t.Context(), review.Outcome{Verdict: v, Summary: string(v)}); err != nil {
+				t.Fatalf("Report(%s): %v", v, err)
+			}
+		}
+		got := observe()
+		if len(got) != len(verdicts) {
+			t.Fatalf("reports = %d, want one per Report call (%d)", len(got), len(verdicts))
+		}
+		states := map[string]bool{}
+		for i, s := range got {
+			states[s.State] = true
+			if s.Summary != string(verdicts[i]) {
+				t.Errorf("report %d summary = %q, want %q", i, s.Summary, verdicts[i])
+			}
+		}
+		if len(states) != len(verdicts) {
+			t.Errorf("states = %v, want a distinct state per verdict", got)
+		}
+	})
+
+	t.Run("a later report replaces the earlier one", func(t *testing.T) {
+		r, observe := newReporter(t)
+		for _, v := range []review.Verdict{review.Pending, review.Passed} {
+			if err := r.Report(t.Context(), review.Outcome{Verdict: v, Summary: "s"}); err != nil {
+				t.Fatalf("Report(%s): %v", v, err)
+			}
+		}
+		got := observe()
+		if len(got) != 2 || got[0].Name == "" || got[0].Name != got[1].Name {
+			t.Errorf("reports = %+v, want two under the same non-empty name", got)
+		}
+	})
+
+	t.Run("an oversized summary is cut, not rejected", func(t *testing.T) {
+		r, observe := newReporter(t)
+		long := strings.Repeat("ü", 100_000)
+		if err := r.Report(t.Context(), review.Outcome{Verdict: review.Failed, Summary: long}); err != nil {
+			t.Fatalf("Report: %v", err)
+		}
+		got := observe()
+		if len(got) != 1 || got[0].Summary == "" || len(got[0].Summary) >= len(long) {
+			t.Errorf("reports = %d, want one with a cut, non-empty summary", len(got))
+		}
+	})
 }

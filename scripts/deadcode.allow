@@ -3,10 +3,6 @@
 # matched against "<package path>.<func>" or "<package path>.<Type>.<method>".
 # Lines starting with # are comments.
 
-# The GitHub platform: kept for the review server, which will
-# drive the same engine over a pull request.
-^github\.com/alphaeron/kit/internal/platform/ghplatform\..+$
-
 # The platform contract suite: called only from each platform's tests.
 ^github\.com/alphaeron/kit/internal/platform/platformtest\..+$
 

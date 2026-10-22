@@ -9,7 +9,7 @@ import (
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// TestGitHubFetchReadsBaseRulesFiles: NewEvaluator fetches the rules files
+// TestGitHubFetchReadsBaseRulesFiles: the evaluator fetches the rules files
 // at the base revision and reads no other blob.
 func TestGitHubFetchReadsBaseRulesFiles(t *testing.T) {
 	fake := &fakeGitHub{base: map[string]string{
@@ -22,7 +22,7 @@ func TestGitHubFetchReadsBaseRulesFiles(t *testing.T) {
 `,
 		"readme.md": "# Readme\n",
 	}}
-	rules, err := NewEvaluator(fake.client(t), "o", "r", "abc123", testLogger()).Fetch.Execute(t.Context())
+	rules, err := newEvaluator(newBaseTree(fake.client(t), "o", "r", "abc123"), nil, testLogger()).Fetch.Execute(t.Context())
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

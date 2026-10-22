@@ -2,12 +2,18 @@ package config
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/alphaeron/kit/internal/brand"
 )
@@ -80,7 +86,8 @@ func TestLoadPlatformSectionFromEnv(t *testing.T) {
 		t.Errorf("github = %+v, want the environment's app_id and webhook_secret", got.GitHub)
 	}
 	if !reflect.DeepEqual(configKeys(reflect.TypeFor[Config](), ""), []string{
-		"verbose", "serve_addr", "github.app_id", "github.private_key", "github.webhook_secret",
+		"verbose", "serve_addr", "review_timeout", "review_workers",
+		"github.app_id", "github.private_key", "github.webhook_secret", "github.api_url",
 	}) {
 		t.Errorf("configKeys = %v, want every tagged field, sections dotted", configKeys(reflect.TypeFor[Config](), ""))
 	}
@@ -228,4 +235,157 @@ func TestLoadSetsDefaultLoggerToRequestedLevel(t *testing.T) {
 	if slog.Default() == nil || slog.Default().Handler() == nil {
 		t.Error("slog.Default() must be a working logger after Load")
 	}
+}
+
+// testKeyPEM is a fresh RSA key in PKCS #1 PEM.
+func testKeyPEM(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+}
+
+func TestGitHubValidate(t *testing.T) {
+	key := testKeyPEM(t)
+	valid := GitHub{AppID: "12", PrivateKey: key, WebhookSecret: "s"}
+	tests := []struct {
+		name string
+		g    GitHub
+		want []string // substrings of the error; none means valid
+	}{
+		{name: "complete", g: valid},
+		{name: "enterprise URL", g: GitHub{AppID: "12", PrivateKey: key, WebhookSecret: "s", APIURL: "https://ghe.example.com/api/v3"}},
+		{name: "missing keys", g: GitHub{AppID: "12"}, want: []string{"github.private_key is required", "github.webhook_secret is required"}},
+		{name: "non-numeric app id", g: GitHub{AppID: "abc", PrivateKey: key, WebhookSecret: "s"}, want: []string{"app_id must be a positive integer"}},
+		{name: "key not PEM", g: GitHub{AppID: "12", PrivateKey: "not a key", WebhookSecret: "s"}, want: []string{"private_key is not PEM"}},
+		{name: "relative API URL", g: GitHub{AppID: "12", PrivateKey: key, WebhookSecret: "s", APIURL: "/api"}, want: []string{"api_url must be an absolute"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.g.Validate()
+			if len(tt.want) == 0 {
+				if err != nil {
+					t.Fatalf("Validate = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Validate = nil, want %v", tt.want)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("Validate = %q, want it to contain %q", err, w)
+				}
+			}
+			if strings.Contains(err.Error(), "not a key") {
+				t.Errorf("Validate = %q quotes the private key", err)
+			}
+		})
+	}
+}
+
+func TestGitHubEnabledAndBaseURL(t *testing.T) {
+	if (GitHub{}).Enabled() {
+		t.Error("empty section Enabled = true")
+	}
+	if !(GitHub{WebhookSecret: "s"}).Enabled() {
+		t.Error("section with a key Enabled = false")
+	}
+	if got := (GitHub{}).BaseURL(); got != DefaultGitHubAPIURL {
+		t.Errorf("BaseURL = %q, want %q", got, DefaultGitHubAPIURL)
+	}
+	if got := (GitHub{APIURL: "https://ghe/api/v3"}).BaseURL(); got != "https://ghe/api/v3/" {
+		t.Errorf("BaseURL = %q, want a trailing slash", got)
+	}
+}
+
+func TestSelectedPlatform(t *testing.T) {
+	complete := GitHub{AppID: "1", PrivateKey: testKeyPEM(t), WebhookSecret: "s"}
+	tests := []struct {
+		name    string
+		cfg     Config
+		want    Platform
+		wantErr bool
+	}{
+		{name: "nothing configured", cfg: Config{}},
+		{name: "github section configured", cfg: Config{GitHub: complete}, want: PlatformGitHub},
+		{name: "only the app id", cfg: Config{GitHub: GitHub{AppID: "1"}}, wantErr: true},
+		{name: "only the api url", cfg: Config{GitHub: GitHub{APIURL: "https://ghe/api/v3/"}}, wantErr: true},
+		{name: "all but the webhook secret", cfg: Config{GitHub: GitHub{AppID: "1", PrivateKey: complete.PrivateKey}}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.cfg.SelectedPlatform()
+			if (err != nil) != tt.wantErr || got != tt.want {
+				t.Errorf("SelectedPlatform = %q, %v; want %q, error %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestSelectedPlatformFromTheEnvironment: the deployment's environment
+// alone selects the platform, with no platform key and no config file
+// settings.
+func TestSelectedPlatformFromTheEnvironment(t *testing.T) {
+	t.Run("none configured", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, "verbose: false\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got, err := cfg.SelectedPlatform(); got != "" || err != nil {
+			t.Errorf("SelectedPlatform = %q, %v; want none", got, err)
+		}
+	})
+	t.Run("github from its variables", func(t *testing.T) {
+		withEnv(t, map[string]string{
+			brand.EnvPrefix + "GITHUB_APP_ID":         "1",
+			brand.EnvPrefix + "GITHUB_PRIVATE_KEY":    testKeyPEM(t),
+			brand.EnvPrefix + "GITHUB_WEBHOOK_SECRET": "s",
+		})
+		cfg, err := Load(writeConfig(t, "verbose: false\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got, err := cfg.SelectedPlatform(); got != PlatformGitHub || err != nil {
+			t.Errorf("SelectedPlatform = %q, %v; want %q", got, err, PlatformGitHub)
+		}
+	})
+	t.Run("a partly configured platform is an error", func(t *testing.T) {
+		withEnv(t, map[string]string{brand.EnvPrefix + "GITHUB_APP_ID": "1"})
+		cfg, err := Load(writeConfig(t, "verbose: false\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if _, err := cfg.SelectedPlatform(); err == nil {
+			t.Error("SelectedPlatform with only the app ID succeeded, want an error")
+		}
+	})
+}
+
+func TestLoadServerSettings(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		got, err := Load(writeConfig(t, "verbose: false\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got.ReviewTimeout != DefaultReviewTimeout || got.ReviewWorkers != DefaultReviewWorkers {
+			t.Errorf("review_timeout, review_workers = %v, %d; want the defaults", got.ReviewTimeout, got.ReviewWorkers)
+		}
+	})
+	t.Run("from the environment", func(t *testing.T) {
+		withEnv(t, map[string]string{
+			brand.EnvPrefix + "REVIEW_TIMEOUT": "30s",
+			brand.EnvPrefix + "REVIEW_WORKERS": "9",
+			brand.EnvPrefix + "GITHUB_API_URL": "https://ghe/api/v3/",
+		})
+		got, err := Load(writeConfig(t, "verbose: false\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got.ReviewTimeout != 30*time.Second || got.ReviewWorkers != 9 || got.GitHub.APIURL != "https://ghe/api/v3/" {
+			t.Errorf("config = %+v, want the environment's server settings", got)
+		}
+	})
 }

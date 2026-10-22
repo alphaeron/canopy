@@ -46,10 +46,11 @@ var rootCmd = &cobra.Command{
 	Long: "The " + brand.Name + ` CLI allows for checking code ownership using the local branch
 contents before opening a pull or merge request.
 
-The local branch rules file contents are used rather than a remote main
-branch. Every command runs against the local repository; the same analysis
-is exposed by the REST server against a hosted change such as a GitHub pull
-request (a separate binary, not a subcommand here).`,
+The local branch's rules files are used, uncommitted changes included, so
+the CLI previews the rules a branch proposes; the review server enforces the
+rules of a pull request's base branch instead. Every command runs against the
+local repository; the review server (kitweb, a separate binary) runs the same
+review against a hosted change such as a pull request.`,
 	// PersistentPreRunE runs after cobra has finished parsing every flag for
 	// the command tree, making --config available. It is the single moment
 	// configuration is loaded, so the resolved set of prefixed environment

@@ -1,0 +1,384 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/kit/internal/rulesfile"
+)
+
+// stubWebhook is a PRWebhook whose deliveries verify with the header
+// "X-Token: ok" and whose events name changes in a map.
+type stubWebhook struct {
+	name     string
+	path     string                 // "" serves at /webhooks/{name}
+	maxBytes int64                  // 0 allows 1 KiB
+	noTypes  bool                   // declares no content types
+	changes  map[string]PullRequest // event to the change it starts
+}
+
+func (p *stubWebhook) Name() string { return p.name }
+
+func (p *stubWebhook) WebhookPath() string {
+	if p.path != "" {
+		return p.path
+	}
+	return "/webhooks/" + p.name
+}
+
+func (p *stubWebhook) WebhookMaxBytes() int64 {
+	if p.maxBytes != 0 {
+		return p.maxBytes
+	}
+	return 1 << 10
+}
+
+func (p *stubWebhook) WebhookContentTypes() []string {
+	if p.noTypes {
+		return nil
+	}
+	return []string{"application/json"}
+}
+
+func (p *stubWebhook) WebhookDescription() string { return "The stub webhook, verified by `X-Token`." }
+
+func (p *stubWebhook) VerifyWebhook(r *http.Request) (string, []byte, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return "", nil, err
+	}
+	if r.Header.Get("X-Token") != "ok" {
+		return "", nil, errors.New("bad token")
+	}
+	return r.Header.Get("X-Event"), body, nil
+}
+
+func (p *stubWebhook) PullRequest(event string, body []byte) (PullRequest, bool, error) {
+	if event == "malformed" {
+		return nil, false, errors.New("malformed event")
+	}
+	c, ok := p.changes[event]
+	return c, ok, nil
+}
+
+// stubPullRequest is an in-memory pull request: rules at the base, rules files
+// it proposes, its changed files and review input, and what it reported.
+type stubPullRequest struct {
+	rules      rulesfile.Set
+	fetchErr   error
+	head       map[string]string
+	changed    []string
+	changedErr error
+	input      approval.ReviewInput
+	// block makes ChangedFiles wait until its context is done.
+	block bool
+
+	// headErr makes ReadHead fail.
+	headErr error
+
+	mu      sync.Mutex
+	reports []review.Outcome
+	done    chan struct{} // closed on the first report
+}
+
+func newStubPullRequest() *stubPullRequest {
+	return &stubPullRequest{
+		rules: rulesfile.Set{rulesfile.FileName: {{Pattern: ".*", Name: "Root",
+			Approvers: rulesfile.ApproverTargets{{Target: "lead", RequiredCount: 1}}}}},
+		changed: []string{"main.go"},
+		done:    make(chan struct{}),
+	}
+}
+
+func (c *stubPullRequest) Evaluator() *approval.Evaluator {
+	return &approval.Evaluator{
+		Fetch:    fetchFunc(func(context.Context) (rulesfile.Set, error) { return c.rules, c.fetchErr }),
+		Resolver: &usersOnly{},
+		Log:      slog.New(slog.DiscardHandler),
+	}
+}
+
+func (c *stubPullRequest) AllFiles(context.Context) ([]string, error) { return c.changed, nil }
+
+func (c *stubPullRequest) ChangedFiles(ctx context.Context) ([]string, error) {
+	if c.block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return c.changed, c.changedErr
+}
+
+func (c *stubPullRequest) DiffContent(context.Context, string) (string, error) { return "", nil }
+
+func (c *stubPullRequest) ReviewInput(context.Context) (approval.ReviewInput, error) {
+	return c.input, nil
+}
+
+func (c *stubPullRequest) ReadHead(_ context.Context, path string) ([]byte, error) {
+	if c.headErr != nil {
+		return nil, c.headErr
+	}
+	data, ok := c.head[path]
+	if !ok {
+		return nil, &fs.PathError{Op: "read", Path: path, Err: fs.ErrNotExist}
+	}
+	return []byte(data), nil
+}
+
+func (c *stubPullRequest) Report(_ context.Context, o review.Outcome) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reports = append(c.reports, o)
+	if len(c.reports) == 1 {
+		close(c.done)
+	}
+	return nil
+}
+
+// wait waits for the change's review to be reported.
+func (c *stubPullRequest) wait(t *testing.T) {
+	t.Helper()
+	select {
+	case <-c.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the review was never reported")
+	}
+}
+
+// fetchFunc is an approval.Fetcher from a function.
+type fetchFunc func(context.Context) (rulesfile.Set, error)
+
+func (f fetchFunc) Execute(ctx context.Context) (rulesfile.Set, error) { return f(ctx) }
+
+// usersOnly resolves every target to itself and rejects targets with a
+// slash, as a platform with target syntax does.
+type usersOnly struct {
+	approval.DefaultApproverResolver
+}
+
+func (*usersOnly) ValidateTarget(target string) error {
+	if strings.Contains(target, "/") {
+		return fmt.Errorf("%w: %q", approval.ErrInvalidTarget, target)
+	}
+	return nil
+}
+
+// testOptions are server options for tests: one worker, a short queue.
+func testOptions() Options {
+	return Options{Workers: 1, Queue: 4, ReviewTimeout: time.Minute, Version: "test", Log: slog.New(slog.DiscardHandler)}
+}
+
+// newTestServer starts a server over webhook whose reviews run until the
+// test ends.
+func newTestServer(t *testing.T, opts Options, webhook PRWebhook) *Server {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := New(ctx, opts, webhook)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { cancel(); s.Wait() })
+	return s
+}
+
+// post delivers a webhook to s at path, and returns the status code and
+// the decoded JSON response.
+func post(t *testing.T, s *Server, path, event, token string) (int, map[string]any) {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"any":"payload"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Event", event)
+	r.Header.Set("X-Token", token)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	return w.Code, body
+}
+
+// TestWebhookBodyIsBoundedByThePlatform: a body over the platform's limit
+// never verifies.
+func TestWebhookBodyIsBoundedByThePlatform(t *testing.T) {
+	s := newTestServer(t, testOptions(), &stubWebhook{name: "stub", maxBytes: 4})
+	if code, _ := post(t, s, "/webhooks/stub", "pr", "ok"); code == http.StatusAccepted {
+		t.Errorf("webhook over the platform's limit = %d, want it refused", code)
+	}
+}
+
+func TestWebhookRejectsUnverifiedRequests(t *testing.T) {
+	c := newStubPullRequest()
+	s := newTestServer(t, testOptions(), &stubWebhook{name: "stub", changes: map[string]PullRequest{"pr": c}})
+	if code, _ := post(t, s, "/webhooks/stub", "pr", "forged"); code != http.StatusUnauthorized {
+		t.Errorf("unverified webhook = %d, want 401", code)
+	}
+	if len(s.pool.jobs) != 0 {
+		t.Error("an unverified webhook queued a review")
+	}
+}
+
+func TestWebhookIgnoresEventsThatDoNotStartAReview(t *testing.T) {
+	s := newTestServer(t, testOptions(), &stubWebhook{name: "stub"})
+	code, body := post(t, s, "/webhooks/stub", "ping", "ok")
+	if code != http.StatusAccepted || body["queued"] != false {
+		t.Errorf("ignored event = %d %v, want 202 with queued false", code, body)
+	}
+	if code, _ := post(t, s, "/webhooks/stub", "malformed", "ok"); code != http.StatusBadRequest {
+		t.Errorf("malformed event = %d, want 400", code)
+	}
+}
+
+// TestWebhookReviewsAndReportsOnce: a reviewable webhook is acknowledged
+// with 202 before the review runs, and the review reports exactly once.
+func TestWebhookReviewsAndReportsOnce(t *testing.T) {
+	c := newStubPullRequest()
+	c.input = approval.ReviewInput{Author: "dev", Approvers: []string{"lead"}}
+	s := newTestServer(t, testOptions(), &stubWebhook{name: "stub", changes: map[string]PullRequest{"pr": c}})
+
+	code, body := post(t, s, "/webhooks/stub", "pr", "ok")
+	if code != http.StatusAccepted || body["queued"] != true {
+		t.Fatalf("webhook = %d %v, want 202 with queued true", code, body)
+	}
+	c.wait(t)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.reports) != 1 || c.reports[0].Verdict != review.Passed {
+		t.Errorf("reports = %+v, want one passed report", c.reports)
+	}
+}
+
+// TestServerServesThePlatformsPath: the webhook is served at the path the
+// platform chooses, and New refuses a webhook it cannot serve.
+func TestServerServesThePlatformsPath(t *testing.T) {
+	pr := newStubPullRequest()
+	s := newTestServer(t, testOptions(), &stubWebhook{name: "stub", path: "/hooks/stub/events", changes: map[string]PullRequest{"pr": pr}})
+	if code, _ := post(t, s, "/hooks/stub/events", "pr", "ok"); code != http.StatusAccepted {
+		t.Fatalf("webhook at the platform's path = %d, want 202", code)
+	}
+	pr.wait(t)
+	if code, _ := post(t, s, "/webhooks/stub", "pr", "ok"); code != http.StatusNotFound {
+		t.Errorf("webhook at another path = %d, want 404", code)
+	}
+	for _, w := range []*stubWebhook{
+		{name: ""},
+		{name: "stub", path: "webhooks/stub"},
+		{name: "stub", path: "/swagger"},
+		{name: "stub", path: "/openapi.json"},
+		{name: "stub", maxBytes: -1},
+		{name: "stub", noTypes: true},
+	} {
+		if _, err := New(t.Context(), testOptions(), w); err == nil {
+			t.Errorf("New with %+v succeeded, want an error", w)
+		}
+	}
+	if _, err := New(t.Context(), testOptions(), nil); err == nil {
+		t.Error("New with no platform succeeded, want an error")
+	}
+}
+
+func TestServerServesItsOpenAPIDocument(t *testing.T) {
+	s := newTestServer(t, testOptions(), &stubWebhook{name: "stub"})
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, OpenAPIPath+".json", nil))
+	var doc struct {
+		OpenAPI string `json:"openapi"`
+		Paths   map[string]map[string]struct {
+			Description string `json:"description"`
+			RequestBody struct {
+				Content map[string]any `json:"content"`
+			} `json:"requestBody"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode OpenAPI document: %v", err)
+	}
+	post, ok := doc.Paths["/webhooks/stub"]["post"]
+	if !strings.HasPrefix(doc.OpenAPI, "3.1") || !ok {
+		t.Fatalf("OpenAPI %s paths %v, want 3.1 with POST /webhooks/stub", doc.OpenAPI, doc.Paths)
+	}
+	if !strings.Contains(post.Description, "verified by `X-Token`") || post.RequestBody.Content["application/json"] == nil {
+		t.Errorf("webhook operation = %+v, want the platform's description and content types", post)
+	}
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, DocsPath, nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "swagger-ui") {
+		t.Errorf("docs page = %d, want 200 with Swagger UI", w.Code)
+	}
+}
+
+func TestWebhookRefusesWhenTheQueueIsFull(t *testing.T) {
+	blocked := newStubPullRequest()
+	blocked.block = true
+	opts := testOptions()
+	opts.Queue = 1
+	s := newTestServer(t, opts, &stubWebhook{name: "stub", changes: map[string]PullRequest{"pr": blocked}})
+	codes := map[int]int{}
+	// One review occupies the worker and one waits; the rest are refused.
+	for range 4 {
+		code, _ := post(t, s, "/webhooks/stub", "pr", "ok")
+		codes[code]++
+	}
+	if codes[http.StatusServiceUnavailable] == 0 {
+		t.Errorf("responses = %v, want 503 once the queue is full", codes)
+	}
+}
+
+// TestShutdownCancelsInFlightReviews: cancelling the server's context stops
+// a running review, which then reports nothing.
+func TestShutdownCancelsInFlightReviews(t *testing.T) {
+	c := newStubPullRequest()
+	c.block = true
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := New(ctx, testOptions(), &stubWebhook{name: "stub", changes: map[string]PullRequest{"pr": c}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if code, _ := post(t, s, "/webhooks/stub", "pr", "ok"); code != http.StatusAccepted {
+		t.Fatalf("webhook = %d, want 202", code)
+	}
+	cancel()
+	stopped := make(chan struct{})
+	go func() { s.Wait(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait did not return after the context was cancelled")
+	}
+	if len(c.reports) != 0 {
+		t.Errorf("reports = %v, want none from a cancelled review", c.reports)
+	}
+	if code, _ := post(t, s, "/webhooks/stub", "pr", "ok"); code != http.StatusServiceUnavailable {
+		t.Errorf("webhook after shutdown = %d, want 503", code)
+	}
+}
+
+// TestReviewTimeoutIsReported: a review that runs out of time still
+// reports, as failed.
+func TestReviewTimeoutIsReported(t *testing.T) {
+	c := newStubPullRequest()
+	c.block = true
+	opts := testOptions()
+	opts.ReviewTimeout = 10 * time.Millisecond
+	s := newTestServer(t, opts, &stubWebhook{name: "stub", changes: map[string]PullRequest{"pr": c}})
+	if code, _ := post(t, s, "/webhooks/stub", "pr", "ok"); code != http.StatusAccepted {
+		t.Fatalf("webhook = %d, want 202", code)
+	}
+	c.wait(t)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.reports) != 1 || c.reports[0] != (review.Outcome{Verdict: review.Errored, Summary: "review timed out"}) {
+		t.Errorf("reports = %+v, want one failed for the timeout", c.reports)
+	}
+}
