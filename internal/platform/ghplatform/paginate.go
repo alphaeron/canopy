@@ -1,6 +1,6 @@
 package ghplatform
 
-import "github.com/google/go-github/v71/github"
+import "github.com/google/go-github/v93/github"
 
 // perPage is the largest page GitHub serves for the listings the platform
 // reads, so a long listing costs as few calls as possible.

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/google/go-github/v71/github"
+	"github.com/google/go-github/v93/github"
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/review"
@@ -76,7 +76,11 @@ func TestGitHubChangedFilesAndDiffFromListedFiles(t *testing.T) {
 // approver resolution both come from GitHub, bound to the pull request, and
 // it has no on-disk root.
 func TestGitHubSourceIsOnTheGitHubPlatform(t *testing.T) {
-	src := newSource(&pullRequest{owner: "o", repo: "r", baseSHA: "x"}, github.NewClient(nil), nil)
+	client, err := github.NewClient()
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	src := newSource(&pullRequest{owner: "o", repo: "r", baseSHA: "x"}, client, nil)
 	fetch, ok := src.Evaluator().Fetch.(*approval.TreeFetcher)
 	if !ok {
 		t.Fatalf("fetcher = %T, want *approval.TreeFetcher", src.Evaluator().Fetch)

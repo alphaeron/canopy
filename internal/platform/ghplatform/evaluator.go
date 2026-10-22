@@ -6,7 +6,7 @@ package ghplatform
 import (
 	"log/slog"
 
-	"github.com/google/go-github/v71/github"
+	"github.com/google/go-github/v93/github"
 
 	"github.com/alphaeron/kit/internal/approval"
 )

@@ -10,14 +10,13 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/google/go-github/v71/github"
+	"github.com/google/go-github/v93/github"
 
 	"github.com/alphaeron/kit/internal/platform/platformtest"
 )
@@ -115,12 +114,17 @@ func (f *fakeGitHub) client(t *testing.T) *github.Client {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := github.NewClient(nil)
-	u, err := url.Parse(srv.URL + "/")
+	return newTestClient(t, srv.URL)
+}
+
+// newTestClient returns a client whose API requests go to baseURL.
+func newTestClient(t *testing.T, baseURL string) *github.Client {
+	t.Helper()
+	u := baseURL + "/"
+	client, err := github.NewClient(github.WithURLs(&u, nil))
 	if err != nil {
-		t.Fatalf("parse fake URL: %v", err)
+		t.Fatalf("new client: %v", err)
 	}
-	client.BaseURL = u
 	return client
 }
 

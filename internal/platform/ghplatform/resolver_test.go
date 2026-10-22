@@ -6,12 +6,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"reflect"
 	"sync/atomic"
 	"testing"
 
-	"github.com/google/go-github/v71/github"
+	"github.com/google/go-github/v93/github"
 
 	"github.com/alphaeron/kit/internal/approval"
 )
@@ -41,9 +40,7 @@ func teamAPI(t *testing.T) (*github.Client, *atomic.Int32) {
 	})
 	srv = httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	client := github.NewClient(nil)
-	client.BaseURL, _ = url.Parse(srv.URL + "/")
-	return client, &calls
+	return newTestClient(t, srv.URL), &calls
 }
 
 func TestGitHubApproverResolverExpandsTeams(t *testing.T) {
