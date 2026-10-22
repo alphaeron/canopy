@@ -14,7 +14,7 @@ import (
 )
 
 // githubName is what GitHub allows in an organization login or team slug.
-// Targets come from KIT files, which are untrusted input, and go-github
+// Targets come from rules files, which are untrusted input, and go-github
 // interpolates both into the request path unescaped, so anything else is
 // rejected before it reaches the API.
 var githubName = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$`)

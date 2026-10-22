@@ -10,23 +10,23 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
 // rulesRemoveCmd deletes one rule by its pattern. A rule is identified by
-// its pattern within its KIT file; without --file the KIT file is found as
-// for rules edit (see kitSet.ruleTarget).
+// its pattern within its rules file; without --file the rules file is found as
+// for rules edit (see rulesSet.ruleTarget).
 var rulesRemoveCmd = &cobra.Command{
 	Use:         "remove <pattern>",
-	Short:       "Remove a rule from a KIT file",
+	Short:       "Remove a rule from a rules file",
 	Args:        cobra.ExactArgs(1),
 	Annotations: map[string]string{"arg": "the pattern of the rule to remove"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pattern := args[0]
 		force, _ := cmd.Flags().GetBool("force")
 		mode, _ := resolveOutputMode(cmd)
-		s, err := openKitSet(cmd.Context())
+		s, err := openRulesSet(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -55,13 +55,13 @@ var rulesRemoveCmd = &cobra.Command{
 	},
 }
 
-// removeRule removes the rule keyed by pattern from kitFile, for the CLI and
+// removeRule removes the rule keyed by pattern from rulesFile, for the CLI and
 // the TUI alike, and returns the confirmation message.
-func removeRule(s *kitSet, kitFile, pattern string) (string, error) {
-	if _, err := s.mutate(kitFile, func(k *kitfile.File) error { return k.Remove(pattern) }); err != nil {
+func removeRule(s *rulesSet, rulesFile, pattern string) (string, error) {
+	if _, err := s.mutate(rulesFile, func(k *rulesfile.File) error { return k.Remove(pattern) }); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("removed rule %q from %s", pattern, kitFile), nil
+	return fmt.Sprintf("removed rule %q from %s", pattern, rulesFile), nil
 }
 
 // confirm prints a prompt to out when out is attached to a terminal, reads
@@ -85,8 +85,8 @@ func confirm(in io.Reader, out io.Writer) bool {
 }
 
 func init() {
-	kitFileFlag(rulesRemoveCmd, "the KIT file holding the rule (default: the one KIT file with that pattern)")
+	rulesFileFlag(rulesRemoveCmd, "the rules file holding the rule (default: the one rules file with that pattern)")
 	rulesRemoveCmd.Flags().Bool("force", false, "skip the interactive confirmation prompt")
-	tuiUnset(rulesRemoveCmd, "file", "the KIT file declaring the pattern")
+	tuiUnset(rulesRemoveCmd, "file", "the rules file declaring the pattern")
 	rulesCmd.AddCommand(rulesRemoveCmd)
 }

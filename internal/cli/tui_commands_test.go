@@ -14,11 +14,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// TestRoutesMirrorCommandTree is the parity contract: every command `kit
+// TestRoutesMirrorCommandTree is the parity contract: every command
 // --help` lists, at any depth, is a TUI route whose options are exactly the
 // command's argument and visible flags. Shell completion is CLI only.
 func TestRoutesMirrorCommandTree(t *testing.T) {
@@ -49,11 +50,11 @@ func TestRoutesMirrorCommandTree(t *testing.T) {
 			name := commandName(sub)
 			r, ok := routes[name]
 			if !ok {
-				t.Errorf("kit %s has no TUI route", name)
+				t.Errorf(brand.Command+" %s has no TUI route", name)
 				continue
 			}
 			if (r.Load == nil) == (r.Run == nil) {
-				t.Errorf("kit %s: a route must either show a page or run", name)
+				t.Errorf(brand.Command+" %s: a route must either show a page or run", name)
 			}
 			want := map[string]bool{}
 			if a, ok := argParam(sub.Use); ok {
@@ -69,7 +70,7 @@ func TestRoutesMirrorCommandTree(t *testing.T) {
 				got[p.Name] = true
 			}
 			if !reflect.DeepEqual(got, want) {
-				t.Errorf("kit %s options = %v, want its argument and flags %v", name, slices.Sorted(maps.Keys(got)), slices.Sorted(maps.Keys(want)))
+				t.Errorf(brand.Command+" %s options = %v, want its argument and flags %v", name, slices.Sorted(maps.Keys(got)), slices.Sorted(maps.Keys(want)))
 			}
 		}
 	}
@@ -84,7 +85,7 @@ func TestRoutesMirrorCommandTree(t *testing.T) {
 		"review", "rules get", "rules list", "rules remove", "validate",
 	} {
 		if _, ok := routes[name]; !ok {
-			t.Errorf("no route for kit %s", name)
+			t.Errorf("no route for "+brand.Command+" %s", name)
 		}
 	}
 }
@@ -128,7 +129,7 @@ func TestRuleParams(t *testing.T) {
 	if p := add["approver"]; !strings.Contains(p.Help, "comma-separated") {
 		t.Errorf("add --approver help = %q", p.Help)
 	}
-	if p := add["file"]; p.Unset != "the repository-root KIT" {
+	if p := add["file"]; p.Unset != "the repository-root rules file" {
 		t.Errorf("add --file = %+v", p)
 	}
 }
@@ -139,7 +140,7 @@ func TestValuesFromRepeatedFlag(t *testing.T) {
 	cmd := &cobra.Command{Use: "add"}
 	cmd.Flags().StringSlice("approver", nil, "")
 	cmd.Flags().Bool("self-approve", false, "")
-	(&cobra.Command{Use: "kit"}).AddCommand(cmd)
+	(&cobra.Command{Use: brand.Command}).AddCommand(cmd)
 	if err := cmd.ParseFlags([]string{"--approver", "org/sec,1", "--approver", "lead,2", "--self-approve=false"}); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -184,7 +185,7 @@ func TestRuleFieldsFrom(t *testing.T) {
 // TestRuleCommandsFromValues runs rules add, edit, and remove as the TUI
 // does, with the CLI's semantics.
 func TestRuleCommandsFromValues(t *testing.T) {
-	s := newTestKitSet(t, map[string]kitfile.Rules{"KIT": {}, "svc/KIT": {}})
+	s := newTestRulesSet(t, map[string]rulesfile.Rules{rulesfile.FileName: {}, rulesfile.PathInDir("svc"): {}})
 	flags := func(kv ...string) map[string]string {
 		m := map[string]string{}
 		for i := 0; i+1 < len(kv); i += 2 {
@@ -196,40 +197,40 @@ func TestRuleCommandsFromValues(t *testing.T) {
 	if _, err := addFromValues(s, tui.Values{Flags: flags("pattern", `.*\.go`, "name", "root", "approver", "org/sec,1")}); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if got := loadRules(t, s, "KIT"); len(got) != 1 || got[0].Name != "root" || len(got[0].Approvers) != 1 {
-		t.Fatalf("add without --file must write the repository-root KIT: %+v", got)
+	if got := loadRules(t, s, rulesfile.FileName); len(got) != 1 || got[0].Name != "root" || len(got[0].Approvers) != 1 {
+		t.Fatalf("add without --file must write the repository-root rules file: %+v", got)
 	}
 	if _, err := addFromValues(s, tui.Values{Flags: flags("pattern", `.*\.go`, "name", "svc", "self-approve", "true", "file", "svc")}); err != nil {
 		t.Fatalf("add --file: %v", err)
 	}
-	s.rules["KIT"], s.rules["svc/KIT"] = loadRules(t, s, "KIT"), loadRules(t, s, "svc/KIT")
+	s.rules[rulesfile.FileName], s.rules[rulesfile.PathInDir("svc")] = loadRules(t, s, rulesfile.FileName), loadRules(t, s, rulesfile.PathInDir("svc"))
 
 	if _, err := editFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("self-approve", "false")}); err == nil || !strings.Contains(err.Error(), "pass --file") {
 		t.Errorf("an ambiguous edit must ask for --file, got %v", err)
 	}
-	if _, err := editFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("file", "svc/KIT", "self-approve", "false")}); err != nil {
+	if _, err := editFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("file", rulesfile.PathInDir("svc"), "self-approve", "false")}); err != nil {
 		t.Fatalf("edit: %v", err)
 	}
-	if got := loadRules(t, s, "svc/KIT"); got[0].SelfApprove || got[0].Name != "svc" {
+	if got := loadRules(t, s, rulesfile.PathInDir("svc")); got[0].SelfApprove || got[0].Name != "svc" {
 		t.Errorf("edit must set only the given flags: %+v", got[0])
 	}
-	if _, err := editFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("file", "svc/KIT", "name", "", "approver", "")}); err != nil {
+	if _, err := editFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("file", rulesfile.PathInDir("svc"), "name", "", "approver", "")}); err != nil {
 		t.Fatalf("edit --name '' --approver '': %v", err)
 	}
-	if got := loadRules(t, s, "svc/KIT"); got[0].Name != "" || len(got[0].Approvers) != 0 || got[0].CombineStrategy.String() != "union" {
+	if got := loadRules(t, s, rulesfile.PathInDir("svc")); got[0].Name != "" || len(got[0].Approvers) != 0 || got[0].CombineStrategy.String() != "union" {
 		t.Errorf("empty --name and --approver must clear only those fields: %+v", got[0])
 	}
 	if _, err := editFromValues(s, tui.Values{}); err == nil {
 		t.Error("edit without a pattern must fail")
 	}
 
-	if _, err := removeFromValues(s, tui.Values{Args: []string{"nope"}}); !errors.Is(err, kitfile.ErrPatternNotFound) {
+	if _, err := removeFromValues(s, tui.Values{Args: []string{"nope"}}); !errors.Is(err, rulesfile.ErrPatternNotFound) {
 		t.Errorf("removing an unknown pattern = %v", err)
 	}
-	if _, err := removeFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("file", "KIT")}); err != nil {
+	if _, err := removeFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("file", rulesfile.FileName)}); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if got := loadRules(t, s, "KIT"); len(got) != 0 {
+	if got := loadRules(t, s, rulesfile.FileName); len(got) != 0 {
 		t.Errorf("remove left %+v", got)
 	}
 
@@ -251,15 +252,15 @@ func TestInitFromValues(t *testing.T) {
 	if _, err := initFromValues(v); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	k, err := kitfile.Load(filepath.Join("svc", "KIT"))
+	k, err := rulesfile.Load(filepath.Join("svc", rulesfile.FileName))
 	if err != nil || len(k.Rules) != 1 || k.Rules[0].Name != "svc" || k.Rules[0].Approvers[0].Target != "lead" {
-		t.Fatalf("init into a directory must write its KIT with the rule: %+v, %v", k, err)
+		t.Fatalf("init into a directory must write its rules file with the rule: %+v, %v", k, err)
 	}
 	if _, err := initFromValues(v); err == nil || !strings.Contains(err.Error(), "--force") {
-		t.Errorf("init over an existing KIT file must need --force, got %v", err)
+		t.Errorf("init over an existing rules file must need --force, got %v", err)
 	}
 	v.Flags = map[string]string{"force": "true"}
-	if msg, err := initFromValues(v); err != nil || !strings.Contains(msg, "empty KIT file") {
+	if msg, err := initFromValues(v); err != nil || !strings.Contains(msg, "empty rules file") {
 		t.Errorf("init --force = %q, %v", msg, err)
 	}
 }

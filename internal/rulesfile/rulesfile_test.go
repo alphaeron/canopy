@@ -1,9 +1,10 @@
-package kitfile
+package rulesfile
 
 import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -33,7 +34,7 @@ var fixtureRules = Rules{
 // disk, then reloads it through the public Load path.
 func writeFixture(t *testing.T, dir string, rules Rules) *File {
 	t.Helper()
-	path := filepath.Join(dir, "KIT")
+	path := filepath.Join(dir, FileName)
 	kf := &File{Rules: rules}
 	if err := kf.Save(path); err != nil {
 		t.Fatalf("save fixture: %v", err)
@@ -75,7 +76,7 @@ func TestRuleMarshalRoundTripsPattern(t *testing.T) {
 	}
 }
 
-func TestKitFileSaveThenLoadRoundTrips(t *testing.T) {
+func TestRulesFileSaveThenLoadRoundTrips(t *testing.T) {
 	got := writeFixture(t, t.TempDir(), fixtureRules)
 	if len(got.Rules) != len(fixtureRules) {
 		t.Fatalf("rule count = %d, want %d", len(got.Rules), len(fixtureRules))
@@ -88,14 +89,14 @@ func TestKitFileSaveThenLoadRoundTrips(t *testing.T) {
 	}
 }
 
-func TestKitFileLoadMissingFile(t *testing.T) {
+func TestRulesFileLoadMissingFile(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "absent"))
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("expected wrap of os.ErrNotExist, got %v", err)
 	}
 }
 
-func TestKitFileRuleByPattern(t *testing.T) {
+func TestRulesFileRuleByPattern(t *testing.T) {
 	kf := writeFixture(t, t.TempDir(), fixtureRules)
 	if _, ok := kf.RuleByPattern(".*\\.tf$"); !ok {
 		t.Errorf("RuleByPattern: expected to find .*\\.tf$")
@@ -105,22 +106,22 @@ func TestKitFileRuleByPattern(t *testing.T) {
 	}
 }
 
-func TestKitFileAddRejectsDuplicatePattern(t *testing.T) {
+func TestRulesFileAddRejectsDuplicatePattern(t *testing.T) {
 	var kf File
 	if err := kf.Add(fixtureRules[0]); err != nil {
-		t.Fatalf("first Add to empty KitFile: %v", err)
+		t.Fatalf("first Add to empty RulesFile: %v", err)
 	}
 	if err := kf.Add(fixtureRules[0]); err == nil {
 		t.Errorf("Add of the same pattern again must fail with a duplicate error")
 	}
 }
-func TestKitFileAddRejectsInvalidRegex(t *testing.T) {
+func TestRulesFileAddRejectsInvalidRegex(t *testing.T) {
 	var kf File
 	if err := kf.Add(Rule{Pattern: "("}); err == nil {
 		t.Errorf("Add accepted invalid pattern \"(\"")
 	}
 }
-func TestKitFileEditMutatesOnlyTargetRule(t *testing.T) {
+func TestRulesFileEditMutatesOnlyTargetRule(t *testing.T) {
 	kf := writeFixture(t, t.TempDir(), fixtureRules)
 	if err := kf.Edit(".*\\.go$", func(r *Rule) { r.Name = "renamed" }); err != nil {
 		t.Fatalf("Edit: %v", err)
@@ -133,7 +134,7 @@ func TestKitFileEditMutatesOnlyTargetRule(t *testing.T) {
 	}
 }
 
-func TestKitFileEditMissingPattern(t *testing.T) {
+func TestRulesFileEditMissingPattern(t *testing.T) {
 	kf := writeFixture(t, t.TempDir(), fixtureRules)
 	err := kf.Edit("never", func(_ *Rule) {})
 	if !errors.Is(err, ErrPatternNotFound) {
@@ -141,7 +142,7 @@ func TestKitFileEditMissingPattern(t *testing.T) {
 	}
 }
 
-func TestKitFileRemove(t *testing.T) {
+func TestRulesFileRemove(t *testing.T) {
 	kf := writeFixture(t, t.TempDir(), fixtureRules)
 	if err := kf.Remove(".*\\.go$"); err != nil {
 		t.Fatalf("Remove: %v", err)
@@ -157,7 +158,7 @@ func TestKitFileRemove(t *testing.T) {
 	}
 }
 
-func TestKitFileViolationsDetectsDuplicateAndBrokenPattern(t *testing.T) {
+func TestRulesFileViolationsDetectsDuplicateAndBrokenPattern(t *testing.T) {
 	dup := Rules{{Pattern: ".*.go$"}, {Pattern: ".*.go$"}}
 	if errs := (&File{Rules: dup}).Violations(); len(errs) == 0 {
 		t.Errorf("Violations missed duplicate pattern")
@@ -171,39 +172,39 @@ func TestKitFileViolationsDetectsDuplicateAndBrokenPattern(t *testing.T) {
 	}
 }
 
-func TestKitFileViolationsRejectsMissingApproverFields(t *testing.T) {
+func TestRulesFileViolationsRejectsMissingApproverFields(t *testing.T) {
 	fixture := Rules{{Pattern: "x", Approvers: []ApproverTarget{{}}}}
 	if errs := (&File{Rules: fixture}).Violations(); len(errs) == 0 {
 		t.Errorf("Violations missed empty approver")
 	}
 }
 
-// TestIsKitFile pins whole-name matching: the remote fetcher used to match
-// any path containing "KIT", so look-alike files were parsed as rules.
-func TestIsKitFile(t *testing.T) {
+// TestIsRulesFile pins whole-name matching: the remote fetcher used to match
+// any path containing FileName, so look-alike files were parsed as rules.
+func TestIsRulesFile(t *testing.T) {
 	tests := map[string]bool{
-		"KIT":             true,
-		"cmd/kit/KIT":     true,
-		"KITCHEN.md":      false,
-		"docs/KITCHEN.md": false,
-		"KIT/readme.md":   false,
-		"svc/KIT.bak":     false,
-		"svc/kit":         false,
-		"svc/MYKIT":       false,
+		FileName:                           true,
+		PathInDir("cmd/app"):               true,
+		FileName + "CHEN.md":               false,
+		"docs/" + FileName + "CHEN.md":     false,
+		FileName + "/readme.md":            false,
+		PathInDir("svc") + ".bak":          false,
+		"svc/" + strings.ToLower(FileName): false,
+		"svc/MY" + FileName:                false,
 	}
 	for p, want := range tests {
-		if got := IsKitFile(p); got != want {
-			t.Errorf("IsKitFile(%q) = %v, want %v", p, got, want)
+		if got := IsRulesFile(p); got != want {
+			t.Errorf("IsRulesFile(%q) = %v, want %v", p, got, want)
 		}
 	}
 }
 
 func TestPathInDir(t *testing.T) {
 	for dir, want := range map[string]string{
-		"":        "KIT",
-		".":       "KIT",
-		"src":     "src/KIT",
-		"src/api": "src/api/KIT",
+		"":        FileName,
+		".":       FileName,
+		"src":     PathInDir("src"),
+		"src/api": PathInDir("src/api"),
 	} {
 		if got := PathInDir(dir); got != want {
 			t.Errorf("PathInDir(%q) = %q, want %q", dir, got, want)

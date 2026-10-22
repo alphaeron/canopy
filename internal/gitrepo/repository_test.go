@@ -52,43 +52,43 @@ func newRepo(t *testing.T, committed map[string]string) (string, *Repository) {
 	return dir, &Repository{Repository: *repo}
 }
 
-func isKIT(p string) bool { return path.Base(p) == "KIT" }
+func isRulesFile(p string) bool { return path.Base(p) == "rules" }
 
 // TestWorktreeFiles pins the working-tree file set: committed files that
 // still exist, plus new files that are not ignored; deletions drop out and
 // the predicate matches whole names.
 func TestWorktreeFiles(t *testing.T) {
 	dir, repo := newRepo(t, map[string]string{
-		"KIT":         "a",
-		"gone/KIT":    "b",
+		"rules":       "a",
+		"gone/rules":  "b",
 		".gitignore":  "build/\n",
-		"KITCHEN.md":  "not a KIT file",
+		"RULESET.md":  "not a rules file",
 		"src/main.go": "package main",
 	})
 	writeFiles(t, dir, map[string]string{
-		"svc/KIT":   "new, untracked",
-		"build/KIT": "ignored",
+		"svc/rules":   "new, untracked",
+		"build/rules": "ignored",
 	})
-	if err := os.Remove(filepath.Join(dir, "gone", "KIT")); err != nil {
+	if err := os.Remove(filepath.Join(dir, "gone", "rules")); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	got, err := repo.WorktreeFiles(isKIT)
+	got, err := repo.WorktreeFiles(isRulesFile)
 	if err != nil {
 		t.Fatalf("WorktreeFiles: %v", err)
 	}
-	if want := []string{"KIT", "svc/KIT"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"rules", "svc/rules"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("WorktreeFiles = %v, want %v", got, want)
 	}
 }
 
 func TestWorktreeFilesNoCommit(t *testing.T) {
 	dir, repo := newRepo(t, nil)
-	writeFiles(t, dir, map[string]string{"KIT": "a"})
-	got, err := repo.WorktreeFiles(isKIT)
+	writeFiles(t, dir, map[string]string{"rules": "a"})
+	got, err := repo.WorktreeFiles(isRulesFile)
 	if err != nil {
 		t.Fatalf("WorktreeFiles: %v", err)
 	}
-	if want := []string{"KIT"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"rules"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("WorktreeFiles = %v, want %v", got, want)
 	}
 }

@@ -4,23 +4,23 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // Rule is the review algorithm's view of a single configured rule. It wraps
-// the kitfile rule and owns the rule level of the pipeline: producing the
+// the rulesfile rule and owns the rule level of the pipeline: producing the
 // rule's approver targets, pruning the targets that can never contribute,
 // and executing the rule against the review state to build its RuleState.
 // As with every other layer of the pipeline (chain, layer, target) the
 // single entry point is Execute and the only state it returns is this
 // level's state: RuleState, derived entirely from its target states.
 type Rule struct {
-	kitfile.Rule
+	rulesfile.Rule
 }
 
-// newRule adapts a configured kit-file rule into the algorithm's Rule level,
+// newRule adapts a configured rules-file rule into the algorithm's Rule level,
 // the boundary where configuration becomes behavior.
-func newRule(rule kitfile.Rule) Rule {
+func newRule(rule rulesfile.Rule) Rule {
 	return Rule{Rule: rule}
 }
 

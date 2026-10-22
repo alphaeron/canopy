@@ -9,11 +9,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// routeFor is c's TUI route opened with v. Every command `kit --help` lists
+// routeFor is c's TUI route opened with v. Every command `--help` lists
 // has one (TestRoutesMirrorCommandTree) except shell completion, which is
 // CLI only; ok is also false for the root, whose TUI form is the home page
 // itself.
@@ -48,7 +49,7 @@ func routeFor(c *cobra.Command, v tui.Values) (tui.Route, bool) {
 		r.Utility = true
 		return r, true
 	case c != rootCmd && !c.Runnable() && c.HasAvailableSubCommands():
-		// A command group such as `kit rules` prints its help.
+		// A command group such as `rules` prints its help.
 		r := commandRoute(c, v, func(context.Context, tui.Values) (tui.Page, error) { return helpPage(c), nil })
 		if c == rulesCmd {
 			r.Summary = rulesSummary
@@ -58,7 +59,7 @@ func routeFor(c *cobra.Command, v tui.Values) (tui.Route, bool) {
 	return tui.Route{}, false
 }
 
-// isCompletion reports whether c is cobra's `kit completion` command or one
+// isCompletion reports whether c is cobra's `completion` command or one
 // of its shells. Completion scripts are for the shell, so the TUI omits them.
 func isCompletion(c *cobra.Command) bool {
 	for ; c != nil; c = c.Parent() {
@@ -69,16 +70,16 @@ func isCompletion(c *cobra.Command) bool {
 	return false
 }
 
-// rulesSummary is the home page's live line for `kit rules`.
+// rulesSummary is the home page's live line for `rules`.
 func rulesSummary(ctx context.Context) (string, error) {
-	s, err := openKitSet(ctx)
+	s, err := openRulesSet(ctx)
 	if err != nil {
 		return "", err
 	}
-	return countOf(len(s.entries("")), "rule") + " in " + countOf(len(s.rules), "KIT file"), nil
+	return countOf(len(s.entries("")), "rule") + " in " + countOf(len(s.rules), "rules file"), nil
 }
 
-// visibleCommands are c's subcommands that `kit --help` lists.
+// visibleCommands are c's subcommands that `--help` lists.
 func visibleCommands(c *cobra.Command) []*cobra.Command {
 	var out []*cobra.Command
 	for _, sub := range c.Commands() {
@@ -101,7 +102,7 @@ func runRoute(cmd *cobra.Command, v tui.Values, run func(context.Context, tui.Va
 	return r
 }
 
-// initRoute is `kit init [path]`.
+// initRoute is `init [path]`.
 func initRoute(v tui.Values) tui.Route {
 	return runRoute(initCmd, v, func(_ context.Context, v tui.Values) (string, error) { return initFromValues(v) })
 }
@@ -116,19 +117,19 @@ func initFromValues(v tui.Values) (string, error) {
 		return "", err
 	}
 	path := initPath(arg)
-	k, err := writeKitFile(path, v.Bool("force"), fields)
+	k, err := writeRulesFile(path, v.Bool("force"), fields)
 	if err != nil {
 		return "", err
 	}
 	return initMessage(path, k), nil
 }
 
-// rulesAddRoute is `kit rules add`. The options form is the interactive
+// rulesAddRoute is `rules add`. The options form is the interactive
 // form, so --pattern is required in it; --file defaults to the
-// repository-root KIT, as in a scripted run.
+// repository-root rules file, as in a scripted run.
 func rulesAddRoute(v tui.Values) tui.Route {
 	r := runRoute(rulesAddCmd, v, func(ctx context.Context, v tui.Values) (string, error) {
-		s, err := openKitSet(ctx)
+		s, err := openRulesSet(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -137,10 +138,10 @@ func rulesAddRoute(v tui.Values) tui.Route {
 	return withParam(r, func(p *tui.Param) bool { return p.Name == "pattern" }, func(p *tui.Param) { p.Required = true })
 }
 
-func addFromValues(s *kitSet, v tui.Values) (string, error) {
+func addFromValues(s *rulesSet, v tui.Values) (string, error) {
 	file := v.Flag("file")
 	if file == "" {
-		file = kitfile.FileName
+		file = rulesfile.FileName
 	}
 	target, err := s.resolve(file)
 	if err != nil {
@@ -153,12 +154,12 @@ func addFromValues(s *kitSet, v tui.Values) (string, error) {
 	return addRule(s, target, fields)
 }
 
-// rulesEditRoute is `kit rules edit <pattern>`: flags left unset keep the
-// rule's values. A pattern declared by several KIT files needs --file, as
+// rulesEditRoute is `rules edit <pattern>`: flags left unset keep the
+// rule's values. A pattern declared by several rules files needs --file, as
 // in a scripted run.
 func rulesEditRoute(v tui.Values) tui.Route {
 	return withPatternChoices(runRoute(rulesEditCmd, v, func(ctx context.Context, v tui.Values) (string, error) {
-		s, err := openKitSet(ctx)
+		s, err := openRulesSet(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -166,7 +167,7 @@ func rulesEditRoute(v tui.Values) tui.Route {
 	}))
 }
 
-func editFromValues(s *kitSet, v tui.Values) (string, error) {
+func editFromValues(s *rulesSet, v tui.Values) (string, error) {
 	pattern, err := patternArg(v)
 	if err != nil {
 		return "", err
@@ -186,11 +187,11 @@ func editFromValues(s *kitSet, v tui.Values) (string, error) {
 	return editRule(s, target, pattern, fields)
 }
 
-// rulesRemoveRoute is `kit rules remove <pattern>`, which asks before
+// rulesRemoveRoute is `rules remove <pattern>`, which asks before
 // removing unless --force is set.
 func rulesRemoveRoute(v tui.Values) tui.Route {
 	r := withPatternChoices(runRoute(rulesRemoveCmd, v, func(ctx context.Context, v tui.Values) (string, error) {
-		s, err := openKitSet(ctx)
+		s, err := openRulesSet(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -205,7 +206,7 @@ func rulesRemoveRoute(v tui.Values) tui.Route {
 	return r
 }
 
-func removeFromValues(s *kitSet, v tui.Values) (string, error) {
+func removeFromValues(s *rulesSet, v tui.Values) (string, error) {
 	pattern, err := patternArg(v)
 	if err != nil {
 		return "", err
@@ -230,7 +231,7 @@ func withPatternChoices(r tui.Route) tui.Route {
 	return withParam(r, func(p *tui.Param) bool { return p.Arg }, func(p *tui.Param) {
 		p.Kind = tui.ParamChoice
 		p.Choices = func(ctx context.Context) ([]string, error) {
-			s, err := openKitSet(ctx)
+			s, err := openRulesSet(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -239,7 +240,7 @@ func withPatternChoices(r tui.Route) tui.Route {
 	})
 }
 
-// helpRoute is `kit help [command]`; its argument is a command path of any
+// helpRoute is `help [command]`; its argument is a command path of any
 // length, offered as a choice of every command.
 func helpRoute(help *cobra.Command, v tui.Values) tui.Route {
 	r := commandRoute(help, v, func(_ context.Context, v tui.Values) (tui.Page, error) {
@@ -251,7 +252,7 @@ func helpRoute(help *cobra.Command, v tui.Values) tui.Route {
 	})
 	return withParam(r, func(p *tui.Param) bool { return p.Arg }, func(p *tui.Param) {
 		p.Help = "the command to describe"
-		p.Kind, p.Variadic, p.Unset = tui.ParamChoice, true, "kit"
+		p.Kind, p.Variadic, p.Unset = tui.ParamChoice, true, brand.Command
 		p.Choices = func(context.Context) ([]string, error) {
 			var paths []string
 			var walk func(*cobra.Command)
@@ -267,7 +268,7 @@ func helpRoute(help *cobra.Command, v tui.Values) tui.Route {
 	})
 }
 
-// helpPage is `kit help` for c: a row with c's help text, then a row per
+// helpPage is `help` for c: a row with c's help text, then a row per
 // subcommand that opens it.
 func helpPage(c *cobra.Command) tui.Page {
 	self := helpItem(c)
@@ -300,8 +301,8 @@ func helpItem(c *cobra.Command) tui.Item {
 	return it
 }
 
-// commandName is c's command path without the leading "kit", or "kit" for
-// the root.
+// commandName is c's command path without the leading command name, or the
+// command name for the root.
 func commandName(c *cobra.Command) string {
 	if c == rootCmd {
 		return rootCmd.Name()

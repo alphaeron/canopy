@@ -10,7 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
@@ -18,7 +19,7 @@ import (
 // cobra definition (so the options form matches the CLI) and that a CLI
 // invocation becomes the same route values.
 func TestRouteFromCommand(t *testing.T) {
-	root := &cobra.Command{Use: "kit"}
+	root := &cobra.Command{Use: brand.Command}
 	cmd := &cobra.Command{Use: "files <pattern>", Short: "List files", Annotations: map[string]string{"arg": "a regex"}}
 	cmd.Flags().Bool("changed", false, "only changed")
 	cmd.Flags().String("scope", "", "one scope")
@@ -51,7 +52,7 @@ func TestRouteFromCommand(t *testing.T) {
 		t.Errorf("valuesFrom = %+v, want %+v", v, want)
 	}
 	r := tui.Route{Command: "files", Params: params, Values: v}
-	if got, want := r.CommandLine(), `kit files '.*\.go' --changed --scope=core`; got != want {
+	if got, want := r.CommandLine(), brand.Command+` files '.*\.go' --changed --scope=core`; got != want {
 		t.Errorf("CommandLine = %q, want %q", got, want)
 	}
 }
@@ -76,12 +77,12 @@ func TestArgParam(t *testing.T) {
 
 func TestApproversLabel(t *testing.T) {
 	tests := []struct {
-		in   kitfile.ApproverTargets
+		in   rulesfile.ApproverTargets
 		want string
 	}{
 		{nil, ""},
-		{kitfile.ApproverTargets{{Target: "org/team", RequiredCount: 2}}, "org/team (2)"},
-		{kitfile.ApproverTargets{{Target: "a", RequiredCount: 1}, {Target: "b", RequiredCount: 3}}, "a (1), b (3)"},
+		{rulesfile.ApproverTargets{{Target: "org/team", RequiredCount: 2}}, "org/team (2)"},
+		{rulesfile.ApproverTargets{{Target: "a", RequiredCount: 1}, {Target: "b", RequiredCount: 3}}, "a (1), b (3)"},
 	}
 	for _, tc := range tests {
 		if got := approversLabel(tc.in); got != tc.want {
@@ -107,21 +108,21 @@ func TestExactPath(t *testing.T) {
 }
 
 // TestProvenance checks the per-file drill-down: one section per layer of
-// the file's chain, naming the declaring KIT file and each rule in it.
+// the file's chain, naming the declaring rules file and each rule in it.
 func TestProvenance(t *testing.T) {
 	layers := []approval.RuleLayer{
-		{DirectoryPath: "svc", Rules: []approval.Rule{{Rule: kitfile.Rule{
+		{DirectoryPath: "svc", Rules: []approval.Rule{{Rule: rulesfile.Rule{
 			Pattern: `.*\.go`, Name: "backend",
-			Approvers: kitfile.ApproverTargets{{Target: "org/backend", RequiredCount: 2}},
+			Approvers: rulesfile.ApproverTargets{{Target: "org/backend", RequiredCount: 2}},
 		}}}},
-		{Rules: []approval.Rule{{Rule: kitfile.Rule{Pattern: `.*`}}}},
+		{Rules: []approval.Rule{{Rule: rulesfile.Rule{Pattern: `.*`}}}},
 	}
 	d := provenance("svc/a.go", layers)
 	if len(d.Sections) != 2 {
 		t.Fatalf("want one section per layer, got %+v", d.Sections)
 	}
-	if d.Sections[0].Title != "svc/KIT" || d.Sections[1].Title != "KIT" {
-		t.Errorf("sections must name the declaring KIT files: %q, %q", d.Sections[0].Title, d.Sections[1].Title)
+	if d.Sections[0].Title != rulesfile.PathInDir("svc") || d.Sections[1].Title != rulesfile.FileName {
+		t.Errorf("sections must name the declaring rules files: %q, %q", d.Sections[0].Title, d.Sections[1].Title)
 	}
 	line := d.Sections[0].Lines[0]
 	for _, want := range []string{"backend", `.*\.go`, "org/backend (2)"} {
@@ -136,18 +137,18 @@ func TestProvenance(t *testing.T) {
 // the form requires. An omitted strategy, which the approval package evaluates as
 // override, comes back as an explicit override rather than an error.
 func TestFieldsFromRuleRoundTrip(t *testing.T) {
-	base := kitfile.Rule{
+	base := rulesfile.Rule{
 		Pattern: `.*\.go`, Name: "core", SelfApprove: true, CurrentDirectoryOnly: true,
-		Approvers: kitfile.ApproverTargets{{Target: "org/core", RequiredCount: 2}},
+		Approvers: rulesfile.ApproverTargets{{Target: "org/core", RequiredCount: 2}},
 	}
 	tests := []struct {
 		name     string
-		strategy kitfile.RuleCombineStrategy
-		want     kitfile.RuleCombineStrategy
+		strategy rulesfile.RuleCombineStrategy
+		want     rulesfile.RuleCombineStrategy
 	}{
-		{name: "union", strategy: kitfile.RuleCombineStrategyUnion, want: kitfile.RuleCombineStrategyUnion},
-		{name: "intersect", strategy: kitfile.RuleCombineStrategyIntersect, want: kitfile.RuleCombineStrategyIntersect},
-		{name: "omitted", want: kitfile.RuleCombineStrategyOverride},
+		{name: "union", strategy: rulesfile.RuleCombineStrategyUnion, want: rulesfile.RuleCombineStrategyUnion},
+		{name: "intersect", strategy: rulesfile.RuleCombineStrategyIntersect, want: rulesfile.RuleCombineStrategyIntersect},
+		{name: "omitted", want: rulesfile.RuleCombineStrategyOverride},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -167,55 +168,55 @@ func TestFieldsFromRuleRoundTrip(t *testing.T) {
 }
 
 // TestRuleActions exercises the TUI's add, edit, and remove against real
-// KIT files, through the same kitSet.mutate the CLI commands use. Each row
-// carries its own KIT file, so two files declaring the same pattern stay
+// rules files, through the same rulesSet.mutate the CLI commands use. Each row
+// carries its own rules file, so two files declaring the same pattern stay
 // distinct.
 func TestRuleActions(t *testing.T) {
-	s := newTestKitSet(t, map[string]kitfile.Rules{
-		"KIT":     {{Pattern: `.*\.go`, Name: "security"}},
-		"svc/KIT": {},
+	s := newTestRulesSet(t, map[string]rulesfile.Rules{
+		rulesfile.FileName:         {{Pattern: `.*\.go`, Name: "security"}},
+		rulesfile.PathInDir("svc"): {},
 	})
 
-	if _, err := addRule(s, "svc/KIT", ruleFields{Pattern: `.*\.go`, Name: "core", Strategy: "union"}); err != nil {
+	if _, err := addRule(s, rulesfile.PathInDir("svc"), ruleFields{Pattern: `.*\.go`, Name: "core", Strategy: "union"}); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if _, err := editRule(s, "svc/KIT", `.*\.go`, ruleFields{Pattern: "ignored", Name: "renamed", Strategy: "union"}); err != nil {
+	if _, err := editRule(s, rulesfile.PathInDir("svc"), `.*\.go`, ruleFields{Pattern: "ignored", Name: "renamed", Strategy: "union"}); err != nil {
 		t.Fatalf("edit: %v", err)
 	}
-	if got := loadRules(t, s, "svc/KIT"); len(got) != 1 || got[0].Pattern != `.*\.go` || got[0].Name != "renamed" {
+	if got := loadRules(t, s, rulesfile.PathInDir("svc")); len(got) != 1 || got[0].Pattern != `.*\.go` || got[0].Name != "renamed" {
 		t.Fatalf("edit must rename the rule and keep its pattern: %+v", got)
 	}
-	if got := loadRules(t, s, "KIT"); len(got) != 1 || got[0].Name != "security" {
-		t.Fatalf("the other KIT file's rule with the same pattern must be untouched: %+v", got)
+	if got := loadRules(t, s, rulesfile.FileName); len(got) != 1 || got[0].Name != "security" {
+		t.Fatalf("the other rules file's rule with the same pattern must be untouched: %+v", got)
 	}
 
 	remove := ruleActions(s)[2]
 	if _, err := remove.Run(context.Background(), tui.Item{Title: "bogus", Value: "not a rule"}); err == nil {
 		t.Error("remove must reject a row that does not hold a rule")
 	}
-	out, err := remove.Run(context.Background(), tui.Item{Value: kitfile.DeclaredRule{KitFile: "svc/KIT", Rule: kitfile.Rule{Pattern: `.*\.go`}}})
+	out, err := remove.Run(context.Background(), tui.Item{Value: rulesfile.DeclaredRule{RulesFile: rulesfile.PathInDir("svc"), Rule: rulesfile.Rule{Pattern: `.*\.go`}}})
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	if !out.Reload {
 		t.Error("remove must reload the page")
 	}
-	if got := loadRules(t, s, "svc/KIT"); len(got) != 0 {
+	if got := loadRules(t, s, rulesfile.PathInDir("svc")); len(got) != 0 {
 		t.Errorf("rule must be gone, got %+v", got)
 	}
-	if got := loadRules(t, s, "KIT"); len(got) != 1 {
-		t.Errorf("remove must only touch the row's KIT file: %+v", got)
+	if got := loadRules(t, s, rulesfile.FileName); len(got) != 1 {
+		t.Errorf("remove must only touch the row's rules file: %+v", got)
 	}
 }
 
 func TestRulesListOutput(t *testing.T) {
-	entries := []kitfile.DeclaredRule{
-		{KitFile: "KIT", Rule: kitfile.Rule{Pattern: `.*\.go`, Name: "security", CombineStrategy: kitfile.RuleCombineStrategyUnion,
-			Approvers: kitfile.ApproverTargets{{Target: "org/sec", RequiredCount: 1}}}},
-		{KitFile: "svc/KIT", Rule: kitfile.Rule{Pattern: `.*`}},
+	entries := []rulesfile.DeclaredRule{
+		{RulesFile: rulesfile.FileName, Rule: rulesfile.Rule{Pattern: `.*\.go`, Name: "security", CombineStrategy: rulesfile.RuleCombineStrategyUnion,
+			Approvers: rulesfile.ApproverTargets{{Target: "org/sec", RequiredCount: 1}}}},
+		{RulesFile: rulesfile.PathInDir("svc"), Rule: rulesfile.Rule{Pattern: `.*`}},
 	}
 	js := rulesJSON(entries)
-	if js[0].KitFile != "KIT" || js[0].CombineStrategy != "union" || js[0].Approvers[0] != (approverJSON{"org/sec", 1}) {
+	if js[0].RulesFile != rulesfile.FileName || js[0].CombineStrategy != "union" || js[0].Approvers[0] != (approverJSON{"org/sec", 1}) {
 		t.Errorf("first JSON rule = %+v", js[0])
 	}
 	if js[1].CombineStrategy != "" || js[1].Approvers == nil {
@@ -225,7 +226,7 @@ func TestRulesListOutput(t *testing.T) {
 		t.Errorf("no rules must encode as [], got %#v", got)
 	}
 	rows := ruleRows(entries)
-	if want := []string{"svc/KIT", ".*", "", "(default)", ""}; !reflect.DeepEqual(rows[1], want) {
+	if want := []string{rulesfile.PathInDir("svc"), ".*", "", "(default)", ""}; !reflect.DeepEqual(rows[1], want) {
 		t.Errorf("row = %q, want %q", rows[1], want)
 	}
 
@@ -233,12 +234,12 @@ func TestRulesListOutput(t *testing.T) {
 	for _, tc := range []struct {
 		only  string
 		total int
-	}{{"", 2}, {"KIT", 1}, {"svc/KIT", 2}} {
+	}{{"", 2}, {rulesfile.FileName, 1}, {rulesfile.PathInDir("svc"), 2}} {
 		if err := narrowedNotice(&buf, tc.only, tc.total); err != nil {
 			t.Fatalf("narrowedNotice: %v", err)
 		}
 	}
-	if got := buf.String(); got != "showing svc/KIT, 1 of 2 KIT files; omit --file to list all\n" {
+	if got := buf.String(); got != "showing "+rulesfile.PathInDir("svc")+", 1 of 2 rules files; omit --file to list all\n" {
 		t.Errorf("notice = %q", got)
 	}
 }

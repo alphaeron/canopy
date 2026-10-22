@@ -1,5 +1,5 @@
 // Package gitrepo wraps a go-git repository with the file listing, content,
-// and worktree queries Kit needs.
+// and worktree queries the review needs.
 package gitrepo
 
 import (
@@ -138,7 +138,7 @@ func (r *Repository) WorktreeFiles(keep func(path string) bool) ([]string, error
 	if err != nil {
 		return nil, fmt.Errorf("open worktree: %w", err)
 	}
-	// Status leaves out ignored files, so ignored KIT files never appear.
+	// Status leaves out ignored files, so ignored rules files never appear.
 	status, err := wt.Status()
 	if err != nil {
 		return nil, fmt.Errorf("worktree status: %w", err)

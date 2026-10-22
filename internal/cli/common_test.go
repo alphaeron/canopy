@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/kitfile"
 	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 func TestApproverTextTable(t *testing.T) {
@@ -87,8 +87,8 @@ func TestBuildRuleFromFieldsTable(t *testing.T) {
 }
 
 func TestBuildRuleFromFieldsRoundTripApprovers(t *testing.T) {
-	targets := kitfile.ApproverTargets{{Target: "a", RequiredCount: 1}, {Target: "b", RequiredCount: 4}}
-	fields := ruleFields{Pattern: `.*`, Name: "n", ApproverText: kitfile.ApproversToText(targets)}
+	targets := rulesfile.ApproverTargets{{Target: "a", RequiredCount: 1}, {Target: "b", RequiredCount: 4}}
+	fields := ruleFields{Pattern: `.*`, Name: "n", ApproverText: rulesfile.ApproversToText(targets)}
 	rule, err := buildRuleFromFields(fields)
 	if err != nil {
 		t.Fatalf("build: %v", err)

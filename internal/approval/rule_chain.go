@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"slices"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // RuleChain maps each changed file to its own localized, ordered rule pipeline.
@@ -238,7 +238,7 @@ func (rc *RuleChain) evaluateFallback(
 				"component", "rule_chain", "phase", "approve",
 				"file", file, "owner", owner, "error", resolveErr)
 			states = append(states, ApproverTargetState{
-				ApproverTarget: kitfile.ApproverTarget{Target: owner, RequiredCount: 1},
+				ApproverTarget: rulesfile.ApproverTarget{Target: owner, RequiredCount: 1},
 				SatisfiedCount: 0,
 				Satisfied:      false,
 				ResolvedBy:     []string{},
@@ -264,7 +264,7 @@ func (rc *RuleChain) evaluateFallback(
 		}
 
 		states = append(states, ApproverTargetState{
-			ApproverTarget: kitfile.ApproverTarget{Target: owner, RequiredCount: 1},
+			ApproverTarget: rulesfile.ApproverTarget{Target: owner, RequiredCount: 1},
 			SatisfiedCount: satisfiedCount,
 			Satisfied:      satisfied,
 			ResolvedBy:     resolved,
@@ -280,28 +280,28 @@ func (rc *RuleChain) evaluateFallback(
 // it: the chain inverted from "which rules apply to this file" to "which
 // files does this rule apply to".
 type RuleFiles struct {
-	kitfile.DeclaredRule
+	rulesfile.DeclaredRule
 	// Files is sorted and holds each file once.
 	Files []string
 }
 
 // ByRule inverts the chain into one entry per distinct rule, by
-// kitfile.RuleKey, sorted by pattern, then KIT file. A pattern declared
-// twice in one KIT file (a Validate violation) is reported once, under the
+// rulesfile.RuleKey, sorted by pattern, then rules file. A pattern declared
+// twice in one rules file (a Validate violation) is reported once, under the
 // first declaration.
 func (rc *RuleChain) ByRule() []RuleFiles {
-	byKey := map[kitfile.RuleKey]*RuleFiles{}
+	byKey := map[rulesfile.RuleKey]*RuleFiles{}
 	for file, layers := range rc.FileChains {
 		for _, layer := range layers {
 			for _, rule := range layer.Rules {
-				d := kitfile.DeclaredRule{KitFile: layer.KitFile(), Rule: rule.Rule}
+				d := rulesfile.DeclaredRule{RulesFile: layer.RulesFile(), Rule: rule.Rule}
 				rf, ok := byKey[d.Key()]
 				if !ok {
 					rf = &RuleFiles{DeclaredRule: d}
 					byKey[d.Key()] = rf
 				}
 				// Files are visited one at a time, so a repeat (a pattern
-				// declared twice in one KIT file) is always the last entry.
+				// declared twice in one rules file) is always the last entry.
 				if n := len(rf.Files); n == 0 || rf.Files[n-1] != file {
 					rf.Files = append(rf.Files, file)
 				}

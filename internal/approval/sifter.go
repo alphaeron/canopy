@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // GetFileRuleChain builds the chain of rules that applies for each specified
@@ -18,7 +18,7 @@ import (
 // errors. A nil events builder is allowed for callers that only want the
 // chain without a trace.
 func GetFileRuleChain(
-	repoRules kitfile.Set,
+	repoRules rulesfile.Set,
 	files []string,
 	events *ReviewStateBuilder,
 	log *slog.Logger,
@@ -56,7 +56,7 @@ func (c patternCache) compile(pattern string) (*regexp.Regexp, error) {
 }
 
 func getFileRuleLayers(
-	repoRules kitfile.Set,
+	repoRules rulesfile.Set,
 	patterns patternCache,
 	fileName string,
 	events *ReviewStateBuilder,
@@ -79,7 +79,7 @@ func getFileRuleLayers(
 	// Loop down from the repo root to the target file's depth.
 	for i := range subdirParts {
 		layer := RuleLayer{DirectoryPath: path.Join(subdirParts[:i]...)}
-		configFilePath := layer.KitFile()
+		configFilePath := layer.RulesFile()
 
 		// Pull out rules registered exactly at this configuration file node
 		matchedRules := repoRules[configFilePath]
@@ -99,7 +99,7 @@ func getFileRuleLayers(
 				)
 				log.Error("sift: skipping rule with invalid pattern",
 					"component", "sifter", "phase", "sift",
-					"file", fileName, "kit_file", configFilePath,
+					"file", fileName, "rules_file", configFilePath,
 					"rule", rule.Name, "pattern", rule.Pattern, "error", err)
 				events.AddEvent("sift", fileName, layer.DirectoryPath, rule.Name, StatusError,
 					fmt.Sprintf("invalid pattern %q: %v", rule.Pattern, err))

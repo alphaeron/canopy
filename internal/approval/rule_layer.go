@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // RuleLayer captures the exact directory context where a set of rules matched.
@@ -14,10 +14,10 @@ type RuleLayer struct {
 	Rules         []Rule
 }
 
-// KitFile is the repository path of the KIT file that declared the layer's
-// rules: "KIT" for the root layer, "<dir>/KIT" otherwise.
-func (rl *RuleLayer) KitFile() string {
-	return kitfile.PathInDir(rl.DirectoryPath)
+// RulesFile is the repository path of the rules file that declared the
+// layer's rules: rulesfile.PathInDir of the layer's directory.
+func (rl *RuleLayer) RulesFile() string {
+	return rulesfile.PathInDir(rl.DirectoryPath)
 }
 
 // Execute evaluates the rules in this layer in order and returns the layer's

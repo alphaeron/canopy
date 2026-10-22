@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 type statusCarrier struct {
@@ -38,7 +38,7 @@ func TestFirstMatchingReturnsZeroWithoutMatch(t *testing.T) {
 
 func TestReviewStateSortedFilesAndRequiredTargets(t *testing.T) {
 	target := func(name string, n int) ApproverTargetState {
-		return ApproverTargetState{ApproverTarget: kitfile.ApproverTarget{Target: name, RequiredCount: n}}
+		return ApproverTargetState{ApproverTarget: rulesfile.ApproverTarget{Target: name, RequiredCount: n}}
 	}
 	rs := &ReviewState{Files: map[string]FileState{
 		"b.go":   {Path: "b.go", Status: StatusSatisfied, Required: []ApproverTargetState{target("team", 1)}},
@@ -54,7 +54,7 @@ func TestReviewStateSortedFilesAndRequiredTargets(t *testing.T) {
 		t.Errorf("SortedFiles order = %v, want %v", order, want)
 	}
 	targets, fallback := rs.RequiredTargets()
-	want := kitfile.ApproverTargets{{Target: "lead", RequiredCount: 1}, {Target: "team", RequiredCount: 2}}
+	want := rulesfile.ApproverTargets{{Target: "lead", RequiredCount: 1}, {Target: "team", RequiredCount: 2}}
 	if !reflect.DeepEqual(targets, want) || fallback != 1 {
 		t.Errorf("RequiredTargets = %v, %d; want %v, 1", targets, fallback, want)
 	}

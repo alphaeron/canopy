@@ -16,7 +16,7 @@ type Source interface {
 	// RepoRoot returns the repository root string. Empty for Remote.
 	RepoRoot() string
 
-	// Reviewer is the source's review platform: how its KIT rules are
+	// Reviewer is the source's review platform: how its rules are
 	// fetched and how its approver targets resolve. Local sources use
 	// local.NewReviewer and remote ones remote.NewReviewer, so the engine
 	// never chooses a fetcher or resolver itself.

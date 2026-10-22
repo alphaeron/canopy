@@ -1,4 +1,4 @@
-package kitfile
+package rulesfile
 
 import (
 	"errors"
@@ -9,10 +9,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ParseRules parses YAML bytes into a KIT file's rule sequence. It is the
+// ParseRules parses YAML bytes into a rules file's rule sequence. It is the
 // one parser for every reader (Load, the local fetcher reading the
 // working tree, the remote fetcher reading GitHub blobs), so they all parse
-// KIT files identically. Callers add the file's path to the error.
+// rules files identically. Callers add the file's path to the error.
 func ParseRules(dat []byte) (Rules, error) {
 	var rules Rules
 	if err := yaml.Unmarshal(dat, &rules); err != nil {

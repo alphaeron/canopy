@@ -7,17 +7,17 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// rulesListCmd lists the rules of every KIT file in the repository, or of
-// one KIT file with --file. Narrowing never changes the output's shape: the
-// JSON is always one flat list of rules, each naming its KIT file.
+// rulesListCmd lists the rules of every rules file in the repository, or of
+// one rules file with --file. Narrowing never changes the output's shape: the
+// JSON is always one flat list of rules, each naming its rules file.
 var rulesListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List the rules in the repository's KIT files",
-	Long: `List the rules of every KIT file in the repository's working tree, the
-repository-root KIT first. --file narrows the list to one KIT file.`,
+	Short: "List the rules in the repository's rules files",
+	Long: `List the rules of every rules file in the repository's working tree, the
+repository-root rules file first. --file narrows the list to one rules file.`,
 }
 
 // runRulesList is rulesListCmd's RunE, assigned in init: it opens the TUI, whose
@@ -29,7 +29,7 @@ func runRulesList(cmd *cobra.Command, args []string) error {
 		return openTUI(cmd, rulesListRoute(valuesFrom(cmd, args)))
 	}
 	filePath, _ := cmd.Flags().GetString("file")
-	s, err := openKitSet(cmd.Context())
+	s, err := openRulesSet(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -41,26 +41,26 @@ func runRulesList(cmd *cobra.Command, args []string) error {
 	if mode == modeJSON {
 		return writeJSON(os.Stdout, rulesJSON(entries))
 	}
-	if err := writeTable(os.Stdout, []string{"KIT File", "Pattern", "Name", "Strategy", "Approvers"}, ruleRows(entries)); err != nil {
+	if err := writeTable(os.Stdout, []string{"Rules File", "Pattern", "Name", "Strategy", "Approvers"}, ruleRows(entries)); err != nil {
 		return err
 	}
 	return narrowedNotice(os.Stderr, only, len(s.rules))
 }
 
 // narrowedNotice tells the user, on stderr so stdout stays parseable, that
-// --file hid the other KIT files.
+// --file hid the other rules files.
 func narrowedNotice(w io.Writer, only string, total int) error {
 	if only == "" || total <= 1 {
 		return nil
 	}
-	_, err := fmt.Fprintf(w, "showing %s, 1 of %d KIT files; omit --file to list all\n", only, total)
+	_, err := fmt.Fprintf(w, "showing %s, 1 of %d rules files; omit --file to list all\n", only, total)
 	return err
 }
 
-// ruleJSON is a rule in the rules list JSON: the KIT file fields under
-// their KIT file (YAML) names, plus the KIT file that declares it.
+// ruleJSON is a rule in the rules list JSON: the rules file fields under
+// their rules file (YAML) names, plus the rules file that declares it.
 type ruleJSON struct {
-	KitFile              string         `json:"kit_file"`
+	RulesFile            string         `json:"rules_file"`
 	Pattern              string         `json:"pattern"`
 	Name                 string         `json:"name,omitempty"`
 	CombineStrategy      string         `json:"combine_strategy,omitempty"`
@@ -76,7 +76,7 @@ type approverJSON struct {
 }
 
 // rulesJSON converts entries to the JSON list; it is never null.
-func rulesJSON(entries []kitfile.DeclaredRule) []ruleJSON {
+func rulesJSON(entries []rulesfile.DeclaredRule) []ruleJSON {
 	out := make([]ruleJSON, 0, len(entries))
 	for _, e := range entries {
 		approvers := make([]approverJSON, 0, len(e.Rule.Approvers))
@@ -84,7 +84,7 @@ func rulesJSON(entries []kitfile.DeclaredRule) []ruleJSON {
 			approvers = append(approvers, approverJSON{Target: a.Target, RequiredCount: a.RequiredCount})
 		}
 		out = append(out, ruleJSON{
-			KitFile:              e.KitFile,
+			RulesFile:            e.RulesFile,
 			Pattern:              e.Rule.Pattern,
 			Name:                 e.Rule.Name,
 			CombineStrategy:      strategyName(e.Rule),
@@ -98,22 +98,22 @@ func rulesJSON(entries []kitfile.DeclaredRule) []ruleJSON {
 }
 
 // ruleRows are the table rows for entries.
-func ruleRows(entries []kitfile.DeclaredRule) [][]string {
+func ruleRows(entries []rulesfile.DeclaredRule) [][]string {
 	rows := make([][]string, 0, len(entries))
 	for _, e := range entries {
 		strategy := strategyName(e.Rule)
 		if strategy == "" {
 			strategy = "(default)"
 		}
-		rows = append(rows, []string{e.KitFile, e.Rule.Pattern, e.Rule.Name, strategy, approversLabel(e.Rule.Approvers)})
+		rows = append(rows, []string{e.RulesFile, e.Rule.Pattern, e.Rule.Name, strategy, approversLabel(e.Rule.Approvers)})
 	}
 	return rows
 }
 
-// strategyName is the rule's combine_strategy as written in the KIT file,
+// strategyName is the rule's combine_strategy as written in the rules file,
 // or "" when it is omitted (the approval package then applies its default).
-func strategyName(r kitfile.Rule) string {
-	if _, err := kitfile.ParseRuleCombineStrategy(r.CombineStrategy.String()); err != nil {
+func strategyName(r rulesfile.Rule) string {
+	if _, err := rulesfile.ParseRuleCombineStrategy(r.CombineStrategy.String()); err != nil {
 		return ""
 	}
 	return r.CombineStrategy.String()
@@ -121,8 +121,8 @@ func strategyName(r kitfile.Rule) string {
 
 func init() {
 	rulesListCmd.RunE = runRulesList
-	rulesListCmd.Flags().String("file", "", "list only this KIT file (path from the repository root, or its directory)")
-	rulesListCmd.Flags().Bool("all", false, "list every KIT file")
-	cobra.CheckErr(rulesListCmd.Flags().MarkDeprecated("all", "every KIT file is listed by default; use --file to narrow"))
+	rulesListCmd.Flags().String("file", "", "list only this rules file (path from the repository root, or its directory)")
+	rulesListCmd.Flags().Bool("all", false, "list every rules file")
+	cobra.CheckErr(rulesListCmd.Flags().MarkDeprecated("all", "every rules file is listed by default; use --file to narrow"))
 	rulesCmd.AddCommand(rulesListCmd)
 }

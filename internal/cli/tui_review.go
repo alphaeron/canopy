@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
@@ -17,7 +17,7 @@ import (
 // in the ReviewState the pages render.
 var quietLog = slog.New(slog.DiscardHandler)
 
-// reviewRoute is `kit review`: one row per file, most in need of attention
+// reviewRoute is `review`: one row per file, most in need of attention
 // first, after a summary row for the whole review.
 func reviewRoute(v tui.Values) tui.Route {
 	return commandRoute(reviewCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
@@ -110,7 +110,7 @@ func filesLabel(opts reviewOptions) string {
 }
 
 // fileReviewDetail is one file's evaluation: its requirement and approval
-// progress, then tabs for the chain of KIT layers that produced it and the
+// progress, then tabs for the chain of rule layers that produced it and the
 // events the algorithm recorded for the file.
 func fileReviewDetail(fs approval.FileState, events []approval.Event) tui.Detail {
 	fallback := "no"
@@ -138,10 +138,10 @@ func chainTabs(fs approval.FileState, events []approval.Event) []tui.Tab {
 	}
 }
 
-// chainSection is the cascade of KIT layers from the repository root down to
+// chainSection is the cascade of rule layers from the repository root down to
 // the file: each layer's status, the rules it applied with their strategy
 // and approver progress, and the approvers it requires of the layer below.
-// A layer links to its KIT file's rules.
+// A layer links to its rules file's rules.
 func chainSection(fs approval.FileState) tui.Section {
 	s := tui.Section{Title: "Layers · root → file"}
 	if len(fs.Layers) == 0 {
@@ -149,8 +149,8 @@ func chainSection(fs approval.FileState) tui.Section {
 		return s
 	}
 	for i, l := range fs.Layers {
-		kit := kitfile.PathInDir(l.DirectoryPath)
-		r := rulesListRoute(tui.Values{Flags: map[string]string{"file": kit}})
+		rulesPath := rulesfile.PathInDir(l.DirectoryPath)
+		r := rulesListRoute(tui.Values{Flags: map[string]string{"file": rulesPath}})
 		note := "active"
 		if !l.Active {
 			note = "inactive"
@@ -158,7 +158,7 @@ func chainSection(fs approval.FileState) tui.Section {
 		if l.Reason != "" {
 			note += " · " + l.Reason
 		}
-		s.Rows = append(s.Rows, tui.Row{Text: kit, Badge: statusBadge(l.Status), Note: note, Route: &r})
+		s.Rows = append(s.Rows, tui.Row{Text: rulesPath, Badge: statusBadge(l.Status), Note: note, Route: &r})
 		for j, rule := range l.Rules {
 			s.Rows = append(s.Rows, tui.Row{
 				Indent: 1,
@@ -175,14 +175,14 @@ func chainSection(fs approval.FileState) tui.Section {
 
 // strategyEffect says what a rule's combine strategy does to the approvers
 // required by the layers above; the first rule of a chain establishes them.
-func strategyEffect(s kitfile.RuleCombineStrategy, first bool) string {
+func strategyEffect(s rulesfile.RuleCombineStrategy, first bool) string {
 	if first {
 		return "establishes the required approvers"
 	}
 	switch s {
-	case kitfile.RuleCombineStrategyUnion:
+	case rulesfile.RuleCombineStrategyUnion:
 		return "adds its approvers to those required above"
-	case kitfile.RuleCombineStrategyIntersect:
+	case rulesfile.RuleCombineStrategyIntersect:
 		return "keeps only approvers also required above"
 	}
 	return "replaces the approvers required above"
@@ -216,7 +216,7 @@ func eventRows(events []approval.Event, path *string) []tui.Row {
 		}
 		where := e.Phase
 		if e.Layer != "" {
-			where += " " + kitfile.PathInDir(e.Layer)
+			where += " " + rulesfile.PathInDir(e.Layer)
 		}
 		if e.Rule != "" {
 			where += " · " + e.Rule

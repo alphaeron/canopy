@@ -8,15 +8,16 @@ import (
 	"testing"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // stubSource is an in-memory Source for testing the Engine without touching
-// the filesystem or git. Rules map mirrors approval.Fetcher output: KIT
+// the filesystem or git. Rules map mirrors approval.Fetcher output: rules
 // file path to parsed rule list.
 type stubSource struct {
 	root       string
-	rules      map[string]kitfile.Rules
+	rules      map[string]rulesfile.Rules
 	err        error
 	allFiles   []string
 	changedErr error
@@ -55,24 +56,24 @@ var _ Source = (*stubSource)(nil)
 // stubFetch is a Fetcher over a fixed rule map.
 type stubFetch struct {
 	root  string
-	rules map[string]kitfile.Rules
+	rules map[string]rulesfile.Rules
 	err   error
 }
 
-func (s *stubFetch) Execute(context.Context) (string, kitfile.Set, error) {
+func (s *stubFetch) Execute(context.Context) (string, rulesfile.Set, error) {
 	return s.root, s.rules, s.err
 }
 
-// shared fixture rules: a root KIT rule matching .go and a nested /src KIT
-// file with a rule overriding the parent for .go files. The root rule is a
-// pass-through, the nested one restricts to current-directory-only so the
+// shared fixture rules: a root rules file rule matching .go and a nested /src
+// rules file with a rule overriding the parent for .go files. The root rule is
+// a pass-through, the nested one restricts to current-directory-only so the
 // chain is unambiguous per file.
-var fixtureRules = map[string]kitfile.Rules{
-	"KIT": {
-		{Pattern: `.*\.go$`, Name: "top-level go rules", Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}},
+var fixtureRules = map[string]rulesfile.Rules{
+	rulesfile.FileName: {
+		{Pattern: `.*\.go$`, Name: "top-level go rules", Approvers: []rulesfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}},
 	},
-	"src/KIT": {
-		{Pattern: `.*\.go$`, Name: "src go rules", CurrentDirectoryOnly: true, IgnoreParentDirs: true, Approvers: []kitfile.ApproverTarget{{Target: "team-b", RequiredCount: 1}}},
+	rulesfile.PathInDir("src"): {
+		{Pattern: `.*\.go$`, Name: "src go rules", CurrentDirectoryOnly: true, IgnoreParentDirs: true, Approvers: []rulesfile.ApproverTarget{{Target: "team-b", RequiredCount: 1}}},
 	},
 }
 
@@ -296,7 +297,7 @@ func TestCoverageChangedOnly(t *testing.T) {
 	}
 }
 
-var errRules = err("kit file parsing failed")
+var errRules = err(brand.Command + " file parsing failed")
 
 type err string
 

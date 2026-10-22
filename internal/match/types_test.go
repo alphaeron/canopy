@@ -3,12 +3,14 @@ package match
 import (
 	"reflect"
 	"testing"
+
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 func TestFilterScope(t *testing.T) {
-	core := Scope{Name: "core", Pattern: `.*\.go`, KitFile: "KIT"}
-	nested := Scope{Name: "core", Pattern: `.*`, Directory: "svc", KitFile: "svc/KIT"}
-	docs := Scope{Name: "docs", Pattern: `.*\.md`, KitFile: "KIT"}
+	core := Scope{Name: "core", Pattern: `.*\.go`, RulesFile: rulesfile.FileName}
+	nested := Scope{Name: "core", Pattern: `.*`, Directory: "svc", RulesFile: rulesfile.PathInDir("svc")}
+	docs := Scope{Name: "docs", Pattern: `.*\.md`, RulesFile: rulesfile.FileName}
 	in := &Result{RepoRoot: "/repo", Files: []FileMatch{
 		{Path: "a.go", Scopes: []Scope{core, docs}, Diff: "+a"},
 		{Path: "svc/b.go", Scopes: []Scope{nested}},
@@ -67,9 +69,9 @@ func TestCoverageFilterScope(t *testing.T) {
 }
 
 func TestResultFilesOfAndOverlaps(t *testing.T) {
-	a := Scope{Name: "a", Pattern: ".*", KitFile: "KIT"}
-	b := Scope{Name: "b", Pattern: `\.go$`, KitFile: "src/KIT", Directory: "src"}
-	c := Scope{Name: "c", Pattern: `api`, KitFile: "src/KIT", Directory: "src"}
+	a := Scope{Name: "a", Pattern: ".*", RulesFile: rulesfile.FileName}
+	b := Scope{Name: "b", Pattern: `\.go$`, RulesFile: rulesfile.PathInDir("src"), Directory: "src"}
+	c := Scope{Name: "c", Pattern: `api`, RulesFile: rulesfile.PathInDir("src"), Directory: "src"}
 	r := &Result{Files: []FileMatch{
 		{Path: "src/api.go", Scopes: []Scope{a, b, c}},
 		{Path: "src/x.go", Scopes: []Scope{a, b}},

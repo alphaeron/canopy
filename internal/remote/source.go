@@ -66,7 +66,7 @@ func NewSource(pr *PullRequest, client *github.Client, log *slog.Logger) *Source
 	}
 }
 
-// Reviewer is the GitHub review platform for the pull request: KIT files
+// Reviewer is the GitHub review platform for the pull request: rules files
 // from its base tree, and team targets resolved through the GitHub API.
 func (r *Source) Reviewer() *approval.Reviewer { return r.reviewer }
 

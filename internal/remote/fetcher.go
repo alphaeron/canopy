@@ -10,13 +10,13 @@ import (
 	"github.com/google/go-github/v71/github"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// Fetcher fetches KIT rules for a remote repository through the GitHub
-// REST API by listing the tree at the pull request's base revision and reading
-// each KIT file as a blob. It is the remote counterpart of local.Fetcher on the
-// same Fetcher seam, so the sift and approve phases run the same regardless of
+// Fetcher fetches rules for a remote repository through the GitHub REST API by
+// listing the tree at the pull request's base revision and reading each rules
+// file as a blob. It is the remote counterpart of local.Fetcher on the same
+// Fetcher seam, so the sift and approve phases run the same regardless of
 // whether the rules came from a local worktree or a GitHub tree.
 type Fetcher struct {
 	// Client is the authenticated GitHub client. The caller owns the token
@@ -36,51 +36,52 @@ type Fetcher struct {
 }
 
 // Execute runs the fetch phase for a remote repository: it lists the tree at
-// BaseSHA, locates every KIT file (kitfile.IsKitFile, as local.Fetcher does),
-// reads each file's contents as a single blob, and parses it into a rule list.
+// BaseSHA, locates every rules file (rulesfile.IsRulesFile, as local.Fetcher
+// does), reads each file's contents as a single blob, and parses it into a
+// rule list.
 // Any per-file read or parse error is accumulated into the returned error;
 // the partial result is still provided so callers can report which files
 // failed rather than dropping the entire fetch.
-func (rf *Fetcher) Execute(ctx context.Context) (string, kitfile.Set, error) {
+func (rf *Fetcher) Execute(ctx context.Context) (string, rulesfile.Set, error) {
 	log := rf.log()
-	rules := make(kitfile.Set)
+	rules := make(rulesfile.Set)
 
 	tree, _, err := rf.Client.Git.GetTree(ctx, rf.Owner, rf.Repo, rf.BaseSHA, true)
 	if err != nil {
-		log.Error("kit: failed to list base tree",
+		log.Error("failed to list base tree",
 			"component", "fetcher", "phase", "fetch", "owner", rf.Owner,
 			"repo", rf.Repo, "base_sha", rf.BaseSHA, "error", err)
 		return "", rules, fmt.Errorf("list base tree %s: %w", rf.BaseSHA, err)
 	}
 
 	var fetchErrors []error
-	kitFileCount := 0
+	rulesFileCount := 0
 	for _, entry := range tree.Entries {
 		if entry.GetType() != "blob" {
 			continue
 		}
 		path := entry.GetPath()
-		if !kitfile.IsKitFile(path) {
+		if !rulesfile.IsRulesFile(path) {
 			continue
 		}
-		kitFileCount++
+		rulesFileCount++
 		data, err := rf.fetchBlobContents(ctx, entry.GetSHA())
 		if err != nil {
 			fetchErrors = append(fetchErrors, fmt.Errorf("fetch %s: %w", path, err))
 			continue
 		}
-		fileRules, err := kitfile.ParseRules(data)
+		fileRules, err := rulesfile.ParseRules(data)
 		if err != nil {
-			fetchErrors = append(fetchErrors, fmt.Errorf("parse KIT file %s: %w", path, err))
+			fetchErrors = append(fetchErrors, fmt.Errorf("parse rules file %s: %w", path, err))
 			continue
 		}
 		rules[path] = fileRules
-		log.Info("kit: loaded rules from remote KIT file",
+		log.Info("loaded rules from remote rules file",
 			"component", "fetcher", "phase", "fetch", "repo", rf.Repo, "path", path)
 	}
 
-	if kitFileCount == 0 {
-		log.Error("kit: no KIT files found at base revision",
+	if rulesFileCount == 0 {
+		log.Error("no rules files found at base revision",
 			"component", "fetcher", "phase", "fetch", "repo", rf.Repo, "base_sha", rf.BaseSHA)
 	}
 

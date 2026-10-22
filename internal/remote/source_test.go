@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/google/go-github/v71/github"
+
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 type fakeTreeEntry struct {
@@ -56,7 +58,7 @@ func newTestClient(t *testing.T, tree *fakeTreeServer) *github.Client {
 
 func TestRemoteAllFilesListingBlobsAtBaseTree(t *testing.T) {
 	tree := &fakeTreeServer{entries: []fakeTreeEntry{
-		{Path: "KIT", Sha: "a", Type: "blob"},
+		{Path: rulesfile.FileName, Sha: "a", Type: "blob"},
 		{Path: "src/api.go", Sha: "b", Type: "blob"},
 		{Path: "nested", Sha: "c", Type: "tree"},
 	}}
@@ -71,7 +73,7 @@ func TestRemoteAllFilesListingBlobsAtBaseTree(t *testing.T) {
 	}
 	// The one non-blob entry ("nested", a tree) must be excluded.
 	sort.Strings(files)
-	want := []string{"KIT", "src/api.go"}
+	want := []string{rulesfile.FileName, "src/api.go"}
 	if len(files) != len(want) {
 		t.Fatalf("AllFiles length = %d, want %d: %v", len(files), len(want), files)
 	}

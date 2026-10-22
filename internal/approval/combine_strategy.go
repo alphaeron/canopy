@@ -1,7 +1,7 @@
 package approval
 
 import (
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // CombineStrategy is the pluggable algorithm that merges the accumulated
@@ -82,16 +82,16 @@ func (DefaultCombineStrategy) note() string {
 	return "default strategy"
 }
 
-// newCombineStrategy adapts the configuration value read from a KIT file at
+// newCombineStrategy adapts the configuration value read from a rules file at
 // the config-to-algorithm boundary. Corrupt or omitted strategies default to
 // override.
-func newCombineStrategy(s kitfile.RuleCombineStrategy) CombineStrategy {
+func newCombineStrategy(s rulesfile.RuleCombineStrategy) CombineStrategy {
 	switch s {
-	case kitfile.RuleCombineStrategyOverride:
+	case rulesfile.RuleCombineStrategyOverride:
 		return OverrideCombineStrategy{}
-	case kitfile.RuleCombineStrategyUnion:
+	case rulesfile.RuleCombineStrategyUnion:
 		return UnionCombineStrategy{}
-	case kitfile.RuleCombineStrategyIntersect:
+	case rulesfile.RuleCombineStrategyIntersect:
 		return IntersectCombineStrategy{}
 	default:
 		return DefaultCombineStrategy{}
@@ -105,13 +105,13 @@ func newCombineStrategy(s kitfile.RuleCombineStrategy) CombineStrategy {
 // is a historical record of what was actually applied, not a copy of the raw
 // configuration file; editors seed from it so re-saving a rule never changes
 // who has to approve.
-func EffectiveCombineStrategy(s kitfile.RuleCombineStrategy) kitfile.RuleCombineStrategy {
+func EffectiveCombineStrategy(s rulesfile.RuleCombineStrategy) rulesfile.RuleCombineStrategy {
 	switch s {
-	case kitfile.RuleCombineStrategyUnion,
-		kitfile.RuleCombineStrategyOverride,
-		kitfile.RuleCombineStrategyIntersect:
+	case rulesfile.RuleCombineStrategyUnion,
+		rulesfile.RuleCombineStrategyOverride,
+		rulesfile.RuleCombineStrategyIntersect:
 		return s
 	default:
-		return kitfile.RuleCombineStrategyOverride
+		return rulesfile.RuleCombineStrategyOverride
 	}
 }

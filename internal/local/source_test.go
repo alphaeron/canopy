@@ -12,6 +12,7 @@ import (
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/gitrepo"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // newScratchRepo creates a go-git repository in a temp dir, seeded with the
@@ -49,7 +50,7 @@ func newScratchRepo(t *testing.T, files map[string]string) (string, *gitrepo.Rep
 
 // TestLocalNoCommitYieldsEmptyUniverses pins the no-commit UX: a plain-init
 // repository with no commit reports an empty AllFiles and ChangedFiles, with
-// no error, so `kit match` and `kit coverage` run cleanly right after `git
+// no error, so `match` and `coverage` run cleanly right after `git
 // init` rather than failing on the unborn HEAD.
 func TestLocalNoCommitYieldsEmptyUniverses(t *testing.T) {
 	repo, err := git.PlainInit(t.TempDir(), false)
@@ -77,9 +78,9 @@ func TestLocalNoCommitYieldsEmptyUniverses(t *testing.T) {
 
 func TestLocalAllFilesMatchesCommittedSet(t *testing.T) {
 	_, repo := newScratchRepo(t, map[string]string{
-		"a.go":     "one",
-		"src/b.go": "two",
-		"KIT":      "- \"a$\":\n  name: \"n\"\n",
+		"a.go":             "one",
+		"src/b.go":         "two",
+		rulesfile.FileName: "- \"a$\":\n  name: \"n\"\n",
 	})
 	src := NewSource(repo, nil)
 	files, err := src.AllFiles(t.Context())
@@ -87,7 +88,7 @@ func TestLocalAllFilesMatchesCommittedSet(t *testing.T) {
 		t.Fatalf("AllFiles: %v", err)
 	}
 	sort.Strings(files)
-	want := []string{"KIT", "a.go", "src/b.go"}
+	want := []string{rulesfile.FileName, "a.go", "src/b.go"}
 	if strings.Join(files, ",") != strings.Join(want, ",") {
 		t.Errorf("AllFiles = %v, want %v", files, want)
 	}

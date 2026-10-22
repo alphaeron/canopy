@@ -1,6 +1,6 @@
-// Package kitfile defines the KIT file schema: rules, approver targets, and
+// Package rulesfile defines the rules file schema: rules, approver targets, and
 // combine strategies, with YAML parsing, validation, and editing.
-package kitfile
+package rulesfile
 
 import (
 	"errors"
@@ -10,13 +10,15 @@ import (
 	"regexp"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/alphaeron/kit/internal/brand"
 )
 
 // ErrPatternNotFound is returned by rule operations when no rule with the
-// given pattern exists in the KIT file. Callers identify it with errors.Is.
-var ErrPatternNotFound = errors.New("no rule with that pattern in the KIT file")
+// given pattern exists in the rules file. Callers identify it with errors.Is.
+var ErrPatternNotFound = errors.New("no rule with that pattern in the rules file")
 
-// File is the complete, order-preserving view of one KIT file on disk.
+// File is the complete, order-preserving view of one rules file on disk.
 // Rules keeps the file's exact rule order (YAML sequence order), so saving a
 // File reproduces the original file modulo formatting.
 type File struct {
@@ -27,37 +29,37 @@ type File struct {
 	Rules Rules
 }
 
-// Load reads and parses the KIT file at path. It returns an error
+// Load reads and parses the rules file at path. It returns an error
 // when the file is missing or does not parse into the rule sequence form.
 func Load(path string) (*File, error) {
 	dat, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read KIT file %q: %w", path, err)
+		return nil, fmt.Errorf("read rules file %q: %w", path, err)
 	}
 
 	rules, err := ParseRules(dat)
 	if err != nil {
-		return nil, fmt.Errorf("parse KIT file %q: %w", path, err)
+		return nil, fmt.Errorf("parse rules file %q: %w", path, err)
 	}
 	return &File{Path: path, Rules: rules}, nil
 }
 
 // Save writes the rules to path in the dynamic-key sequence form, matching
 // the form Load and UnmarshalYAML parse. The target file is created
-// or truncated; the caller owns the path (KIT files are named "KIT").
+// or truncated; the caller owns the path (rules files are named FileName).
 func (k *File) Save(path string) error {
 	dat, err := yaml.Marshal(k.Rules)
 	if err != nil {
-		return fmt.Errorf("marshal KIT rules: %w", err)
+		return fmt.Errorf("marshal rules: %w", err)
 	}
 
 	file, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("create KIT file %q: %w", path, err)
+		return fmt.Errorf("create rules file %q: %w", path, err)
 	}
 	if _, err := file.Write(dat); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("write KIT file %q: %w", path, err)
+		return fmt.Errorf("write rules file %q: %w", path, err)
 	}
 	return file.Close()
 }
@@ -139,19 +141,20 @@ func (k *File) Violations() []error {
 	return all
 }
 
-// FileName is the name every KIT file has, in any directory.
-const FileName = "KIT"
+// FileName is the name every rules file has, in any directory.
+const FileName = brand.RulesFileName
 
-// IsKitFile reports whether the slash-separated repository path names a KIT
-// file: its final element is exactly FileName. Matching the whole name
-// keeps files such as "docs/KITCHEN.md" from being read as rules.
-func IsKitFile(p string) bool {
+// IsRulesFile reports whether the slash-separated repository path names a
+// rules file: its final element is exactly FileName. Matching the whole
+// name keeps files whose names merely start or end with FileName from being
+// read as rules.
+func IsRulesFile(p string) bool {
 	return path.Base(p) == FileName
 }
 
-// PathInDir is the slash-separated repository path of the KIT file in dir:
-// "KIT" for the repository root ("" or "."), "<dir>/KIT" otherwise. It is
-// the key a fetcher's rule map uses for that directory's rules.
+// PathInDir is the slash-separated repository path of the rules file in dir:
+// FileName for the repository root ("" or "."), dir/FileName otherwise.
+// It is the key a fetcher's rule map uses for that directory's rules.
 func PathInDir(dir string) string {
 	return path.Join(dir, FileName)
 }

@@ -19,7 +19,7 @@ import (
 // regroups that one result per scope.
 var matchCmd = &cobra.Command{
 	Use:   "match",
-	Short: "Match files against KIT file rules",
+	Short: "Match files against rules file rules",
 }
 
 // runMatchCmd is matchCmd's RunE, assigned in init: it opens the TUI, whose
@@ -98,11 +98,11 @@ func renderMatchByScope(mode outputMode, groups []match.ScopeGroup) error {
 	case modeJSON:
 		return writeJSON(os.Stdout, groups)
 	default:
-		var header = []string{"Scope", "Pattern", "KIT File", "Files"}
+		var header = []string{"Scope", "Pattern", "Rules File", "Files"}
 		rows := make([][]string, 0, len(groups))
 		for _, g := range groups {
 			files := strings.Join(g.Files, "\n")
-			rows = append(rows, []string{g.Scope.Name, g.Scope.Pattern, g.Scope.KitFile, files})
+			rows = append(rows, []string{g.Scope.Name, g.Scope.Pattern, g.Scope.RulesFile, files})
 		}
 		if err := writeTable(os.Stdout, header, rows); err != nil {
 			return err

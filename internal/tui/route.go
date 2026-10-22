@@ -5,6 +5,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/alphaeron/kit/internal/brand"
 )
 
 // Route is a navigable destination in the TUI. Each route is one CLI
@@ -14,11 +16,11 @@ import (
 // options form (o) edits the values in place. The CLI and the TUI therefore
 // take the same inputs and load the same data.
 type Route struct {
-	// Command is the command path after "kit", e.g. "rules list". It is the
-	// home and palette label.
+	// Command is the command path after the command name, e.g. "rules list". It
+	// is the home and palette label.
 	Command string
 	// Title, when set, replaces the breadcrumb label, for drill-downs whose
-	// command line is unwieldy (e.g. "rules for cmd/kit/main.go").
+	// command line is unwieldy (e.g. "rules for cmd/app/main.go").
 	Title string
 	// Description is a one-line summary.
 	Description string
@@ -110,12 +112,12 @@ func (v Values) Bool(name string) bool { return v.Flags[name] == "true" }
 
 // CommandLine is the CLI invocation equivalent to the route, quoted for a
 // POSIX shell so it can be copied and run, e.g.
-// "kit match --changed --scope=core". Flags appear in Params order; false
+// "match --changed --scope=core". Flags appear in Params order; false
 // booleans and empty values are omitted as they are the defaults. A "false"
 // choice and a clearable flag's empty value are kept: their unset value
 // means something else, such as "unchanged" for rules edit.
 func (r Route) CommandLine() string {
-	parts := []string{"kit", r.Command}
+	parts := []string{brand.Command, r.Command}
 	for _, a := range r.Values.Args {
 		parts = append(parts, shellQuote(a))
 	}
@@ -150,12 +152,12 @@ func (r Route) CommandLine() string {
 }
 
 // label is the breadcrumb text: the Title, or the command line without
-// the "kit " prefix.
+// the command-name prefix.
 func (r Route) label() string {
 	if r.Title != "" {
 		return r.Title
 	}
-	return strings.TrimPrefix(r.CommandLine(), "kit ")
+	return strings.TrimPrefix(r.CommandLine(), brand.Command+" ")
 }
 
 // missingRequired reports whether a required parameter has no value, in

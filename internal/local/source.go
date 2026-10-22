@@ -18,7 +18,7 @@ import (
 // universe is the working tree (AllFiles) and its diff against HEAD
 // (ChangedFiles); rules and approvers come from the local review platform
 // (NewReviewer), so local CLI analysis and local reviews read the same
-// KIT files and resolve approvers the same way.
+// rules files and resolve approvers the same way.
 type Source struct {
 	// Repo is the go-git repository for file listings and diffs.
 	Repo *gitrepo.Repository
@@ -34,7 +34,7 @@ func NewSource(repo *gitrepo.Repository, log *slog.Logger) *Source {
 	return &Source{Repo: repo, Log: log, reviewer: NewReviewer(repo, log)}
 }
 
-// Reviewer is the local review platform: the working tree's KIT files and
+// Reviewer is the local review platform: the working tree's rules files and
 // pass-through approver resolution.
 func (l *Source) Reviewer() *approval.Reviewer { return l.reviewer }
 
@@ -55,7 +55,7 @@ func (l *Source) RepoRoot() string {
 // sorted for deterministic traversal downstream.
 func (l *Source) AllFiles(ctx context.Context) ([]string, error) {
 	// A repository with no commit yet has no tracked files: report an empty
-	// universe rather than a missing-HEAD error, so `kit match` is usable
+	// universe rather than a missing-HEAD error, so `match` is usable
 	// right after `git init`.
 	if !l.Repo.HasCommits() {
 		return []string{}, nil

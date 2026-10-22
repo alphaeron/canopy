@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/google/go-github/v71/github"
+
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // fakeGitHubAPI stands up an httptest server that answers the two endpoints
@@ -86,7 +88,7 @@ func TestRemoteFetcherHappyPath(t *testing.T) {
 			Sha  string `json:"sha"`
 			Type string `json:"type"`
 		}{
-			{Path: "KIT", Sha: "deadbeef", Type: "blob"},
+			{Path: rulesfile.FileName, Sha: "deadbeef", Type: "blob"},
 			{Path: "readme.md", Sha: "cafebabe", Type: "blob"},
 		},
 	}
@@ -109,20 +111,21 @@ func TestRemoteFetcherHappyPath(t *testing.T) {
 		t.Errorf("root = %q, want empty for remote", root)
 	}
 	if len(rules) != 1 {
-		t.Fatalf("rule count = %d, want 1 (only the KIT file)", len(rules))
+		t.Fatalf("rule count = %d, want 1 (only the rules file)", len(rules))
 	}
-	ruleList, ok := rules["KIT"]
+	ruleList, ok := rules[rulesfile.FileName]
 	if !ok {
-		t.Fatalf("missing rule for the root KIT file, got keys %v", keysOf(rules))
+		t.Fatalf("missing rule for the root rules file, got keys %v", keysOf(rules))
 	}
 	if len(ruleList) != 1 || ruleList[0].Name != "Backend" {
 		t.Errorf("unexpected rule contents: %+v", ruleList)
 	}
 }
 
-// TestRemoteFetcherSkipsLookalikeNames pins whole-name KIT file matching:
-// the fetcher used to match any path containing "KIT", so it fetched and
-// parsed files like docs/KITCHEN.md as rules and failed the fetch.
+// TestRemoteFetcherSkipsLookalikeNames pins whole-name rules file matching: the
+// fetcher used to match any path containing the rules file name, so it fetched
+// and parsed look-alike files such as Markdown docs as rules and failed the
+// fetch.
 func TestRemoteFetcherSkipsLookalikeNames(t *testing.T) {
 	fake := &fakeGitHubAPI{
 		blobs: map[string][]byte{"deadbeef": []byte("- \".*\":\n  name: \"Root\"\n")},
@@ -131,10 +134,10 @@ func TestRemoteFetcherSkipsLookalikeNames(t *testing.T) {
 			Sha  string `json:"sha"`
 			Type string `json:"type"`
 		}{
-			{Path: "KIT", Sha: "deadbeef", Type: "blob"},
+			{Path: rulesfile.FileName, Sha: "deadbeef", Type: "blob"},
 			// No blobs: fetching either would fail the test with a 404.
-			{Path: "docs/KITCHEN.md", Sha: "kitchen", Type: "blob"},
-			{Path: "svc/KIT.bak", Sha: "backup", Type: "blob"},
+			{Path: "docs/" + rulesfile.FileName + "CHEN.md", Sha: "lookalike", Type: "blob"},
+			{Path: rulesfile.PathInDir("svc") + ".bak", Sha: "backup", Type: "blob"},
 		},
 	}
 	srv := fake.serve(t)
@@ -146,8 +149,8 @@ func TestRemoteFetcherSkipsLookalikeNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if len(rules) != 1 || len(rules["KIT"]) != 1 {
-		t.Errorf("rules = %v, want only the root KIT file", keysOf(rules))
+	if len(rules) != 1 || len(rules[rulesfile.FileName]) != 1 {
+		t.Errorf("rules = %v, want only the root rules file", keysOf(rules))
 	}
 }
 

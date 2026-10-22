@@ -12,6 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	huh "charm.land/huh/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/alphaeron/kit/internal/brand"
 )
 
 func keyPress(s string) tea.KeyPressMsg {
@@ -115,12 +117,12 @@ func filesPage() Page {
 	})
 }
 
-// TestDeepLinkStartsAboveHome is the subcommand contract: `kit match` opens
+// TestDeepLinkStartsAboveHome is the subcommand contract: `match` opens
 // on the match page, and back goes to the home page rather than quitting.
 func TestDeepLinkStartsAboveHome(t *testing.T) {
 	r := staticRoute("match", filesPage)
 	h := newHarness(t, Config{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
-	if got := h.crumbs(); !strings.Contains(got, "kit › match") {
+	if got := h.crumbs(); !strings.Contains(got, brand.Command+" › match") {
 		t.Fatalf("header must show the deep-linked page, got %q", got)
 	}
 	h.press("esc")
@@ -151,7 +153,7 @@ func TestStartWithoutPageLoadsInBackground(t *testing.T) {
 func TestHomeNavigatesToRoute(t *testing.T) {
 	h := newHarness(t, Config{Routes: []Route{staticRoute("match", filesPage), staticRoute("coverage", filesPage)}})
 	h.press("down", "enter")
-	if got := h.crumbs(); !strings.Contains(got, "kit › coverage") {
+	if got := h.crumbs(); !strings.Contains(got, brand.Command+" › coverage") {
 		t.Fatalf("enter must open the hovered command, header %q", got)
 	}
 	if !strings.Contains(h.screen(), "a.go") {
@@ -272,7 +274,7 @@ func TestPaletteNavigates(t *testing.T) {
 		t.Fatalf("ctrl+p must open the palette:\n%s", screen)
 	}
 	// The palette overlays the page; it must not blank it.
-	if !strings.Contains(screen, "kit ") || !strings.Contains(screen, "commands ·") {
+	if !strings.Contains(screen, brand.Command+" ") || !strings.Contains(screen, "commands ·") {
 		t.Errorf("the page must stay visible around the palette:\n%s", screen)
 	}
 	for _, k := range "cov" {
@@ -296,7 +298,7 @@ func TestTreePageDrillsAndToggles(t *testing.T) {
 	target := staticRoute("rules for a.go", filesPage)
 	tree := func() Page {
 		return NewTreePage("Rules", []TreeGroup{{
-			Title:  "*.go in KIT",
+			Title:  "*.go in rules",
 			Detail: Detail{Fields: []Field{{Label: "Pattern", Value: "group-detail"}}},
 			Items:  []Item{{Title: "a.go", Detail: Detail{Fields: []Field{{Label: "File", Value: "leaf-detail"}}}, Route: &target}},
 		}})
@@ -356,14 +358,14 @@ func TestMouseSelectsAndOpensRows(t *testing.T) {
 	match, coverage := staticRoute("match", filesPage), staticRoute("coverage", filesPage)
 	commands := func() Page {
 		return NewListPage("Commands", []Item{
-			{Title: "match", Detail: Detail{Fields: []Field{{Label: "Command", Value: "kit match"}}}, Route: &match},
-			{Title: "coverage", Detail: Detail{Fields: []Field{{Label: "Command", Value: "kit coverage"}}}, Route: &coverage},
+			{Title: "match", Detail: Detail{Fields: []Field{{Label: "Command", Value: brand.Command + " match"}}}, Route: &match},
+			{Title: "coverage", Detail: Detail{Fields: []Field{{Label: "Command", Value: brand.Command + " coverage"}}}, Route: &coverage},
 		})
 	}
 	start := staticRoute("commands", commands)
 	h := newHarness(t, Config{Routes: []Route{match, coverage}, Start: &start, StartPage: commands()})
 	h.send(click(listX, firstRowY+rowStride))
-	if len(h.a.stack) != 2 || !strings.Contains(h.screen(), "kit coverage") {
+	if len(h.a.stack) != 2 || !strings.Contains(h.screen(), brand.Command+" coverage") {
 		t.Fatalf("a click must select the second row without opening it:\n%s", h.screen())
 	}
 	h.send(click(listX, firstRowY+rowStride+1)) // description line of the same row
@@ -405,7 +407,7 @@ func TestMouseTreeClick(t *testing.T) {
 	target := staticRoute("rules for b.go", filesPage)
 	tree := func() Page {
 		return NewTreePage("Rules", []TreeGroup{{
-			Title: "*.go in KIT",
+			Title: "*.go in rules",
 			Items: []Item{
 				{Title: "a.go", Detail: Detail{Fields: []Field{{Label: "File", Value: "leaf-a"}}}},
 				{Title: "b.go", Route: &target},

@@ -19,7 +19,7 @@ type Item struct {
 	Detail Detail
 	// Route, when set, is opened by enter: the drill-down from one
 	// command's page into another's (a rule into the files it matches,
-	// a KIT file into its rules). Without a route, enter focuses the
+	// a rules file into its rules). Without a route, enter focuses the
 	// detail pane so it can be scrolled.
 	Route *Route
 	// Value is opaque caller data handed back to actions.

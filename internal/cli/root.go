@@ -1,4 +1,4 @@
-// Package cli implements the kit command line: the cobra command tree, its
+// Package cli implements the command line: the cobra command tree, its
 // scripted (table and JSON) output, and the TUI pages built from it.
 package cli
 
@@ -10,6 +10,7 @@ import (
 	"github.com/go-git/go-git/v6"
 	"github.com/spf13/cobra"
 
+	"github.com/alphaeron/kit/internal/brand"
 	"github.com/alphaeron/kit/internal/config"
 	"github.com/alphaeron/kit/internal/gitrepo"
 	"github.com/alphaeron/kit/internal/tui"
@@ -40,18 +41,18 @@ var cfgFile string
 // rootCmd is the base cobra command. All subcommands attach themselves via
 // their own init().
 var rootCmd = &cobra.Command{
-	Use:   "kit",
-	Short: "Kit code review CLI",
-	Long: `The Kit CLI allows for checking code ownership using the local branch
+	Use:   brand.Command,
+	Short: brand.Name + " code review CLI",
+	Long: "The " + brand.Name + ` CLI allows for checking code ownership using the local branch
 contents before opening an official Pull Request.
 
-The local branch KIT file contents are used rather than a remote main
+The local branch rules file contents are used rather than a remote main
 branch. Every command runs against the local repository; the same analysis
-is exposed by the kitweb REST server against a pull request (which is a
+is exposed by the REST server against a pull request (which is a
 separate binary, not a subcommand here).`,
 	// PersistentPreRunE runs after cobra has finished parsing every flag for
 	// the command tree, making --config available. It is the single moment
-	// configuration is loaded, so the resolved set of KIT_* environment
+	// configuration is loaded, so the resolved set of prefixed environment
 	// variables, the config file, and the flag values feed every internal
 	// package's slog calls immediately.
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -65,15 +66,15 @@ separate binary, not a subcommand here).`,
 		if cfg.Path != "" {
 			slog.Debug("using config file", "component", "config", "path", cfg.Path)
 		}
-		// The kit CLI is a local tool: it does not need the GitHub app
+		// The CLI is a local tool: it does not need the GitHub app
 		// credentials, but loading them is harmless and keeps the two
-		// binaries (kit and kitweb) on the same resolution path.
+		// binaries (the CLI and the REST server) on the same resolution path.
 		_ = cfg.GitHubAppID
 		return nil
 	},
 }
 
-// Bare `kit` on a terminal opens the TUI's home page, which lists every
+// The bare command on a terminal opens the TUI's home page, which lists every
 // command's page; piped or with --json it prints help as it always has.
 func runRoot(cmd *cobra.Command, args []string) error {
 	if mode, _ := resolveOutputMode(cmd); mode != modeTUI {
@@ -91,8 +92,8 @@ func Execute() {
 
 func init() {
 	rootCmd.RunE = runRoot
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $KIT_CONFIG or $HOME/.kit.yaml)")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug-level) logging; overrides the config file and KIT_VERBOSE")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $"+brand.EnvConfig+" or $HOME/"+brand.ConfigName+".yaml)")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug-level) logging; overrides the config file and "+brand.EnvPrefix+"VERBOSE")
 	rootCmd.PersistentFlags().Bool("json", false, "emit the result as JSON instead of rendering a table or TUI")
 }
 

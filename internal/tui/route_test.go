@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/alphaeron/kit/internal/brand"
 )
 
 func TestCommandLine(t *testing.T) {
@@ -21,12 +23,12 @@ func TestCommandLine(t *testing.T) {
 		v    Values
 		want string
 	}{
-		{name: "defaults", want: "kit match"},
-		{name: "flags in param order", v: Values{Flags: map[string]string{"scope": "core", "changed": "true"}}, want: "kit match --changed --scope=core"},
-		{name: "false and empty omitted", v: Values{Flags: map[string]string{"changed": "false", "scope": ""}}, want: "kit match"},
-		{name: "shell-quoted values", v: Values{Args: []string{`.*\.go`}, Flags: map[string]string{"scope": "Core Backend Review"}}, want: `kit match '.*\.go' --scope='Core Backend Review'`},
-		{name: "single quote escaped", v: Values{Args: []string{"it's"}}, want: `kit match 'it'\''s'`},
-		{name: "undeclared flags last, sorted", v: Values{Flags: map[string]string{"zeta": "1", "alpha": "2", "changed": "true"}}, want: "kit match --changed --alpha=2 --zeta=1"},
+		{name: "defaults", want: brand.Command + " match"},
+		{name: "flags in param order", v: Values{Flags: map[string]string{"scope": "core", "changed": "true"}}, want: brand.Command + " match --changed --scope=core"},
+		{name: "false and empty omitted", v: Values{Flags: map[string]string{"changed": "false", "scope": ""}}, want: brand.Command + " match"},
+		{name: "shell-quoted values", v: Values{Args: []string{`.*\.go`}, Flags: map[string]string{"scope": "Core Backend Review"}}, want: brand.Command + ` match '.*\.go' --scope='Core Backend Review'`},
+		{name: "single quote escaped", v: Values{Args: []string{"it's"}}, want: brand.Command + ` match 'it'\''s'`},
+		{name: "undeclared flags last, sorted", v: Values{Flags: map[string]string{"zeta": "1", "alpha": "2", "changed": "true"}}, want: brand.Command + " match --changed --alpha=2 --zeta=1"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,14 +64,14 @@ func TestOptionsReloadInPlace(t *testing.T) {
 	if _, ok := h.a.top().page.(*optionsPage); !ok {
 		t.Fatalf("o must open the options form:\n%s", h.screen())
 	}
-	if !strings.Contains(h.screen(), "Runs  kit match") {
+	if !strings.Contains(h.screen(), "Runs  "+brand.Command+" match") {
 		t.Errorf("the form must preview the command line:\n%s", h.screen())
 	}
 	h.press("left", "enter") // Confirm fields default to "No"; left selects "Yes".
 	if len(h.a.stack) != 2 || len(loads) != 2 || !loads[1].Bool("changed") {
 		t.Fatalf("applying must reload the page in place with the new values (stack %d, loads %+v)", len(h.a.stack), loads)
 	}
-	if got := h.crumbs(); !strings.Contains(got, "kit › match --changed") {
+	if got := h.crumbs(); !strings.Contains(got, brand.Command+" › match --changed") {
 		t.Errorf("breadcrumb must show the new command line, got %q", got)
 	}
 	h.press("o", "esc")
@@ -103,12 +105,12 @@ func TestOptionsChoices(t *testing.T) {
 	var loads []Values
 	r := valuesRoute([]Param{{
 		Name: "file", Kind: ParamChoice,
-		Choices: func(context.Context) ([]string, error) { return []string{"KIT", "svc/KIT"}, nil },
+		Choices: func(context.Context) ([]string, error) { return []string{"rules", "svc/rules"}, nil },
 	}}, &loads)
-	r.Values = Values{Flags: map[string]string{"file": "gone/KIT"}}
+	r.Values = Values{Flags: map[string]string{"file": "gone/rules"}}
 	h := newHarness(t, Config{Routes: []Route{r}, Start: &r})
 	h.press("o")
-	for _, want := range []string{"all", "svc/KIT", "gone/KIT"} {
+	for _, want := range []string{"all", "svc/rules", "gone/rules"} {
 		if !strings.Contains(h.screen(), want) {
 			t.Errorf("choice %q missing from the options form:\n%s", want, h.screen())
 		}
@@ -223,7 +225,7 @@ func TestCommandLineFalseChoice(t *testing.T) {
 		},
 		Values: Values{Args: []string{"a"}, Flags: map[string]string{"self-approve": "false", "force": "false"}},
 	}
-	if got, want := r.CommandLine(), "kit rules edit a --self-approve=false"; got != want {
+	if got, want := r.CommandLine(), brand.Command+" rules edit a --self-approve=false"; got != want {
 		t.Errorf("CommandLine = %q, want %q", got, want)
 	}
 }
@@ -316,7 +318,7 @@ func TestClearableSeedAndCommandLine(t *testing.T) {
 		Params:  []Param{{Name: "pattern", Arg: true}, {Name: "name", Unset: "unchanged"}, {Name: "scope"}},
 		Values:  Values{Args: []string{"p"}, Flags: map[string]string{"name": "", "scope": ""}},
 	}
-	if got, want := r.CommandLine(), "kit rules edit p --name=''"; got != want {
+	if got, want := r.CommandLine(), brand.Command+" rules edit p --name=''"; got != want {
 		t.Errorf("CommandLine = %q, want %q", got, want)
 	}
 	p := newOptionsPage(r, nil, false)

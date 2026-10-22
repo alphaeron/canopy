@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/alphaeron/kit/internal/brand"
 )
 
 // withEnv sets the named variables for the duration of the test, restoring
@@ -72,15 +74,15 @@ func TestLoadEnvOverridesFile(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 	withEnv(t, map[string]string{
-		"KIT_VERBOSE":    "false",
-		"KIT_SERVE_ADDR": ":7777",
+		brand.EnvPrefix + "VERBOSE":    "false",
+		brand.EnvPrefix + "SERVE_ADDR": ":7777",
 	})
 	got, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if got.Verbose {
-		t.Error("verbose should be false: KIT_VERBOSE beats the value in the config file")
+		t.Error("verbose should be false: $VERBOSE beats the value in the config file")
 	}
 	if got.ServeAddr != ":7777" {
 		t.Errorf("serve_addr = %q, want the env override :7777", got.ServeAddr)
@@ -97,9 +99,9 @@ func TestLoadExplicitlyNamedMissingFileIsADeclaredError(t *testing.T) {
 }
 
 func TestLoadNoConfigAnywhereYieldsDefaults(t *testing.T) {
-	// No explicit path and nothing under $KIT_CONFIG / cwd / home: defaults
-	// and environment alone form a valid configuration.
-	withEnv(t, map[string]string{"KIT_CONFIG": ""})
+	// No explicit path and nothing under the config env var / cwd / home:
+	// defaults and environment alone form a valid configuration.
+	withEnv(t, map[string]string{brand.EnvConfig: ""})
 	t.Chdir(t.TempDir())
 	got, err := Load("")
 	if err != nil {
@@ -124,19 +126,19 @@ func TestLoadUnparseableFileIsAnError(t *testing.T) {
 	}
 }
 
-func TestLoadKitConfigFile(t *testing.T) {
+func TestLoadConfigFile(t *testing.T) {
 	dir := t.TempDir()
-	kitconf := filepath.Join(dir, ".kit.yaml")
-	if err := os.WriteFile(kitconf, []byte("verbose: true"), 0o644); err != nil {
-		t.Fatalf("write .kit.yaml: %v", err)
+	confPath := filepath.Join(dir, brand.ConfigName+".yaml")
+	if err := os.WriteFile(confPath, []byte("verbose: true"), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
 	}
-	withEnv(t, map[string]string{"KIT_CONFIG": kitconf})
+	withEnv(t, map[string]string{brand.EnvConfig: confPath})
 	got, err := Load("")
 	if err != nil {
-		t.Fatalf("Load via KIT_CONFIG: %v", err)
+		t.Fatalf("Load via $CONFIG: %v", err)
 	}
 	if !got.Verbose {
-		t.Error("verbose from KIT_CONFIG file was not picked up")
+		t.Error("verbose from $CONFIG file was not picked up")
 	}
 }
 

@@ -5,18 +5,18 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // stubFetcher is a controllable Fetcher for exercising the full
 // fetch -> sift -> approve workflow without a git repository.
 type stubFetcher struct {
 	root  string
-	rules map[string]kitfile.Rules
+	rules map[string]rulesfile.Rules
 	err   error
 }
 
-func (f *stubFetcher) Execute(context.Context) (string, kitfile.Set, error) {
+func (f *stubFetcher) Execute(context.Context) (string, rulesfile.Set, error) {
 	return f.root, f.rules, f.err
 }
 
@@ -46,9 +46,9 @@ func eventAt(rs *ReviewState, phase, path string, status Status) bool {
 func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 	fetch := &stubFetcher{
 		root: "/repo",
-		rules: map[string]kitfile.Rules{
-			"KIT": {{Name: "root", Pattern: `.*\.go$`, CombineStrategy: kitfile.RuleCombineStrategyUnion,
-				Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}}},
+		rules: map[string]rulesfile.Rules{
+			rulesfile.FileName: {{Name: "root", Pattern: `.*\.go$`, CombineStrategy: rulesfile.RuleCombineStrategyUnion,
+				Approvers: []rulesfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}}},
 		},
 	}
 	s := &Reviewer{Fetch: fetch, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
@@ -87,7 +87,7 @@ func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 }
 
 func TestReviewerExecuteFetchErrorFailsReview(t *testing.T) {
-	fetchErr := errors.New("no KIT files in repository")
+	fetchErr := errors.New("no rules files in repository")
 	s := &Reviewer{Fetch: &stubFetcher{root: "/repo", err: fetchErr}, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
 	rs := s.Execute(t.Context(), buildContext(approverSet(), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
 
@@ -109,13 +109,13 @@ func TestReviewerExecuteFetchErrorFailsReview(t *testing.T) {
 }
 
 func TestReviewerExecuteSiftErrorFailsReview(t *testing.T) {
-	// A KIT file with an invalid regular expression is a sift-phase error:
+	// A rules file with an invalid regular expression is a sift-phase error:
 	// the state must carry it, log it, and the review must be blocked.
 	fetch := &stubFetcher{
 		root: "/repo",
-		rules: map[string]kitfile.Rules{
-			"KIT": {{Name: "broken", Pattern: `(`, CombineStrategy: kitfile.RuleCombineStrategyUnion,
-				Approvers: []kitfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}}},
+		rules: map[string]rulesfile.Rules{
+			rulesfile.FileName: {{Name: "broken", Pattern: `(`, CombineStrategy: rulesfile.RuleCombineStrategyUnion,
+				Approvers: []rulesfile.ApproverTarget{{Target: "team-a", RequiredCount: 1}}}},
 		},
 	}
 	s := &Reviewer{Fetch: fetch, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
@@ -148,9 +148,9 @@ func TestReviewerExecuteUnresolvableTargetIsTracked(t *testing.T) {
 	// both the approver target state and the accumulated errors.
 	fetch := &stubFetcher{
 		root: "/repo",
-		rules: map[string]kitfile.Rules{
-			"KIT": {{Name: "root", Pattern: `.*\.go$`, CombineStrategy: kitfile.RuleCombineStrategyUnion,
-				Approvers: []kitfile.ApproverTarget{{Target: "ghost-team", RequiredCount: 1}}}},
+		rules: map[string]rulesfile.Rules{
+			rulesfile.FileName: {{Name: "root", Pattern: `.*\.go$`, CombineStrategy: rulesfile.RuleCombineStrategyUnion,
+				Approvers: []rulesfile.ApproverTarget{{Target: "ghost-team", RequiredCount: 1}}}},
 		},
 	}
 	resolver := failingResolver{}

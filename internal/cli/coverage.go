@@ -18,7 +18,7 @@ import (
 // reflects the full set.
 var coverageCmd = &cobra.Command{
 	Use:   "coverage",
-	Short: "Coverage report of KIT file rules",
+	Short: "Coverage report of rules file rules",
 }
 
 // runCoverageCmd is coverageCmd's RunE, assigned in init: it opens the TUI, whose
@@ -63,14 +63,14 @@ func renderCoverage(mode outputMode, report *match.CoverageReport) error {
 		return writeJSON(os.Stdout, report)
 	default:
 		fmt.Printf("Total coverage: %.2f%% of %d file(s)\n", report.Percent, report.Universe)
-		var header = []string{"Scope", "Pattern", "KIT File", "Files", "Percent"}
+		var header = []string{"Scope", "Pattern", "Rules File", "Files", "Percent"}
 		rows := make([][]string, 0, len(report.PerScope))
 		for _, sc := range report.PerScope {
 			name := sc.Scope.Name
 			if name == "" {
 				name = sc.Scope.Pattern
 			}
-			rows = append(rows, []string{name, sc.Scope.Pattern, sc.Scope.KitFile,
+			rows = append(rows, []string{name, sc.Scope.Pattern, sc.Scope.RulesFile,
 				fmt.Sprintf("%d", sc.Files), fmt.Sprintf("%.2f%%", sc.Percent)})
 		}
 		if err := writeTable(os.Stdout, header, rows); err != nil {

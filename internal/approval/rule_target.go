@@ -3,7 +3,7 @@ package approval
 import (
 	"context"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // RuleTarget pairs an approver target with the self-approval policy of the
@@ -11,7 +11,7 @@ import (
 // combine strategies so that an author who is also a resolved member counts
 // only toward requirements whose rule allowed self-approval.
 type RuleTarget struct {
-	kitfile.ApproverTarget
+	rulesfile.ApproverTarget
 	SelfApprove bool
 }
 

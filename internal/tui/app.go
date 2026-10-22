@@ -1,6 +1,6 @@
-// Package tui is Kit's terminal UI toolkit: an app shell of routed pages
+// Package tui is the terminal UI library: an app shell of routed pages
 // (lists, trees, forms, details) plus standalone prompts. It knows nothing
-// of KIT rules; callers build pages from their own data.
+// of rules; callers build pages from their own data.
 package tui
 
 import (
@@ -17,6 +17,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/alphaeron/kit/internal/brand"
 )
 
 // Page is one screen of the TUI. Pages are built by the constructors in this
@@ -574,7 +576,7 @@ func (a *app) View() tea.View {
 	var v tea.View
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
-	v.WindowTitle = "kit · " + a.top().name()
+	v.WindowTitle = brand.Command + " · " + a.top().name()
 	if a.width == 0 || a.height == 0 {
 		return v
 	}
@@ -600,10 +602,10 @@ func (e entry) name() string {
 }
 
 // headerView is the breadcrumb trail on the left and the palette hint on the
-// right: "kit › rules list › edit rule".
+// right: "rules list › edit rule".
 func (a *app) headerView() string {
 	sep := a.st.crumbSep.Render(" › ")
-	parts := []string{a.st.brand.Render("kit")}
+	parts := []string{a.st.brand.Render(brand.Command)}
 	for i, e := range a.stack[1:] {
 		style := a.st.crumb
 		if i == len(a.stack)-2 {

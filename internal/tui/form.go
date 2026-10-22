@@ -34,7 +34,7 @@ type Choice struct {
 
 // Pick asks the user to choose one of choices on the terminal and returns
 // its value, or ErrAborted if they cancel. The CLI uses it to resolve what
-// the TUI resolves by row, such as which KIT file holds the rule to edit.
+// the TUI resolves by row, such as which rules file holds the rule to edit.
 func Pick(title string, choices []Choice) (string, error) {
 	var value string
 	opts := make([]huh.Option[string], len(choices))

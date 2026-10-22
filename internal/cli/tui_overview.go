@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/kit/internal/brand"
 	"github.com/alphaeron/kit/internal/match"
 	"github.com/alphaeron/kit/internal/tui"
 )
@@ -18,7 +19,7 @@ func repoOverview(ctx context.Context) (tui.Detail, error) {
 	if err != nil {
 		return tui.Detail{}, err
 	}
-	s, err := openKitSet(ctx)
+	s, err := openRulesSet(ctx)
 	if err != nil {
 		return tui.Detail{}, err
 	}
@@ -36,7 +37,7 @@ func repoOverview(ctx context.Context) (tui.Detail, error) {
 		d.Fields = append(d.Fields, failed("HEAD", err))
 	}
 
-	d.Fields = append(d.Fields, tui.Field{Label: "KIT files", Value: countOf(len(s.rules), "KIT file") + " · " + countOf(len(s.entries("")), "rule")})
+	d.Fields = append(d.Fields, tui.Field{Label: "rules files", Value: countOf(len(s.rules), "rules file") + " · " + countOf(len(s.entries("")), "rule")})
 	if n := violationCount(s.rules.Validate()); n > 0 {
 		d.Fields = append(d.Fields, tui.Field{Label: "Validation", Value: countOf(n, "violation"), Badge: tui.BadgeFail})
 	} else {
@@ -64,11 +65,11 @@ func repoOverview(ctx context.Context) (tui.Detail, error) {
 
 	link := func(text, note string, r tui.Route) tui.Row { return tui.Row{Text: text, Note: note, Route: &r} }
 	d.Sections = []tui.Section{{Title: "Go to", Rows: []tui.Row{
-		link("Review changed files", "kit review --changed", reviewRoute(tui.Values{Flags: map[string]string{"changed": "true"}})),
-		link("Match changed files", "kit match --changed --diff", matchRoute(tui.Values{Flags: map[string]string{"changed": "true", "diff": "true"}})),
-		link("Coverage", "kit coverage", coverageRoute(tui.Values{})),
-		link("Validate KIT files", "kit validate", validateRoute(tui.Values{})),
-		link("Rules", "kit rules list", rulesListRoute(tui.Values{})),
+		link("Review changed files", brand.Command+" review --changed", reviewRoute(tui.Values{Flags: map[string]string{"changed": "true"}})),
+		link("Match changed files", brand.Command+" match --changed --diff", matchRoute(tui.Values{Flags: map[string]string{"changed": "true", "diff": "true"}})),
+		link("Coverage", brand.Command+" coverage", coverageRoute(tui.Values{})),
+		link("Validate rules files", brand.Command+" validate", validateRoute(tui.Values{})),
+		link("Rules", brand.Command+" rules list", rulesListRoute(tui.Values{})),
 	}}}
 	return d, nil
 }

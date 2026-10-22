@@ -13,7 +13,7 @@ import (
 	"sort"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // Options configure one Match or Coverage run. A zero-value struct means:
@@ -91,14 +91,14 @@ func (e *Engine) Requirements(ctx context.Context, chain approval.RuleChain) *ap
 	}, chain)
 }
 
-// rules loads the source's KIT rules through its platform's fetcher.
-func (e *Engine) rules(ctx context.Context) (kitfile.Set, error) {
+// rules loads the source's rules through its platform's fetcher.
+func (e *Engine) rules(ctx context.Context) (rulesfile.Set, error) {
 	_, rules, err := e.Source.Reviewer().Fetch.Execute(ctx)
 	return rules, err
 }
 
 // ErrUnknownScope reports a scope filter (Match or Coverage) naming a rule
-// that no KIT file declares, as opposed to a declared scope that matches no
+// that no rules file declares, as opposed to a declared scope that matches no
 // files.
 var ErrUnknownScope = errors.New("unknown scope")
 
@@ -110,7 +110,7 @@ var ErrUnknownScope = errors.New("unknown scope")
 // Options.ScopeName narrows the result after matching (see
 // Result.FilterScope): the chain is always computed from every rule,
 // because a file's effective rules depend on every layer above it, so the
-// filter changes what is reported, never what matches. A name that no KIT
+// filter changes what is reported, never what matches. A name that no rules
 // file declares is ErrUnknownScope; a declared scope that matches nothing
 // yields an empty result. Options.IncludeDiff attaches diffs to the files
 // in the result only, so a scope filter also skips fetching diffs for the
@@ -141,7 +141,7 @@ func (e *Engine) Match(ctx context.Context, opts Options) (*Result, error) {
 
 // match is the shared core of Match and Coverage: the universe opts
 // selects with every file's scopes, before any scope filter or diff. It
-// first checks that opts.ScopeName (when set) is a rule some KIT file
+// first checks that opts.ScopeName (when set) is a rule some rules file
 // declares.
 func (e *Engine) match(ctx context.Context, opts Options) (*Result, error) {
 	universe, err := e.Files(ctx, opts)
@@ -161,7 +161,7 @@ func (e *Engine) match(ctx context.Context, opts Options) (*Result, error) {
 		fm := FileMatch{Path: file}
 		for _, layer := range chain.FileChains[file] {
 			for _, rule := range layer.Rules {
-				fm.Scopes = append(fm.Scopes, newScope(kitfile.DeclaredRule{KitFile: layer.KitFile(), Rule: rule.Rule}))
+				fm.Scopes = append(fm.Scopes, newScope(rulesfile.DeclaredRule{RulesFile: layer.RulesFile(), Rule: rule.Rule}))
 			}
 		}
 		res.Files = append(res.Files, fm)
@@ -177,7 +177,7 @@ func (e *Engine) match(ctx context.Context, opts Options) (*Result, error) {
 // opts.Patterns select the universe. opts.ScopeName narrows only the
 // per-scope breakdown (see CoverageReport.FilterScope), leaving the overall
 // numbers and the match computed from every rule; as for Match, a name no
-// KIT file declares is ErrUnknownScope.
+// rules file declares is ErrUnknownScope.
 func (e *Engine) Coverage(ctx context.Context, opts Options) (*CoverageReport, *Result, error) {
 	m, err := e.match(ctx, opts)
 	if err != nil {

@@ -6,21 +6,21 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// validateCmd reports integrity violations in every KIT file in the
+// validateCmd reports integrity violations in every rules file in the
 // repository, or in one with --file. The output is the validation error
-// table: every violation, with the KIT file that carries it. A clean run
+// table: every violation, with the rules file that carries it. A clean run
 // reports every file valid; any violation exits non-zero.
 var validateCmd = &cobra.Command{
 	Use:   "validate",
-	Short: "Validate KIT file integrity",
-	Long: `Validate KIT file structure, rule patterns, and required fields in every KIT
-file in the repository's working tree. --file narrows the check to one KIT file.`,
+	Short: "Validate rules file integrity",
+	Long: `Validate rules file structure, rule patterns, and required fields in every rules
+file in the repository's working tree. --file narrows the check to one rules file.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		filePath, _ := cmd.Flags().GetString("file")
-		s, err := openKitSet(cmd.Context())
+		s, err := openRulesSet(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -30,7 +30,7 @@ file in the repository's working tree. --file narrows the check to one KIT file.
 		}
 		grouped := s.rules
 		if only != "" {
-			grouped = kitfile.Set{only: s.rules[only]}
+			grouped = rulesfile.Set{only: s.rules[only]}
 		}
 
 		violations := grouped.Validate()
@@ -40,7 +40,7 @@ file in the repository's working tree. --file narrows the check to one KIT file.
 		if mode == modeJSON {
 			return writeJSON(os.Stdout, violationText(violations))
 		}
-		var header = []string{"KIT File", "Violation"}
+		var header = []string{"Rules File", "Violation"}
 		rows := make([][]string, 0, total)
 		for _, path := range s.rules.Paths() {
 			for _, e := range violations[path] {
@@ -54,14 +54,14 @@ file in the repository's working tree. --file narrows the check to one KIT file.
 			return err
 		}
 		if len(violations) == 0 {
-			fmt.Printf("All %d KIT file(s) are valid.\n", len(grouped))
+			fmt.Printf("All %d rules file(s) are valid.\n", len(grouped))
 			return nil
 		}
-		return fmt.Errorf("%d violation(s) in %d KIT file(s)", total, len(violations))
+		return fmt.Errorf("%d violation(s) in %d rules file(s)", total, len(violations))
 	},
 }
 
-// violationCount is the number of violations across every KIT file.
+// violationCount is the number of violations across every rules file.
 func violationCount(violations map[string][]error) int {
 	n := 0
 	for _, errs := range violations {
@@ -82,8 +82,8 @@ func violationText(violations map[string][]error) map[string][]string {
 }
 
 func init() {
-	validateCmd.Flags().String("file", "", "validate only this KIT file (path from the repository root, or its directory)")
-	validateCmd.Flags().Bool("all", false, "validate every KIT file")
-	cobra.CheckErr(validateCmd.Flags().MarkDeprecated("all", "every KIT file is validated by default; use --file to narrow"))
+	validateCmd.Flags().String("file", "", "validate only this rules file (path from the repository root, or its directory)")
+	validateCmd.Flags().Bool("all", false, "validate every rules file")
+	cobra.CheckErr(validateCmd.Flags().MarkDeprecated("all", "every rules file is validated by default; use --file to narrow"))
 	rootCmd.AddCommand(validateCmd)
 }

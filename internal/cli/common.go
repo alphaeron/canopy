@@ -19,9 +19,9 @@ func newLocalEngine(repo *gitRepo, log *slog.Logger) *match.Engine {
 	return match.New(source, log)
 }
 
-// kitFileFlag registers the shared --file flag on a command that changes a
-// KIT file. The value is resolved by kitSet.resolve.
-func kitFileFlag(cmd *cobra.Command, usage string) {
+// rulesFileFlag registers the shared --file flag on a command that changes a
+// rules file. The value is resolved by rulesSet.resolve.
+func rulesFileFlag(cmd *cobra.Command, usage string) {
 	cmd.Flags().String("file", "", usage+" (path from the repository root, or its directory)")
 }
 

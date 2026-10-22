@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/kitfile"
 	"github.com/alphaeron/kit/internal/match"
+	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
@@ -26,10 +26,10 @@ func TestReviewOptionsFrom(t *testing.T) {
 }
 
 // twoLayerFile is a file under svc/ governed by a root rule and a union
-// rule in svc/KIT, with one approval of two.
+// rule in svc's rules file, with one approval of two.
 func twoLayerFile() approval.FileState {
 	target := func(name string, have, need int, st approval.Status, by ...string) approval.ApproverTargetState {
-		return approval.ApproverTargetState{ApproverTarget: kitfile.ApproverTarget{Target: name, RequiredCount: need}, SatisfiedCount: have, Status: st, ResolvedBy: by}
+		return approval.ApproverTargetState{ApproverTarget: rulesfile.ApproverTarget{Target: name, RequiredCount: need}, SatisfiedCount: have, Status: st, ResolvedBy: by}
 	}
 	sec := target("org/sec", 1, 1, approval.StatusSatisfied, "org/sec")
 	backend := target("org/backend", 0, 2, approval.StatusMissingApprovers)
@@ -38,10 +38,10 @@ func twoLayerFile() approval.FileState {
 		Status: approval.StatusMissingApprovers,
 		Layers: []approval.LayerState{
 			{DirectoryPath: "", Active: true, Status: approval.StatusSatisfied,
-				Rules:    []approval.RuleState{{Rule: kitfile.Rule{Pattern: `.*`, Name: "security", CombineStrategy: kitfile.RuleCombineStrategyUnion}, Approvers: []approval.ApproverTargetState{sec}, Status: approval.StatusSatisfied}},
+				Rules:    []approval.RuleState{{Rule: rulesfile.Rule{Pattern: `.*`, Name: "security", CombineStrategy: rulesfile.RuleCombineStrategyUnion}, Approvers: []approval.ApproverTargetState{sec}, Status: approval.StatusSatisfied}},
 				Required: approval.RuleTargets{{ApproverTarget: sec.ApproverTarget}}},
 			{DirectoryPath: "svc", Active: true, Status: approval.StatusMissingApprovers,
-				Rules:    []approval.RuleState{{Rule: kitfile.Rule{Pattern: `\.go$`, CombineStrategy: kitfile.RuleCombineStrategyUnion}, Approvers: []approval.ApproverTargetState{backend}, Status: approval.StatusMissingApprovers}},
+				Rules:    []approval.RuleState{{Rule: rulesfile.Rule{Pattern: `\.go$`, CombineStrategy: rulesfile.RuleCombineStrategyUnion}, Approvers: []approval.ApproverTargetState{backend}, Status: approval.StatusMissingApprovers}},
 				Required: approval.RuleTargets{{ApproverTarget: sec.ApproverTarget}, {ApproverTarget: backend.ApproverTarget}}},
 		},
 		Required: []approval.ApproverTargetState{sec, backend},
@@ -74,9 +74,9 @@ func TestFileReviewDetail(t *testing.T) {
 	}
 	text := strings.Join(chain, "\n")
 	for _, want := range []string{
-		"KIT | active",
+		rulesfile.FileName + " | active",
 		"security: .* | union: establishes the required approvers",
-		"svc/KIT | active",
+		rulesfile.PathInDir("svc") + " | active",
 		`\.go$ | union: adds its approvers to those required above`,
 		"→ requires org/sec (1), org/backend (2)",
 	} {
@@ -84,7 +84,7 @@ func TestFileReviewDetail(t *testing.T) {
 			t.Errorf("chain missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Index(text, "svc/KIT") < strings.Index(text, "KIT | active") {
+	if strings.Index(text, rulesfile.PathInDir("svc")) < strings.Index(text, rulesfile.FileName+" | active") {
 		t.Errorf("layers must run root first:\n%s", text)
 	}
 	trace := d.Tabs[1].Sections[0].Rows
@@ -116,9 +116,9 @@ func TestStatusBadgeAndOrder(t *testing.T) {
 // TestViolationsDetail: each violation sits with the rule it names, with
 // that rule's fields and an edit link; others are the file's.
 func TestViolationsDetail(t *testing.T) {
-	rules := kitfile.Rules{{Pattern: `(`, Name: "broken"}, {Pattern: `.*`}}
+	rules := rulesfile.Rules{{Pattern: `(`, Name: "broken"}, {Pattern: `.*`}}
 	errs := []string{`invalid pattern "(": missing )`, `something about the whole file`}
-	d := violationsDetail("KIT", rules, errs)
+	d := violationsDetail(rulesfile.FileName, rules, errs)
 	if len(d.Sections) != 2 || d.Sections[0].Title != "Rule (" || d.Sections[1].Title != "File" {
 		t.Fatalf("sections = %+v", d.Sections)
 	}
@@ -127,18 +127,18 @@ func TestViolationsDetail(t *testing.T) {
 		t.Errorf("rule rows = %+v", rows)
 	}
 	edit := rows[len(rows)-1]
-	if edit.Route == nil || edit.Route.Command != "rules edit" || edit.Route.Values.Flag("file") != "KIT" {
+	if edit.Route == nil || edit.Route.Command != "rules edit" || edit.Route.Values.Flag("file") != rulesfile.FileName {
 		t.Errorf("the last row must link to editing the rule: %+v", edit)
 	}
-	if valid := violationsDetail("KIT", rules, nil); len(valid.Sections) != 0 || valid.Fields[1].Badge != tui.BadgeOK {
+	if valid := violationsDetail(rulesfile.FileName, rules, nil); len(valid.Sections) != 0 || valid.Fields[1].Badge != tui.BadgeOK {
 		t.Errorf("a valid file = %+v", valid)
 	}
 }
 
 // TestUncoveredSection groups uncovered files by directory, each linking to
-// a rule for its nearest KIT file.
+// a rule for its nearest rules file.
 func TestUncoveredSection(t *testing.T) {
-	s := newTestKitSet(t, map[string]kitfile.Rules{"KIT": {}, "svc/KIT": {}})
+	s := newTestRulesSet(t, map[string]rulesfile.Rules{rulesfile.FileName: {}, rulesfile.PathInDir("svc"): {}})
 	sec := uncoveredSection([]string{"README.md", "svc/deep/x.txt", "svc/y.txt", "svc/deep/z.txt"}, s)
 	var dirs []tui.Row
 	for _, r := range sec.Rows {
@@ -150,13 +150,13 @@ func TestUncoveredSection(t *testing.T) {
 		t.Fatalf("directory rows = %+v", dirs)
 	}
 	deep := dirs[2].Route
-	if deep.Command != "rules add" || deep.Values.Flag("file") != "svc/KIT" || deep.Values.Flag("pattern") != `^svc/deep/` {
-		t.Errorf("svc/deep must add a rule to svc/KIT: %+v", deep.Values)
+	if deep.Command != "rules add" || deep.Values.Flag("file") != rulesfile.PathInDir("svc") || deep.Values.Flag("pattern") != `^svc/deep/` {
+		t.Errorf("svc/deep must add a rule to svc's rules file: %+v", deep.Values)
 	}
 	if !strings.Contains(dirs[2].Note, "2 files") {
 		t.Errorf("note = %q", dirs[2].Note)
 	}
-	if s.nearestTo("other/dir") != "KIT" || newTestKitSet(t, map[string]kitfile.Rules{"svc/KIT": {}}).nearestTo(".") != "" {
+	if s.nearestTo("other/dir") != rulesfile.FileName || newTestRulesSet(t, map[string]rulesfile.Rules{rulesfile.PathInDir("svc"): {}}).nearestTo(".") != "" {
 		t.Error("nearestTo must walk up to the root and report none past it")
 	}
 }
@@ -164,19 +164,19 @@ func TestUncoveredSection(t *testing.T) {
 // TestRuleMatchesOverlaps: a rule's overlaps are the other rules matching
 // its files, most shared first.
 func TestRuleMatchesOverlaps(t *testing.T) {
-	root := match.Scope{Pattern: ".*", KitFile: "KIT", Name: "all"}
-	goRule := match.Scope{Pattern: `\.go$`, KitFile: "svc/KIT", Name: "go"}
-	docs := match.Scope{Pattern: `\.md$`, KitFile: "KIT"}
+	root := match.Scope{Pattern: ".*", RulesFile: rulesfile.FileName, Name: "all"}
+	goRule := match.Scope{Pattern: `\.go$`, RulesFile: rulesfile.PathInDir("svc"), Name: "go"}
+	docs := match.Scope{Pattern: `\.md$`, RulesFile: rulesfile.FileName}
 	m := newRuleMatches(&match.Result{Files: []match.FileMatch{
 		{Path: "svc/a.go", Scopes: []match.Scope{root, goRule}},
 		{Path: "svc/b.go", Scopes: []match.Scope{root, goRule}},
 		{Path: "README.md", Scopes: []match.Scope{root, docs}},
 	}}, nil)
-	rows := m.overlaps("KIT", ".*")
+	rows := m.overlaps(rulesfile.FileName, ".*")
 	if len(rows) != 2 || !strings.HasPrefix(rows[0].Text, "go:") || rows[0].Note != "2 shared files" || rows[1].Note != "1 shared file" {
 		t.Fatalf("overlaps = %+v", rows)
 	}
-	it := ruleItem(kitfile.DeclaredRule{KitFile: "svc/KIT", Rule: kitfile.Rule{Pattern: `\.go$`}}, m)
+	it := ruleItem(rulesfile.DeclaredRule{RulesFile: rulesfile.PathInDir("svc"), Rule: rulesfile.Rule{Pattern: `\.go$`}}, m)
 	if !strings.Contains(it.Description, "2 files") || len(it.Detail.Tabs) != 1 || len(it.Detail.Tabs[0].Sections[0].Rows) != 2 {
 		t.Errorf("rule item = %+v", it)
 	}

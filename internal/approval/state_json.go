@@ -3,11 +3,11 @@ package approval
 import (
 	"encoding/json"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // MarshalJSON encodes the review in its stable wire form: statuses as their
-// snake_case names, files in SortedFiles order, each layer named by its KIT
+// snake_case names, files in SortedFiles order, each layer named by its rules
 // file, and every list present (never null) so consumers need no nil checks.
 // The CLI's --json output and any API response share this one encoding.
 func (rs *ReviewState) MarshalJSON() ([]byte, error) {
@@ -40,12 +40,12 @@ type targetJSON struct {
 }
 
 type layerStateJSON struct {
-	KitFile  string            `json:"kit_file"`
-	Status   string            `json:"status"`
-	Active   bool              `json:"active"`
-	Reason   string            `json:"reason,omitempty"`
-	Rules    []ruleStateJSON   `json:"rules"`
-	Requires []requirementJSON `json:"requires"`
+	RulesFile string            `json:"rules_file"`
+	Status    string            `json:"status"`
+	Active    bool              `json:"active"`
+	Reason    string            `json:"reason,omitempty"`
+	Rules     []ruleStateJSON   `json:"rules"`
+	Requires  []requirementJSON `json:"requires"`
 }
 
 type ruleStateJSON struct {
@@ -74,7 +74,7 @@ func reviewJSONOf(state *ReviewState) reviewJSON {
 	for _, fs := range state.SortedFiles() {
 		f := fileReviewJSON{Path: fs.Path, Status: fs.Status.String(), UsedFallback: fs.UsedFallback, Required: targetsJSON(fs.Required), Layers: []layerStateJSON{}}
 		for _, l := range fs.Layers {
-			lj := layerStateJSON{KitFile: kitfile.PathInDir(l.DirectoryPath), Status: l.Status.String(), Active: l.Active, Reason: l.Reason, Rules: []ruleStateJSON{}, Requires: []requirementJSON{}}
+			lj := layerStateJSON{RulesFile: rulesfile.PathInDir(l.DirectoryPath), Status: l.Status.String(), Active: l.Active, Reason: l.Reason, Rules: []ruleStateJSON{}, Requires: []requirementJSON{}}
 			for _, r := range l.Rules {
 				lj.Rules = append(lj.Rules, ruleStateJSON{
 					Pattern: r.Pattern, Name: r.Name, Strategy: r.CombineStrategy.String(),

@@ -6,41 +6,41 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // Scope is one match between a file and a rule, carrying rule identity and
-// provenance: the JSON view of a kitfile.DeclaredRule. Two rules with the
-// same pattern registered in two different KIT files are two distinct
+// provenance: the JSON view of a rulesfile.DeclaredRule. Two rules with the
+// same pattern registered in two different rules files are two distinct
 // scopes, because they cover different layers.
 type Scope struct {
-	// Name is the user-visible rule name from the KIT file.
+	// Name is the user-visible rule name from the rules file.
 	Name string `json:"name"`
 	// Pattern is the rule's regular expression; the matching identity.
 	Pattern string `json:"pattern"`
 	// Directory is the layer directory this rule lives in (empty string for
-	// a rule registered in the repository-root KIT file); always
-	// kitfile.Dir(KitFile).
+	// a rule registered in the repository-root rules file); always
+	// rulesfile.Dir(RulesFile).
 	Directory string `json:"directory,omitempty"`
-	// KitFile is the path of the KIT file that registered the rule: "KIT" at
-	// the repository root, "<dir>/KIT" otherwise.
-	KitFile string `json:"kit_file"`
+	// RulesFile is the path of the rules file that registered the rule:
+	// rulesfile.PathInDir(Directory).
+	RulesFile string `json:"rules_file"`
 }
 
 // newScope is the scope of a declared rule: the one place an approval rule
 // becomes a match scope.
-func newScope(d kitfile.DeclaredRule) Scope {
+func newScope(d rulesfile.DeclaredRule) Scope {
 	return Scope{
 		Name:      d.Rule.Name,
 		Pattern:   d.Rule.Pattern,
-		Directory: kitfile.Dir(d.KitFile),
-		KitFile:   d.KitFile,
+		Directory: rulesfile.Dir(d.RulesFile),
+		RulesFile: d.RulesFile,
 	}
 }
 
 // String gives a human-facing reference to the scope, used in TUI rendering.
 func (s Scope) String() string {
-	out := s.Pattern + " in " + s.KitFile
+	out := s.Pattern + " in " + s.RulesFile
 	if s.Name != "" {
 		out += " (" + s.Name + ")"
 	}
@@ -49,9 +49,9 @@ func (s Scope) String() string {
 
 // Identity is the scope's rule identity, shared with approval.RuleChain.ByRule:
 // two scopes compare equal by identity when they came from the same rule in
-// the same KIT file.
-func (s Scope) Identity() kitfile.RuleKey {
-	return kitfile.RuleKey{KitFile: s.KitFile, Pattern: s.Pattern}
+// the same rules file.
+func (s Scope) Identity() rulesfile.RuleKey {
+	return rulesfile.RuleKey{RulesFile: s.RulesFile, Pattern: s.Pattern}
 }
 
 // FileMatch pairs one file in the universe with the scopes that matched it.
@@ -59,7 +59,7 @@ type FileMatch struct {
 	// Path is the file path, relative to the repository root.
 	Path string `json:"path"`
 	// Scopes is the list of scopes that matched this file (all layers and
-	// all rules from a file's KIT chain). Empty when no scope matched.
+	// all rules from a file's rules file chain). Empty when no scope matched.
 	Scopes []Scope `json:"scopes"`
 	// Diff is the unified diff content when Options.IncludeDiff is set.
 	Diff string `json:"diff,omitempty"`
@@ -100,8 +100,8 @@ func (r *Result) FilterScope(name string) *Result {
 // per distinct scope, each with its sorted file list. Scopes are listed in
 // stable order (by Name, then identity).
 func (r *Result) GroupByScope() []ScopeGroup {
-	byID := map[kitfile.RuleKey]*ScopeGroup{}
-	var order []kitfile.RuleKey
+	byID := map[rulesfile.RuleKey]*ScopeGroup{}
+	var order []rulesfile.RuleKey
 	for _, fm := range r.Files {
 		for _, s := range fm.Scopes {
 			id := s.Identity()
@@ -111,7 +111,7 @@ func (r *Result) GroupByScope() []ScopeGroup {
 			}
 		}
 	}
-	slices.SortFunc(order, func(a, b kitfile.RuleKey) int {
+	slices.SortFunc(order, func(a, b rulesfile.RuleKey) int {
 		return cmp.Or(cmp.Compare(byID[a].Scope.Name, byID[b].Scope.Name), a.Compare(b))
 	})
 	out := make([]ScopeGroup, 0, len(byID))
@@ -142,7 +142,7 @@ type ScopeOverlap struct {
 // then by identity.
 func (r *Result) Overlaps(s Scope) []ScopeOverlap {
 	id := s.Identity()
-	byID := map[kitfile.RuleKey]*ScopeOverlap{}
+	byID := map[rulesfile.RuleKey]*ScopeOverlap{}
 	for _, fm := range r.Files {
 		if !slices.ContainsFunc(fm.Scopes, func(o Scope) bool { return o.Identity() == id }) {
 			continue
@@ -159,7 +159,7 @@ func (r *Result) Overlaps(s Scope) []ScopeOverlap {
 		}
 	}
 	ids := slices.Collect(maps.Keys(byID))
-	slices.SortFunc(ids, func(a, b kitfile.RuleKey) int {
+	slices.SortFunc(ids, func(a, b rulesfile.RuleKey) int {
 		return cmp.Or(cmp.Compare(byID[b].Shared, byID[a].Shared), a.Compare(b))
 	})
 	out := make([]ScopeOverlap, len(ids))

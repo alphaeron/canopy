@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 func targetSet(names ...string) RuleTargets {
@@ -63,18 +63,18 @@ func TestDefaultCombineStrategyMirrorsOverride(t *testing.T) {
 }
 
 func TestNewCombineStrategyMapsConfigValues(t *testing.T) {
-	switch newCombineStrategy(kitfile.RuleCombineStrategy(0)).(type) {
+	switch newCombineStrategy(rulesfile.RuleCombineStrategy(0)).(type) {
 	// the unknown / omitted sentinel
 	case DefaultCombineStrategy:
 	default:
 		t.Errorf("unknown config value should adapt to DefaultCombineStrategy")
 	}
-	switch newCombineStrategy(kitfile.RuleCombineStrategyUnion).(type) {
+	switch newCombineStrategy(rulesfile.RuleCombineStrategyUnion).(type) {
 	case UnionCombineStrategy:
 	default:
 		t.Errorf("union config value should adapt to UnionCombineStrategy")
 	}
-	switch newCombineStrategy(kitfile.RuleCombineStrategyIntersect).(type) {
+	switch newCombineStrategy(rulesfile.RuleCombineStrategyIntersect).(type) {
 	case IntersectCombineStrategy:
 	default:
 		t.Errorf("intersect config value should adapt to IntersectCombineStrategy")

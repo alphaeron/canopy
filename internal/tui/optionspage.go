@@ -7,10 +7,12 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	huh "charm.land/huh/v2"
+
+	"github.com/alphaeron/kit/internal/brand"
 )
 
 // allChoice is the label for the empty value of a choice parameter: no
-// narrowing, e.g. every KIT file or every scope.
+// narrowing, e.g. every rules file or every scope.
 const allChoice = "all"
 
 // optionsPage edits a route's arguments and flags: the TUI form of typing
@@ -173,7 +175,7 @@ func (p *optionsPage) edited() Route {
 
 func (p *optionsPage) title() string { return "options" }
 
-func (p *optionsPage) status() string { return "options for kit " + p.route.Command }
+func (p *optionsPage) status() string { return "options for " + brand.Command + " " + p.route.Command }
 
 func (p *optionsPage) init() tea.Cmd { return p.form.Init() }
 

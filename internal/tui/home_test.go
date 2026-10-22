@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/alphaeron/kit/internal/brand"
 )
 
 // homeRoutes is a small command tree: a page, a group with subcommands, and
@@ -16,8 +18,8 @@ func homeRoutes(loads *int) []Route {
 		return filesPage(), nil
 	}
 	rules := staticRoute("rules", filesPage)
-	rules.Long = "Operate on\nKIT rules."
-	rules.Summary = func(context.Context) (string, error) { return "3 rules in 2 KIT files", nil }
+	rules.Long = "Operate on\nrules."
+	rules.Summary = func(context.Context) (string, error) { return "3 rules in 2 rules files", nil }
 	help := staticRoute("help", filesPage)
 	help.Utility = true
 	return []Route{help, match, rules, staticRoute("rules list", filesPage), staticRoute("rules get", filesPage)}
@@ -37,7 +39,7 @@ func TestHomeTree(t *testing.T) {
 	}
 	h.press("down")
 	s = h.screen()
-	for _, want := range []string{"kit rules", "Operate on KIT rules.", "Subcommands", "list", "3 rules in 2 KIT files"} {
+	for _, want := range []string{brand.Command + " rules", "Operate on rules.", "Subcommands", "list", "3 rules in 2 rules files"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("group detail missing %q:\n%s", want, s)
 		}
@@ -53,7 +55,7 @@ func TestHomeLeafOpens(t *testing.T) {
 	loads := 0
 	h := newHarness(t, Config{Routes: homeRoutes(&loads)})
 	h.press("enter")
-	if got := h.crumbs(); !strings.Contains(got, "kit › match") {
+	if got := h.crumbs(); !strings.Contains(got, brand.Command+" › match") {
 		t.Fatalf("enter must open the hovered command, header %q", got)
 	}
 }
@@ -112,8 +114,8 @@ func TestHomeOverview(t *testing.T) {
 }
 
 func TestReflow(t *testing.T) {
-	got := reflow("The rules command\nallows things.\n\nExamples:\n  kit rules get .*\n  kit rules list\nDone.")
-	want := []string{"The rules command allows things.", "", "Examples:", "  kit rules get .*", "  kit rules list", "Done."}
+	got := reflow("The rules command\nallows things.\n\nExamples:\n  app rules get .*\n  app rules list\nDone.")
+	want := []string{"The rules command allows things.", "", "Examples:", "  app rules get .*", "  app rules list", "Done."}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("reflow = %q, want %q", got, want)
 	}

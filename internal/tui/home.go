@@ -8,6 +8,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/alphaeron/kit/internal/brand"
 )
 
 // Home-page preview tuning. Previews wait for the cursor to settle so
@@ -66,7 +68,7 @@ type homeNode struct {
 	base        Detail
 }
 
-// homePage is the TUI equivalent of `kit --help`, as a tree of the command
+// homePage is the TUI equivalent of `--help`, as a tree of the command
 // hierarchy: a top-level command is a group whose items are its
 // subcommands. The detail pane describes the hovered command (usage, flags,
 // subcommands as links) and, once the cursor rests, previews it live: the
@@ -89,7 +91,7 @@ type homePage struct {
 }
 
 // newHomePage builds the home tree from routes, which are listed in
-// `kit --help` order: "rules list" is an item of the "rules" group. Utility
+// `--help` order: "rules list" is an item of the "rules" group. Utility
 // commands (help) come last, their groups collapsed.
 func newHomePage(ctx context.Context, routes []Route, overview func(context.Context) (Detail, error)) *homePage {
 	type group struct {
@@ -155,7 +157,7 @@ func newHomePage(ctx context.Context, routes []Route, overview func(context.Cont
 		}
 		tgs = append(tgs, tg)
 	}
-	h.TreePage = newTreePage("Commands", "kit", tgs).WithSummary(countLabel(len(routes), "command"))
+	h.TreePage = newTreePage("Commands", brand.Command, tgs).WithSummary(countLabel(len(routes), "command"))
 	// Every command can grow a Preview tab, so the third column is wanted
 	// even though no row has a tab yet.
 	h.wantAux = true

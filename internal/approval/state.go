@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // Status represents the state of a review node in the evaluation tree.
@@ -95,7 +95,7 @@ type LayerState struct {
 // type differs (state, not config), read it directly, and the raw
 // configuration target list is still available on Rule.Approvers.
 type RuleState struct {
-	kitfile.Rule
+	rulesfile.Rule
 	Approvers  []ApproverTargetState
 	ResolvedBy []string // individuals/teams that satisfied this rule
 	Status     Status
@@ -113,7 +113,7 @@ type RuleState struct {
 // boolean, so the algorithm has exactly one definition of "unsatisfied":
 // Status != StatusSatisfied.
 type ApproverTargetState struct {
-	kitfile.ApproverTarget
+	rulesfile.ApproverTarget
 	SatisfiedCount int
 	Satisfied      bool
 	ResolvedBy     []string // individuals/teams that contributed to satisfaction
@@ -274,7 +274,7 @@ func (rs *ReviewState) SortedFiles() []FileState {
 // RequiredTargets is every approver target the review's files require, each
 // with the most approvals any one file needs from it, sorted by target, and
 // how many files fall back to the repository owners instead.
-func (rs *ReviewState) RequiredTargets() (targets kitfile.ApproverTargets, fallback int) {
+func (rs *ReviewState) RequiredTargets() (targets rulesfile.ApproverTargets, fallback int) {
 	need := map[string]int{}
 	for _, fs := range rs.Files {
 		if fs.UsedFallback {
@@ -286,7 +286,7 @@ func (rs *ReviewState) RequiredTargets() (targets kitfile.ApproverTargets, fallb
 		}
 	}
 	for _, t := range slices.Sorted(maps.Keys(need)) {
-		targets = append(targets, kitfile.ApproverTarget{Target: t, RequiredCount: need[t]})
+		targets = append(targets, rulesfile.ApproverTarget{Target: t, RequiredCount: need[t]})
 	}
 	return targets, fallback
 }

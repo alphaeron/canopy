@@ -1,4 +1,4 @@
-package kitfile
+package rulesfile
 
 import (
 	"os"
@@ -10,7 +10,7 @@ func TestParseRulesRoundTrip(t *testing.T) {
 	original := Rules{rule1, rule2}
 	kf := &File{Rules: original}
 	dir := t.TempDir()
-	path := dir + "/KIT"
+	path := dir + "/" + FileName
 	if err := kf.Save(path); err != nil {
 		t.Fatalf("save: %v", err)
 	}

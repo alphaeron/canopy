@@ -9,7 +9,7 @@ func TestClean(t *testing.T) {
 	tests := []struct {
 		name, in, want string
 	}{
-		{name: "plain", in: "cmd/kit/main.go", want: "cmd/kit/main.go"},
+		{name: "plain", in: "cmd/app/main.go", want: "cmd/app/main.go"},
 		{name: "unicode kept", in: "dír/ファイル.go", want: "dír/ファイル.go"},
 		{name: "newline kept", in: "a\nb", want: "a\nb"},
 		{name: "tab expanded", in: "a\tb", want: "a    b"},

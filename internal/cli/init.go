@@ -7,19 +7,19 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// initCmd scaffolds a new KIT file. It accepts an optional [path], where an
-// empty or missing argument writes the repository-root KIT and a directory
-// argument writes the KIT file inside that directory. Without --pattern it
-// runs the interactive rule form; with --pattern it scaffolds the file and
-// the rule together.
+// initCmd scaffolds a new rules file. It accepts an optional [path], where an
+// empty or missing argument writes the repository-root rules file and a
+// directory argument writes the rules file inside that directory. Without
+// --pattern it runs the interactive rule form; with --pattern it scaffolds the
+// file and the rule together.
 var initCmd = &cobra.Command{
 	Use:         "init [path]",
-	Short:       "Initialize a KIT file in the current repository",
-	Long:        "Initialize a KIT file in the current repository, with an optional rule pre-filled by the form or by flags.",
-	Annotations: map[string]string{"arg": "the KIT file to write, or a directory to write it in (default: KIT in the current directory)"},
+	Short:       "Initialize a rules file in the current repository",
+	Long:        "Initialize a rules file in the current repository, with an optional rule pre-filled by the form or by flags.",
+	Annotations: map[string]string{"arg": "the rules file to write, or a directory to write it in (default: " + rulesfile.FileName + " in the current directory)"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var arg string
 		if len(args) > 0 {
@@ -44,7 +44,7 @@ var initCmd = &cobra.Command{
 			return err
 		}
 
-		k, err := writeKitFile(path, force, fields)
+		k, err := writeRulesFile(path, force, fields)
 		if err != nil {
 			return err
 		}
@@ -56,35 +56,35 @@ var initCmd = &cobra.Command{
 	},
 }
 
-// initPath is the KIT file `kit init [path]` writes: KIT in the current
-// directory when arg is empty, KIT inside arg when it is a directory, and
-// arg itself otherwise.
+// initPath is the rules file `init [path]` writes: FileName in the current
+// directory when arg is empty, FileName inside arg when it is a directory,
+// and arg itself otherwise.
 func initPath(arg string) string {
 	switch {
 	case arg == "":
-		return "KIT"
+		return rulesfile.FileName
 	case isDir(arg):
-		return filepath.Join(arg, "KIT")
+		return filepath.Join(arg, rulesfile.FileName)
 	}
 	return arg
 }
 
-// checkInitTarget refuses to overwrite an existing KIT file without force.
+// checkInitTarget refuses to overwrite an existing rules file without force.
 func checkInitTarget(path string, force bool) error {
 	if _, err := os.Stat(path); err == nil && !force {
-		return fmt.Errorf("KIT file %q already exists; pass --force to overwrite", path)
+		return fmt.Errorf("rules file %q already exists; pass --force to overwrite", path)
 	}
 	return nil
 }
 
-// writeKitFile writes a new KIT file at path holding the rule fields
+// writeRulesFile writes a new rules file at path holding the rule fields
 // describe, or no rule when they have no pattern. The CLI and the TUI both
-// create KIT files through it.
-func writeKitFile(path string, force bool, fields ruleFields) (*kitfile.File, error) {
+// create rules files through it.
+func writeRulesFile(path string, force bool, fields ruleFields) (*rulesfile.File, error) {
 	if err := checkInitTarget(path, force); err != nil {
 		return nil, err
 	}
-	k := &kitfile.File{Path: path}
+	k := &rulesfile.File{Path: path}
 	if fields.Pattern != "" {
 		rule, err := buildRuleFromFields(fields)
 		if err != nil {
@@ -100,12 +100,12 @@ func writeKitFile(path string, force bool, fields ruleFields) (*kitfile.File, er
 	return k, nil
 }
 
-// initMessage confirms what writeKitFile wrote.
-func initMessage(path string, k *kitfile.File) string {
+// initMessage confirms what writeRulesFile wrote.
+func initMessage(path string, k *rulesfile.File) string {
 	if len(k.Rules) > 0 {
 		return fmt.Sprintf("initialized %s with rule %q", path, k.Rules[0].Pattern)
 	}
-	return "initialized empty KIT file at " + path
+	return "initialized empty rules file at " + path
 }
 
 // isDir reports whether the path is a directory; os.Stat errors are treated
@@ -116,7 +116,7 @@ func isDir(p string) bool {
 }
 
 func init() {
-	initCmd.Flags().Bool("force", false, "overwrite an existing KIT file")
+	initCmd.Flags().Bool("force", false, "overwrite an existing rules file")
 	initCmd.Flags().String("pattern", "", "optional rule pattern (regex) to register at init time")
 	initCmd.Flags().String("name", "", "optional rule name")
 	initCmd.Flags().String("strategy", "union", "combine strategy: union, override, or intersect")

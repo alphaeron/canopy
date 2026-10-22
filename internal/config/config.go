@@ -1,5 +1,5 @@
-// Package config is the single place that discovers and parses Kit's
-// configuration for every binary (the kit CLI and the kitweb REST API).
+// Package config is the single place that discovers and parses the shared
+// configuration for every binary (the CLI and REST API).
 // Both entry points call Load first thing in main() and pass the resulting
 // *Config by value into the internal packages; no other package owns a
 // package-level viper instance. The only documented side effect of Load is
@@ -16,10 +16,12 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+
+	"github.com/alphaeron/kit/internal/brand"
 )
 
-// Config is the fully resolved configuration for one Kit process. Fields are
-// plain values read from the configuration file and the KIT_*-prefixed
+// Config is the fully resolved configuration for one process. Fields are
+// plain values read from the configuration file and the prefixed
 // environment variables, where environment wins over file and file wins over
 // defaults. Every key is documented in the "Environment variables" README
 // section so the same table serves deployment of the REST API.
@@ -45,19 +47,21 @@ type Config struct {
 	Path string
 }
 
-// Load resolves configuration from, in decreasing precedence: KIT_*
-// environment variables, a file passed explicitly (the CLI's --config),
-// $KIT_CONFIG, then $HOME/.kit.yaml. A missing config file is not an error:
+// Load resolves configuration from, in decreasing precedence: environment
+// variables named with brand.EnvPrefix, a file passed explicitly (the CLI's
+// --config), the file named by brand.EnvConfig, then brand.ConfigName in
+// the current directory or $HOME. A missing config file is not an error:
 // defaults and environment alone form a valid configuration. The standard
 // logger is reconfigured to the requested verbosity before returning, so
-// every slog.Default() call across the codebase already honors KIT_VERBOSE.
+// every slog.Default() call across the codebase already honors the verbose
+// environment variable.
 func Load(explicitPath string) (*Config, error) {
 	v := viper.New()
 
 	if explicitPath == "" {
-		v.SetConfigName(".kit")
+		v.SetConfigName(brand.ConfigName)
 		v.SetConfigType("yaml")
-		if p := os.Getenv("KIT_CONFIG"); p != "" {
+		if p := os.Getenv(brand.EnvConfig); p != "" {
 			v.SetConfigFile(p)
 		} else {
 			v.AddConfigPath(".")
@@ -71,7 +75,7 @@ func Load(explicitPath string) (*Config, error) {
 
 	v.SetDefault("serve_addr", ":8080")
 	for _, key := range []string{"verbose", "github_app_id", "github_private_key", "webhook_hmac_secret", "serve_addr"} {
-		if err := v.BindEnv(key, "KIT_"+upperEnvKey(key)); err != nil {
+		if err := v.BindEnv(key, brand.EnvPrefix+upperEnvKey(key)); err != nil {
 			return nil, err
 		}
 	}
@@ -81,19 +85,19 @@ func Load(explicitPath string) (*Config, error) {
 		// An explicitly-specified --config path that resolves to nothing is a
 		// user mistake: viper returns the raw open error there, and we must not
 		// silently fall back to defaults (defaults would hide a typo). Only the
-		// search-path case (KIT_CONFIG or the implicit home lookup) is allowed
-		// to be empty and resolve to defaults+env.
+		// search-path case (brand.EnvConfig or the implicit home lookup) is
+		// allowed to be empty and resolve to defaults+env.
 		if !errors.As(err, &notFound) && explicitPath != "" {
-			return nil, fmt.Errorf("read kit config file: %w", err)
+			return nil, fmt.Errorf("read config file: %w", err)
 		}
-		if !errors.As(err, &notFound) && os.Getenv("KIT_CONFIG") != "" {
-			return nil, fmt.Errorf("read kit config file: %w", err)
+		if !errors.As(err, &notFound) && os.Getenv(brand.EnvConfig) != "" {
+			return nil, fmt.Errorf("read config file: %w", err)
 		}
 	}
 
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("unmarshal kit config: %w", err)
+		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 	if cfg.ServeAddr == "" {
 		cfg.ServeAddr = ":8080"

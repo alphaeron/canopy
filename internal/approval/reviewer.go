@@ -1,5 +1,5 @@
 // Package approval is the platform-independent review algorithm: it sifts
-// KIT rules into per-file rule chains and evaluates them against a pull
+// rules into per-file rule chains and evaluates them against a pull
 // request's approvals (fetch, sift, approve), recording every step in a
 // ReviewState. Where rules come from and how approver targets resolve to
 // people are supplied through the Fetcher and ApproverResolver interfaces;
@@ -12,7 +12,7 @@ import (
 	"log/slog"
 )
 
-// Reviewer orchestrates a code review: it fetches the repository's KIT rules,
+// Reviewer orchestrates a code review: it fetches the repository's rules,
 // sifts them into per-file rule chains, and approves them against the current
 // pull request state. All phases are traced as events in the resulting
 // ReviewState and logged as structured JSON.
@@ -39,11 +39,11 @@ func (s *Reviewer) Execute(ctx context.Context, pr PullRequest, files []string) 
 	log := s.log()
 	events := NewReviewStateBuilder()
 
-	// Fetch phase: retrieve the repository root and all KIT rules.
-	log.Info("kit review starting", "component", "approval", "phase", "fetch", "files", len(files))
+	// Fetch phase: retrieve the repository root and all rules.
+	log.Info("review starting", "component", "approval", "phase", "fetch", "files", len(files))
 	repoRoot, repoRules, err := s.Fetch.Execute(ctx)
 	if err != nil {
-		log.Error("kit review: fetching rules failed",
+		log.Error("review: fetching rules failed",
 			"component", "approval", "phase", "fetch", "repo_root", repoRoot, "error", err)
 		events.AddEvent("fetch", repoRoot, "", "", StatusError, err.Error())
 		events.AddError(err)
@@ -53,18 +53,18 @@ func (s *Reviewer) Execute(ctx context.Context, pr PullRequest, files []string) 
 			Build(err)
 	}
 	events.AddEvent("fetch", repoRoot, "", "", StatusDone,
-		fmt.Sprintf("fetched rules from %d KIT file(s)", len(repoRules)))
-	log.Info("kit review: rules fetched",
-		"component", "approval", "phase", "fetch", "repo_root", repoRoot, "kit_files", len(repoRules))
+		fmt.Sprintf("fetched rules from %d rules file(s)", len(repoRules)))
+	log.Info("review: rules fetched",
+		"component", "approval", "phase", "fetch", "repo_root", repoRoot, "rules_files", len(repoRules))
 
 	// Sift phase: build the per-file rule chains from the fetched rules.
-	log.Info("kit review: sifting rules for files",
+	log.Info("review: sifting rules for files",
 		"component", "approval", "phase", "sift", "files", len(files))
 	ruleChain := GetFileRuleChain(repoRules, files, events, log)
 
 	// Approve phase: evaluate the rule chains and assemble the final state.
 	reviewState := ruleChain.Execute(ctx, pr, s.Resolver, events, log, repoRoot)
-	log.Info("kit review complete",
+	log.Info("review complete",
 		"component", "approval", "phase", "approve",
 		"status", reviewState.Overall, "errors", len(reviewState.Errors))
 	return reviewState

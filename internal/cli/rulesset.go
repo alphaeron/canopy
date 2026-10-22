@@ -11,65 +11,66 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/brand"
 	"github.com/alphaeron/kit/internal/local"
+	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// kitSet is the repository's KIT files as a local review sees them: every
-// KIT file in the working tree (committed ones that still exist plus new,
+// rulesSet is the repository's rules files as a local review sees them: every
+// rules file in the working tree (committed ones that still exist plus new,
 // non-ignored ones), read from disk. It is the single source of rules for
 // every command and the TUI, and the same set the engine matches with, so
 // they always agree on which rules exist.
-type kitSet struct {
-	root  string      // repository root on disk
-	rules kitfile.Set // keyed by repo-relative, slash-separated path
+type rulesSet struct {
+	root  string        // repository root on disk
+	rules rulesfile.Set // keyed by repo-relative, slash-separated path
 }
 
-// errNoKitFiles is reported when an operation needs a KIT file and the
+// errNoRulesFiles is reported when an operation needs a rules file and the
 // repository has none.
-var errNoKitFiles = errors.New("no KIT files in the repository; create one with `kit init`")
+var errNoRulesFiles = errors.New("no rules files in the repository; create one with `" + brand.Command + " init`")
 
-// openKitSet loads the KIT files of the repository containing the current
+// openRulesSet loads the rules files of the repository containing the current
 // directory.
-func openKitSet(ctx context.Context) (*kitSet, error) {
+func openRulesSet(ctx context.Context) (*rulesSet, error) {
 	repo, err := getRepo()
 	if err != nil {
 		return nil, err
 	}
 	root, rules, err := local.NewReviewer(repo, nil).Fetch.Execute(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load KIT files: %w", err)
+		return nil, fmt.Errorf("load rules files: %w", err)
 	}
-	return &kitSet{root: root, rules: rules}, nil
+	return &rulesSet{root: root, rules: rules}, nil
 }
 
 // entries lists every rule in paths order, or only only's rules when it is
 // set.
-func (s *kitSet) entries(only string) []kitfile.DeclaredRule {
-	var out []kitfile.DeclaredRule
+func (s *rulesSet) entries(only string) []rulesfile.DeclaredRule {
+	var out []rulesfile.DeclaredRule
 	for _, p := range s.rules.Paths() {
 		if only != "" && p != only {
 			continue
 		}
 		for _, r := range s.rules[p] {
-			out = append(out, kitfile.DeclaredRule{KitFile: p, Rule: r})
+			out = append(out, rulesfile.DeclaredRule{RulesFile: p, Rule: r})
 		}
 	}
 	return out
 }
 
-// diskPath is the on-disk path of a repo-relative KIT file.
-func (s *kitSet) diskPath(p string) string {
+// diskPath is the on-disk path of a repo-relative rules file.
+func (s *rulesSet) diskPath(p string) string {
 	return filepath.Join(s.root, filepath.FromSlash(p))
 }
 
-// resolve maps a --file value to a KIT file in the set. The value is a path
-// from the repository root (or an absolute path inside it) naming a KIT
-// file or a directory that holds one, so `--file cmd/kit` means
-// cmd/kit/KIT wherever the command runs. An empty value resolves to "",
-// meaning every KIT file.
-func (s *kitSet) resolve(flag string) (string, error) {
+// resolve maps a --file value to a rules file in the set. The value is a path
+// from the repository root (or an absolute path inside it) naming a rules file
+// or a directory that holds one, so `--file cmd/app` means cmd/app/<rules file>
+// wherever the command runs. An empty value resolves to "", meaning every rules
+// file.
+func (s *rulesSet) resolve(flag string) (string, error) {
 	if flag == "" {
 		return "", nil
 	}
@@ -85,14 +86,14 @@ func (s *kitSet) resolve(flag string) (string, error) {
 	if p == ".." || strings.HasPrefix(p, "../") {
 		return "", fmt.Errorf("--file %q is outside the repository", flag)
 	}
-	if !kitfile.IsKitFile(p) {
-		p = path.Join(p, kitfile.FileName)
+	if !rulesfile.IsRulesFile(p) {
+		p = path.Join(p, rulesfile.FileName)
 	}
 	if _, ok := s.rules[p]; !ok {
 		if len(s.rules) == 0 {
-			return "", errNoKitFiles
+			return "", errNoRulesFiles
 		}
-		return "", fmt.Errorf("no KIT file at %q (KIT files: %s)", p, strings.Join(s.rules.Paths(), ", "))
+		return "", fmt.Errorf("no rules file at %q (rules files: %s)", p, strings.Join(s.rules.Paths(), ", "))
 	}
 	return p, nil
 }
@@ -118,29 +119,29 @@ func realPath(p string) string {
 	return p
 }
 
-// withPattern lists the KIT files declaring a rule with pattern.
-func (s *kitSet) withPattern(pattern string) []string {
+// withPattern lists the rules files declaring a rule with pattern.
+func (s *rulesSet) withPattern(pattern string) []string {
 	var out []string
 	for _, p := range s.rules.Paths() {
-		if slices.ContainsFunc(s.rules[p], func(r kitfile.Rule) bool { return r.Pattern == pattern }) {
+		if slices.ContainsFunc(s.rules[p], func(r rulesfile.Rule) bool { return r.Pattern == pattern }) {
 			out = append(out, p)
 		}
 	}
 	return out
 }
 
-// rule returns the rule keyed by pattern in kitFile.
-func (s *kitSet) rule(kitFile, pattern string) (kitfile.Rule, error) {
-	i := slices.IndexFunc(s.rules[kitFile], func(r kitfile.Rule) bool { return r.Pattern == pattern })
+// rule returns the rule keyed by pattern in rulesFile.
+func (s *rulesSet) rule(rulesFile, pattern string) (rulesfile.Rule, error) {
+	i := slices.IndexFunc(s.rules[rulesFile], func(r rulesfile.Rule) bool { return r.Pattern == pattern })
 	if i < 0 {
-		return kitfile.Rule{}, fmt.Errorf("no rule with pattern %q in %s: %w", pattern, kitFile, kitfile.ErrPatternNotFound)
+		return rulesfile.Rule{}, fmt.Errorf("no rule with pattern %q in %s: %w", pattern, rulesFile, rulesfile.ErrPatternNotFound)
 	}
-	return s.rules[kitFile][i], nil
+	return s.rules[rulesFile][i], nil
 }
 
 // patterns lists the distinct rule patterns, the values rules edit and
 // rules remove accept.
-func (s *kitSet) patterns() []string {
+func (s *rulesSet) patterns() []string {
 	seen := map[string]bool{}
 	for _, rules := range s.rules {
 		for _, r := range rules {
@@ -150,15 +151,15 @@ func (s *kitSet) patterns() []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
-// nearest is the KIT file closest to the current directory: the one in it
+// nearest is the rules file closest to the current directory: the one in it
 // or its nearest ancestor up to the repository root, falling back to the
-// first KIT file. It is "" only when there are no KIT files.
-// nearestTo is the KIT file governing directory dir (slash-separated,
+// first rules file. It is "" only when there are no rules files.
+// nearestTo is the rules file governing directory dir (slash-separated,
 // repository-relative, "." for the root): dir's own, or its nearest
 // ancestor's; "" when there is none.
-func (s *kitSet) nearestTo(dir string) string {
+func (s *rulesSet) nearestTo(dir string) string {
 	for d := path.Clean(dir); ; d = path.Dir(d) {
-		p := path.Join(d, kitfile.FileName)
+		p := path.Join(d, rulesfile.FileName)
 		if _, ok := s.rules[p]; ok {
 			return p
 		}
@@ -168,11 +169,11 @@ func (s *kitSet) nearestTo(dir string) string {
 	}
 }
 
-func (s *kitSet) nearest() string {
+func (s *rulesSet) nearest() string {
 	if wd, err := os.Getwd(); err == nil {
 		if rel, ok := relInside(s.root, wd); ok {
 			for dir := filepath.ToSlash(rel); ; dir = path.Dir(dir) {
-				p := path.Join(dir, kitfile.FileName)
+				p := path.Join(dir, rulesfile.FileName)
 				if _, ok := s.rules[p]; ok {
 					return p
 				}
@@ -188,12 +189,12 @@ func (s *kitSet) nearest() string {
 	return ""
 }
 
-// ruleTarget finds the KIT file holding the rule keyed by pattern, for
-// edit and remove. --file names it explicitly. Otherwise every KIT file is
+// ruleTarget finds the rules file holding the rule keyed by pattern, for
+// edit and remove. --file names it explicitly. Otherwise every rules file is
 // searched: a single match is used; several are resolved with a picker when
 // interactive and are an error otherwise, so a script never edits a file it
 // did not choose.
-func (s *kitSet) ruleTarget(fileFlag, pattern string, interactive bool) (string, error) {
+func (s *rulesSet) ruleTarget(fileFlag, pattern string, interactive bool) (string, error) {
 	if fileFlag != "" {
 		return s.resolve(fileFlag)
 	}
@@ -202,35 +203,35 @@ func (s *kitSet) ruleTarget(fileFlag, pattern string, interactive bool) (string,
 	case len(found) == 1:
 		return found[0], nil
 	case len(found) == 0:
-		return "", fmt.Errorf("no rule with pattern %q in any KIT file: %w", pattern, kitfile.ErrPatternNotFound)
+		return "", fmt.Errorf("no rule with pattern %q in any rules file: %w", pattern, rulesfile.ErrPatternNotFound)
 	case !interactive:
-		return "", fmt.Errorf("pattern %q is in %d KIT files (%s); pass --file to choose one",
+		return "", fmt.Errorf("pattern %q is in %d rules files (%s); pass --file to choose one",
 			pattern, len(found), strings.Join(found, ", "))
 	}
 	choices := make([]tui.Choice, len(found))
 	for i, p := range found {
 		label := p
-		if j := slices.IndexFunc(s.rules[p], func(r kitfile.Rule) bool { return r.Pattern == pattern }); j >= 0 && s.rules[p][j].Name != "" {
+		if j := slices.IndexFunc(s.rules[p], func(r rulesfile.Rule) bool { return r.Pattern == pattern }); j >= 0 && s.rules[p][j].Name != "" {
 			label += ": " + s.rules[p][j].Name
 		}
 		choices[i] = tui.Choice{Label: label, Value: p}
 	}
-	return tui.Pick(fmt.Sprintf("Rule %q is in several KIT files. Which one?", pattern), choices)
+	return tui.Pick(fmt.Sprintf("Rule %q is in several rules files. Which one?", pattern), choices)
 }
 
-// mutate loads a KIT file of the set from disk, applies change, and saves
+// mutate loads a rules file of the set from disk, applies change, and saves
 // it. Every add, edit, and remove, from the CLI or the TUI, goes through it.
-func (s *kitSet) mutate(kitFile string, change func(*kitfile.File) error) (*kitfile.File, error) {
-	disk := s.diskPath(kitFile)
-	k, err := kitfile.Load(disk)
+func (s *rulesSet) mutate(rulesFile string, change func(*rulesfile.File) error) (*rulesfile.File, error) {
+	disk := s.diskPath(rulesFile)
+	k, err := rulesfile.Load(disk)
 	if err != nil {
-		return nil, fmt.Errorf("load KIT file %q: %w", kitFile, err)
+		return nil, fmt.Errorf("load rules file %q: %w", rulesFile, err)
 	}
 	if err := change(k); err != nil {
 		return nil, err
 	}
 	if err := k.Save(disk); err != nil {
-		return nil, fmt.Errorf("save %s: %w", kitFile, err)
+		return nil, fmt.Errorf("save %s: %w", rulesFile, err)
 	}
 	return k, nil
 }

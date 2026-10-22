@@ -1,4 +1,4 @@
-package kitfile
+package rulesfile
 
 import (
 	"os"
@@ -103,10 +103,10 @@ func TestRulesParsing(t *testing.T) {
 
 // TestOmittedStrategyRoundTrips guards against saving a rule loaded without
 // combine_strategy as "combine_strategy: unknown", which then fails to
-// parse and makes the whole KIT file unreadable (e.g. after `kit rules add`
+// parse and makes the whole rules file unreadable (e.g. after `rules add`
 // to a file holding such a rule).
 func TestOmittedStrategyRoundTrips(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "KIT")
+	path := filepath.Join(t.TempDir(), FileName)
 	if err := os.WriteFile(path, []byte("- '.*':\n    name: legacy\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}

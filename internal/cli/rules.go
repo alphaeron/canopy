@@ -7,8 +7,8 @@ import (
 // rulesCmd represents the rules command
 var rulesCmd = &cobra.Command{
 	Use:   "rules",
-	Short: "Perform operation on KIT file rules",
-	Long: `The rules command allows for various operations on local KIT file
+	Short: "Perform operation on rules file rules",
+	Long: `The rules command allows for various operations on local rules file
 rules, such as checking applicable rules for a file/pattern matching a set of
 files.`,
 }

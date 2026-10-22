@@ -22,7 +22,7 @@ var reviewCmd = &cobra.Command{
 	Short: "Evaluate who must approve each file",
 	Long: `Run the review algorithm over the repository's files and report, for each
 file, its status, the approver targets it requires and how many approvals
-each has, and how every KIT file in its chain contributed.
+each has, and how every rules file in its chain contributed.
 
 Every file in the working tree is reviewed, or only changed files with
 --changed; pattern arguments (regular expressions) narrow the files further.

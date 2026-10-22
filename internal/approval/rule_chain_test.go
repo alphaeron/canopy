@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/kitfile"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // --- Test fixtures / builders -------------------------------------------
@@ -18,8 +18,8 @@ import (
 
 const testAuthor = "user9"
 
-func approver(target string, count int) kitfile.ApproverTarget {
-	return kitfile.ApproverTarget{Target: target, RequiredCount: count}
+func approver(target string, count int) rulesfile.ApproverTarget {
+	return rulesfile.ApproverTarget{Target: target, RequiredCount: count}
 }
 
 // buildContext assembles the shared PullRequest. Tests pass only the
@@ -34,10 +34,10 @@ func buildContext(approvers map[string]bool, isOwnerActive func(string) bool, re
 	}
 }
 
-func buildLayer(dir, name string, strategy kitfile.RuleCombineStrategy, targets ...kitfile.ApproverTarget) RuleLayer {
+func buildLayer(dir, name string, strategy rulesfile.RuleCombineStrategy, targets ...rulesfile.ApproverTarget) RuleLayer {
 	return RuleLayer{
 		DirectoryPath: dir,
-		Rules:         []Rule{newRule(kitfile.Rule{Name: name, CombineStrategy: strategy, Approvers: targets})},
+		Rules:         []Rule{newRule(rulesfile.Rule{Name: name, CombineStrategy: strategy, Approvers: targets})},
 	}
 }
 
@@ -83,8 +83,8 @@ func TestUnionRecurringTargetCountsPerOccurrence(t *testing.T) {
 	pr := buildContext(approverSet("team-a"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain(
 		"/src/file.go",
-		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
-		buildLayer("/src", "src", kitfile.RuleCombineStrategyUnion, approver("team-a", 2)),
+		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("/src", "src", rulesfile.RuleCombineStrategyUnion, approver("team-a", 2)),
 	)
 	state := executeChain(t, rc, pr)
 
@@ -123,8 +123,8 @@ func TestUnionPreservesBothOccurrences(t *testing.T) {
 	pr := buildContext(approverSet("team-a", "team-b"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain(
 		"/src/x.go",
-		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
-		buildLayer("/src", "src", kitfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
+		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("/src", "src", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
 	)
 	state := executeChain(t, rc, pr)
 	fs := state.Files["/src/x.go"]
@@ -151,8 +151,8 @@ func TestIntersectKeepsSharedTargetOnly(t *testing.T) {
 	pr := buildContext(approverSet("b"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain(
 		"/src/x.go",
-		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("a", 1), approver("b", 1)),
-		buildLayer("/src", "src", kitfile.RuleCombineStrategyIntersect, approver("b", 1), approver("c", 1)),
+		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("a", 1), approver("b", 1)),
+		buildLayer("/src", "src", rulesfile.RuleCombineStrategyIntersect, approver("b", 1), approver("c", 1)),
 	)
 	state := executeChain(t, rc, pr)
 	fs := state.Files["/src/x.go"]
@@ -172,8 +172,8 @@ func TestOverrideDiscardsParentRules(t *testing.T) {
 	pr := buildContext(approverSet("team-b"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain(
 		"/src/x.go",
-		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
-		buildLayer("/src", "src", kitfile.RuleCombineStrategyOverride, approver("team-b", 1)),
+		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("/src", "src", rulesfile.RuleCombineStrategyOverride, approver("team-b", 1)),
 	)
 	state := executeChain(t, rc, pr)
 	fs := state.Files["/src/x.go"]
@@ -299,7 +299,7 @@ func TestGroupTargetResolvedAgainstMembers(t *testing.T) {
 	// CurrentApprovers.
 	pr := buildContext(approverSet("bo"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain("/src/x.go",
-		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-x", 1)),
+		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-x", 1)),
 	)
 	state := executeChainWithResolver(t, rc, pr, groupResolver{})
 	fs := state.Files["/src/x.go"]
@@ -329,7 +329,7 @@ func TestGroupTargetEligibleOnlyThroughAuthorIsPruned(t *testing.T) {
 	pr := buildContext(approverSet(testAuthor),
 		func(s string) bool { return s == testAuthor }, []string{"zowner"})
 	rc := buildChain("/src/x.go",
-		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-y", 1)),
+		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-y", 1)),
 	)
 	state := executeChainWithResolver(t, rc, pr, groupResolver{})
 	fs := state.Files["/src/x.go"]
@@ -354,24 +354,24 @@ func TestRuleStateSnapshotsEffectiveCombineStrategy(t *testing.T) {
 	// (override) by the algorithm. The historical review state must report
 	// what actually ran, so that rule state snapshots the effective strategy,
 	// never the raw config value.
-	rule := newRule(kitfile.Rule{
+	rule := newRule(rulesfile.Rule{
 		Name:            "root",
-		CombineStrategy: kitfile.RuleCombineStrategy(0), // invalid sentinel
-		Approvers:       []kitfile.ApproverTarget{approver("team-a", 1)},
+		CombineStrategy: rulesfile.RuleCombineStrategy(0), // invalid sentinel
+		Approvers:       []rulesfile.ApproverTarget{approver("team-a", 1)},
 	})
 	pr := buildContext(approverSet("team-a"), activeAllOwners(), []string{"zowner"})
 	rs := rule.Execute(t.Context(), pr, &DefaultApproverResolver{}, "/src/x.go", "/", testLogger())
-	if rs.CombineStrategy != kitfile.RuleCombineStrategyOverride {
+	if rs.CombineStrategy != rulesfile.RuleCombineStrategyOverride {
 		t.Errorf("snapshot combine strategy = %s, want override for an invalid config value", rs.CombineStrategy)
 	}
 	// Raw config values pass through unchanged.
-	valid := newRule(kitfile.Rule{
+	valid := newRule(rulesfile.Rule{
 		Name:            "src",
-		CombineStrategy: kitfile.RuleCombineStrategyIntersect,
-		Approvers:       []kitfile.ApproverTarget{approver("team-a", 1)},
+		CombineStrategy: rulesfile.RuleCombineStrategyIntersect,
+		Approvers:       []rulesfile.ApproverTarget{approver("team-a", 1)},
 	})
 	rs = valid.Execute(t.Context(), pr, &DefaultApproverResolver{}, "/src/x.go", "/src", testLogger())
-	if rs.CombineStrategy != kitfile.RuleCombineStrategyIntersect {
+	if rs.CombineStrategy != rulesfile.RuleCombineStrategyIntersect {
 		t.Errorf("snapshot combine strategy = %s, want intersect pass-through", rs.CombineStrategy)
 	}
 }
@@ -382,11 +382,11 @@ func TestAuthorApprovalIgnoredWhenSelfApproveDisallowed(t *testing.T) {
 	// author must not appear in the resolved members.
 	pr := buildContext(approverSet(testAuthor), activeAllOwners(), []string{"zowner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {{DirectoryPath: "/", Rules: []Rule{newRule(kitfile.Rule{
+		"/src/x.go": {{DirectoryPath: "/", Rules: []Rule{newRule(rulesfile.Rule{
 			Name:            "root",
-			CombineStrategy: kitfile.RuleCombineStrategyUnion,
+			CombineStrategy: rulesfile.RuleCombineStrategyUnion,
 			SelfApprove:     false,
-			Approvers:       []kitfile.ApproverTarget{approver("team-y", 1)},
+			Approvers:       []rulesfile.ApproverTarget{approver("team-y", 1)},
 		})}}},
 	}}
 	state := executeChainWithResolver(t, rc, pr, groupResolver{})
@@ -411,11 +411,11 @@ func TestAuthorApprovalCountedWhenSelfApproveAllowed(t *testing.T) {
 	// approval now satisfies the target.
 	pr := buildContext(approverSet(testAuthor), activeAllOwners(), []string{"zowner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {{DirectoryPath: "/", Rules: []Rule{newRule(kitfile.Rule{
+		"/src/x.go": {{DirectoryPath: "/", Rules: []Rule{newRule(rulesfile.Rule{
 			Name:            "root",
-			CombineStrategy: kitfile.RuleCombineStrategyUnion,
+			CombineStrategy: rulesfile.RuleCombineStrategyUnion,
 			SelfApprove:     true,
-			Approvers:       []kitfile.ApproverTarget{approver("team-y", 1)},
+			Approvers:       []rulesfile.ApproverTarget{approver("team-y", 1)},
 		})}}},
 	}}
 	state := executeChainWithResolver(t, rc, pr, groupResolver{})
@@ -434,7 +434,7 @@ func TestRulesPrunedToEmptyFallBackButStillErrors(t *testing.T) {
 	// file, but the final state still terminates error.
 	pr := buildContext(approverSet("zowner"), func(s string) bool { return s == "zowner" }, []string{"zowner"}) // team-a inactive
 	rc := buildChain("/src/x.go",
-		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
 	)
 	state := executeChain(t, rc, pr)
 	fs := state.Files["/src/x.go"]
@@ -473,8 +473,8 @@ func TestPrunedRuleErrorsEvenWhenLaterRuleSatisfies(t *testing.T) {
 	)
 	rc := buildChain(
 		"/src/x.go",
-		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1)),
-		buildLayer("/src", "src", kitfile.RuleCombineStrategyUnion, approver("team-b", 1)),
+		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("/src", "src", rulesfile.RuleCombineStrategyUnion, approver("team-b", 1)),
 	)
 	state := executeChain(t, rc, pr)
 	fs := state.Files["/src/x.go"]
@@ -495,7 +495,7 @@ func TestPerRuleStateTrackingInLayers(t *testing.T) {
 	// per-rule / per-target satisfaction breakdown.
 	pr := buildContext(approverSet("team-b"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain("/src/x.go",
-		buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
+		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
 	)
 	state := executeChain(t, rc, pr)
 	fs := state.Files["/src/x.go"]
@@ -533,7 +533,7 @@ func TestFallbackUnsatisfiableBeatsSatisfiedFiles(t *testing.T) {
 	// terminal state even when other files are fully satisfied.
 	pr := buildContext(approverSet("owner"), inactiveAllOwners(), []string{"owner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/ok.go":     {buildLayer("/", "root", kitfile.RuleCombineStrategyUnion, approver("owner", 1))},
+		"/ok.go":     {buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("owner", 1))},
 		"/orphan.go": {},
 	}}
 	state := executeChain(t, rc, pr)
