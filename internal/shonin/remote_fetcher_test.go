@@ -120,6 +120,37 @@ func TestRemoteFetcherHappyPath(t *testing.T) {
 	}
 }
 
+// TestRemoteFetcherSkipsLookalikeNames pins whole-name KIT file matching:
+// the fetcher used to match any path containing "KIT", so it fetched and
+// parsed files like docs/KITCHEN.md as rules and failed the fetch.
+func TestRemoteFetcherSkipsLookalikeNames(t *testing.T) {
+	fake := &fakeGitHubAPI{
+		blobs: map[string][]byte{"deadbeef": []byte("- \".*\":\n  name: \"Root\"\n")},
+		tree: []struct {
+			Path string `json:"path"`
+			Sha  string `json:"sha"`
+			Type string `json:"type"`
+		}{
+			{Path: "KIT", Sha: "deadbeef", Type: "blob"},
+			// No blobs: fetching either would fail the test with a 404.
+			{Path: "docs/KITCHEN.md", Sha: "kitchen", Type: "blob"},
+			{Path: "svc/KIT.bak", Sha: "backup", Type: "blob"},
+		},
+	}
+	srv := fake.serve(t)
+	client := github.NewClient(nil)
+	client.BaseURL, _ = url.Parse(srv.URL + "/")
+
+	fetcher := &RemoteFetcher{Client: client, Owner: "o", Repo: "r", BaseSHA: "abc123", Log: testLogger()}
+	_, rules, err := fetcher.Execute()
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(rules) != 1 || len(rules["KIT"]) != 1 {
+		t.Errorf("rules = %v, want only the root KIT file", keysOf(rules))
+	}
+}
+
 func TestRemoteFetcherTreeErrorSurfaces(t *testing.T) {
 	client := github.NewClient(nil)
 	client.BaseURL, _ = url.Parse("http://localhost:1/")

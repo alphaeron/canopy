@@ -177,3 +177,23 @@ func TestKitFileValidateRejectsMissingApproverFields(t *testing.T) {
 		t.Errorf("Validate missed empty approver")
 	}
 }
+
+// TestIsKitFile pins whole-name matching: the remote fetcher used to match
+// any path containing "KIT", so look-alike files were parsed as rules.
+func TestIsKitFile(t *testing.T) {
+	tests := map[string]bool{
+		"KIT":             true,
+		"cmd/kit/KIT":     true,
+		"KITCHEN.md":      false,
+		"docs/KITCHEN.md": false,
+		"KIT/readme.md":   false,
+		"svc/KIT.bak":     false,
+		"svc/kit":         false,
+		"svc/MYKIT":       false,
+	}
+	for p, want := range tests {
+		if got := IsKitFile(p); got != want {
+			t.Errorf("IsKitFile(%q) = %v, want %v", p, got, want)
+		}
+	}
+}

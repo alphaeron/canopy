@@ -100,6 +100,39 @@ func TestKitSetResolve(t *testing.T) {
 	}
 }
 
+// TestRelInside pins that a path reached through a symlink still counts as
+// inside the root, including a path that does not exist yet (EvalSymlinks
+// fails on it, so it is first compared as given).
+func TestRelInside(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(real, "cmd", "kit"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	tests := []struct {
+		name, root, p, want string
+		wantOK              bool
+	}{
+		{name: "same spelling", root: link, p: filepath.Join(link, "cmd", "kit"), want: "cmd/kit", wantOK: true},
+		{name: "symlinked root, real path", root: link, p: filepath.Join(real, "cmd", "kit"), want: "cmd/kit", wantOK: true},
+		{name: "real root, symlinked path", root: real, p: filepath.Join(link, "cmd", "kit"), want: "cmd/kit", wantOK: true},
+		{name: "missing path", root: link, p: filepath.Join(link, "svc", "new"), want: "svc/new", wantOK: true},
+		{name: "root itself", root: link, p: real, want: ".", wantOK: true},
+		{name: "outside", root: real, p: filepath.Dir(real), wantOK: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := relInside(tc.root, tc.p)
+			if ok != tc.wantOK || (ok && filepath.ToSlash(got) != tc.want) {
+				t.Errorf("relInside(%q, %q) = %q, %v; want %q, %v", tc.root, tc.p, got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
 // TestKitSetRuleTarget pins how edit and remove find a rule's KIT file
 // without --file, including that a script never silently picks one of
 // several.
