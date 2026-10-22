@@ -177,6 +177,21 @@ func (s *kitSet) patterns() []string {
 // nearest is the KIT file closest to the current directory: the one in it
 // or its nearest ancestor up to the repository root, falling back to the
 // first KIT file. It is "" only when there are no KIT files.
+// nearestTo is the KIT file governing directory dir (slash-separated,
+// repository-relative, "." for the root): dir's own, or its nearest
+// ancestor's; "" when there is none.
+func (s *kitSet) nearestTo(dir string) string {
+	for d := path.Clean(dir); ; d = path.Dir(d) {
+		p := path.Join(d, kitfile.FileName)
+		if _, ok := s.rules[p]; ok {
+			return p
+		}
+		if d == "." || d == "/" {
+			return ""
+		}
+	}
+}
+
 func (s *kitSet) nearest() string {
 	if wd, err := os.Getwd(); err == nil {
 		if rel, ok := relInside(s.root, wd); ok {

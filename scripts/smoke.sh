@@ -51,6 +51,8 @@ $BIN rules files "main\.go" | grep -q "main.go" && fail "rules files lists only 
 $BIN match --json | grep -q '"path": "main.go"' || fail "match --json"
 $BIN match --by-scope --scope "go review" --json | grep -q '"files"' || fail "match --by-scope"
 $BIN coverage --json | grep -q '"universe"' || fail "coverage --json"
+$BIN review 'main\.go' --approver "team/go" --json | grep -q '"overall": "satisfied"' || fail "review --json"
+$BIN review 'main\.go' | grep -q "^Overall: missing approvers" || fail "review table"
 
 # --- 7. rules files lists every KIT file without a pattern ----------------
 $BIN rules files --json | grep -q '"KIT"' || fail "rules files --json"

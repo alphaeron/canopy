@@ -46,17 +46,34 @@ func cleanItem(it Item) Item {
 }
 
 func cleanDetail(d Detail) Detail {
-	fields := make([]Field, len(d.Fields))
-	for i, f := range d.Fields {
-		fields[i] = Field{Label: clean(f.Label), Value: clean(f.Value)}
+	tabs := make([]Tab, len(d.Tabs))
+	for i, t := range d.Tabs {
+		tabs[i] = Tab{Title: clean(t.Title), Fields: cleanFields(t.Fields), Sections: cleanSections(t.Sections)}
 	}
-	sections := make([]Section, len(d.Sections))
-	for i, s := range d.Sections {
+	return Detail{Fields: cleanFields(d.Fields), Sections: cleanSections(d.Sections), Tabs: tabs}
+}
+
+func cleanFields(in []Field) []Field {
+	fields := make([]Field, len(in))
+	for i, f := range in {
+		fields[i] = Field{Label: clean(f.Label), Value: clean(f.Value), Badge: f.Badge}
+	}
+	return fields
+}
+
+func cleanSections(in []Section) []Section {
+	sections := make([]Section, len(in))
+	for i, s := range in {
 		lines := make([]string, len(s.Lines))
 		for j, l := range s.Lines {
 			lines[j] = clean(l)
 		}
-		sections[i] = Section{Title: clean(s.Title), Lines: lines, Diff: s.Diff}
+		rows := make([]Row, len(s.Rows))
+		for j, r := range s.Rows {
+			r.Text, r.Note = clean(r.Text), clean(r.Note)
+			rows[j] = r
+		}
+		sections[i] = Section{Title: clean(s.Title), Lines: lines, Diff: s.Diff, Rows: rows}
 	}
-	return Detail{Fields: fields, Sections: sections}
+	return sections
 }

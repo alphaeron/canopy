@@ -49,6 +49,13 @@ type styles struct {
 	diffAdd      lipgloss.Style
 	diffDel      lipgloss.Style
 	diffHunk     lipgloss.Style
+	note         lipgloss.Style
+	link         lipgloss.Style
+	linkSelected lipgloss.Style
+	badgeOK      lipgloss.Style
+	badgePending lipgloss.Style
+	badgeFail    lipgloss.Style
+	badgeOff     lipgloss.Style
 
 	// Command palette.
 	paletteBox      lipgloss.Style
@@ -99,6 +106,13 @@ func newStyles(isDark bool) *styles {
 	s.diffAdd = lipgloss.NewStyle().Foreground(s.success)
 	s.diffDel = lipgloss.NewStyle().Foreground(s.danger)
 	s.diffHunk = lipgloss.NewStyle().Foreground(s.accent)
+	s.note = lipgloss.NewStyle().Foreground(s.muted)
+	s.link = lipgloss.NewStyle().Foreground(s.text).Underline(true)
+	s.linkSelected = lipgloss.NewStyle().Bold(true).Foreground(s.accent)
+	s.badgeOK = lipgloss.NewStyle().Foreground(s.success)
+	s.badgePending = lipgloss.NewStyle().Foreground(s.warning)
+	s.badgeFail = lipgloss.NewStyle().Bold(true).Foreground(s.danger)
+	s.badgeOff = lipgloss.NewStyle().Foreground(s.subtle)
 
 	s.paletteBox = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -141,4 +155,19 @@ func (s *styles) paneBorderColor(focused bool) color.Color {
 		return s.accent
 	}
 	return s.border
+}
+
+// badge is the style a status badge's glyph is drawn in.
+func (s *styles) badge(b Badge) lipgloss.Style {
+	switch b {
+	case BadgeOK:
+		return s.badgeOK
+	case BadgePending:
+		return s.badgePending
+	case BadgeFail:
+		return s.badgeFail
+	case BadgeOff:
+		return s.badgeOff
+	}
+	return s.value
 }

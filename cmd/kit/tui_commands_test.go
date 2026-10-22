@@ -74,7 +74,7 @@ func TestRoutesMirrorCommandTree(t *testing.T) {
 	for _, name := range []string{
 		"completion", "completion bash", "completion fish", "completion powershell", "completion zsh",
 		"coverage", "help", "init", "match", "rules", "rules add", "rules edit", "rules files",
-		"rules get", "rules list", "rules remove", "validate",
+		"review", "rules get", "rules list", "rules remove", "validate",
 	} {
 		if _, ok := routes[name]; !ok {
 			t.Errorf("no route for kit %s", name)

@@ -17,6 +17,13 @@ type TreeGroup struct {
 	Title  string
 	Detail Detail
 	Items  []Item
+	// Route, when set, is opened by enter on a group without items (a
+	// command with no subcommands on the home page).
+	Route *Route
+	// Collapsed starts the group closed.
+	Collapsed bool
+	// Badge is a status glyph shown before the title.
+	Badge Badge
 }
 
 // treeRef identifies a node: the root (group < 0), a group, or an item
@@ -39,15 +46,18 @@ type TreePage struct {
 	st         *styles
 	groups     []TreeGroup
 	tree       tree.Model
-	detail     detailPane
-	focus      focusArea
-	hideDetail bool
-	layout     splitLayout
-	w, h       int
+	rootDetail *Detail
+	paneSplit
 }
 
-// NewTreePage builds a tree page titled name with every group expanded.
+// NewTreePage builds a tree page titled name with every group expanded
+// unless it is Collapsed.
 func NewTreePage(name string, groups []TreeGroup) *TreePage {
+	return newTreePage(name, "all "+strings.ToLower(clean(name)), groups)
+}
+
+// newTreePage builds a tree page whose root row reads rootLabel.
+func newTreePage(name, rootLabel string, groups []TreeGroup) *TreePage {
 	st := newStyles(true)
 	name = clean(name)
 	groups = slices.Clone(groups)
@@ -62,13 +72,24 @@ func NewTreePage(name string, groups []TreeGroup) *TreePage {
 	}
 	// The bubbles tree always renders its root row, so the root is a real
 	// node summarizing the page rather than a blank line.
-	root := tree.Root(treeRef{group: -1, item: -1, label: "all " + strings.ToLower(name)})
+	root := tree.Root(treeRef{group: -1, item: -1, label: rootLabel})
+	wantAux := false
 	for gi, g := range groups {
-		node := tree.Root(treeRef{group: gi, item: -1, label: g.Title})
+		node := tree.Root(treeRef{group: gi, item: -1, label: withGlyph(g.Badge, g.Title)})
+		wantAux = wantAux || detailHasTabs(g.Detail)
 		for ii, it := range g.Items {
-			node.Child(treeRef{group: gi, item: ii, label: it.Title})
+			node.Child(treeRef{group: gi, item: ii, label: withGlyph(it.Badge, it.Title)})
+			wantAux = wantAux || detailHasTabs(it.Detail)
 		}
-		root.Child(node.Open())
+		switch {
+		case len(g.Items) == 0:
+			// A leaf, so it draws no open/closed indicator.
+			root.Child(treeRef{group: gi, item: -1, label: withGlyph(g.Badge, g.Title)})
+		case g.Collapsed:
+			root.Child(node.Close())
+		default:
+			root.Child(node.Open())
+		}
 	}
 	t := tree.New(root, 0, 0)
 	t.SetShowHelp(false)
@@ -79,9 +100,57 @@ func NewTreePage(name string, groups []TreeGroup) *TreePage {
 	if len(groups) > 0 {
 		t.Down()
 	}
-	p := &TreePage{name: name, groups: groups, tree: t, detail: newDetailPane(st)}
+	p := &TreePage{name: name, groups: groups, tree: t, paneSplit: newPaneSplit(st)}
+	p.wantAux = wantAux
 	p.setStyles(st)
 	return p
+}
+
+// withRootDetail replaces the root row's summary with d.
+func (p *TreePage) withRootDetail(d Detail) *TreePage {
+	d = cleanDetail(d)
+	p.rootDetail = &d
+	p.detail.refresh("root", p.rootLabel(), d)
+	return p
+}
+
+// setDetail replaces a group's (item < 0) or item's detail, refreshing the
+// pane when that node is shown: content that arrived after the page was
+// built.
+func (p *TreePage) setDetail(group, item int, d Detail) {
+	d = cleanDetail(d)
+	if item < 0 {
+		p.groups[group].Detail = d
+	} else {
+		p.groups[group].Items[item].Detail = d
+	}
+	ref := treeRef{group: group, item: item}
+	p.detail.refresh(ref.key(), p.refTitle(ref), d)
+}
+
+func (p *TreePage) rootLabel() string {
+	return p.tree.Root().GivenValue().(treeRef).label
+}
+
+// key identifies a node for the detail pane.
+func (r treeRef) key() string {
+	switch {
+	case r.group < 0:
+		return "root"
+	case r.item < 0:
+		return fmt.Sprintf("g%d", r.group)
+	}
+	return fmt.Sprintf("g%d/%d", r.group, r.item)
+}
+
+func (p *TreePage) refTitle(r treeRef) string {
+	switch {
+	case r.group < 0:
+		return p.rootLabel()
+	case r.item < 0:
+		return p.groups[r.group].Title
+	}
+	return p.groups[r.group].Items[r.item].Title
 }
 
 // WithSummary sets the status-line summary.
@@ -125,30 +194,18 @@ func (p *TreePage) setStyles(st *styles) {
 }
 
 func (p *TreePage) setSize(w, h int) {
-	p.w, p.h = w, h
-	p.layout = computeSplit(w, h, !p.hideDetail)
-	if !p.layout.detail {
-		p.focus = focusMain
-	}
-	p.tree.SetSize(max(0, p.layout.mainW-paneFrameWidth), max(0, p.layout.mainH-paneFrameHeight))
+	p.tree.SetSize(p.resize(w, h))
 	// Re-apply the tree's scroll-off against the new height: positioning
 	// the cursor before the first size scrolled a zero-height viewport,
 	// which would otherwise hide the root row until the cursor moves.
 	p.tree.SetYOffset(p.tree.YOffset())
-	p.detail.setSize(p.layout.detailW, p.layout.detailH)
 }
 
 func (p *TreePage) capturing() bool { return false }
 
 func (p *TreePage) cursor() *tea.Cursor { return nil }
 
-func (p *TreePage) back() bool {
-	if p.focus == focusDetail {
-		p.focus = focusMain
-		return true
-	}
-	return false
-}
+func (p *TreePage) back() bool { return p.paneSplit.back() }
 
 func (p *TreePage) update(msg tea.Msg) tea.Cmd {
 	if m, ok := msg.(tea.MouseMsg); ok {
@@ -158,19 +215,13 @@ func (p *TreePage) update(msg tea.Msg) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	switch {
-	case key.Matches(k, paneKeys.SwitchFocus):
-		if p.layout.detail {
-			p.focus = 1 - p.focus
+	if cmd, handled, relayout := p.handleKey(k); handled {
+		if relayout {
+			p.setSize(p.w, p.h)
 		}
-		return nil
-	case key.Matches(k, paneKeys.TogglePane):
-		p.hideDetail = !p.hideDetail
-		p.setSize(p.w, p.h)
-		return nil
-	case p.focus == focusDetail:
-		return p.detail.update(k)
-	case key.Matches(k, paneKeys.Open):
+		return cmd
+	}
+	if key.Matches(k, paneKeys.Open) {
 		return p.open()
 	}
 	var cmd tea.Cmd
@@ -180,16 +231,24 @@ func (p *TreePage) update(msg tea.Msg) tea.Cmd {
 }
 
 // open acts on the selected node: an item opens its route or focuses the
-// detail pane, and a group expands or collapses.
+// detail pane, a group without items opens its route, and any other group
+// expands or collapses.
 func (p *TreePage) open() tea.Cmd {
 	if it, ok := p.selectedItem(); ok {
 		if it.Route != nil {
 			return navigate(*it.Route)
 		}
-		if p.layout.detail {
-			p.focus = focusDetail
-		}
+		p.focusDetailPane()
 		return nil
+	}
+	if ref, ok := p.selectedRef(); ok && ref.group >= 0 {
+		if g := p.groups[ref.group]; len(g.Items) == 0 {
+			if g.Route != nil {
+				return navigate(*g.Route)
+			}
+			p.focusDetailPane()
+			return nil
+		}
 	}
 	p.tree.ToggleCurrentNode()
 	p.syncDetail()
@@ -206,12 +265,11 @@ func (p *TreePage) mouse(msg tea.MouseMsg) tea.Cmd {
 	if !ok {
 		return nil
 	}
+	if area != focusMain {
+		return p.paneSplit.mouse(msg, area, cy)
+	}
 	if _, wheel := msg.(tea.MouseWheelMsg); wheel {
 		switch d := wheelDelta(m.Button); {
-		case area == focusDetail && d < 0:
-			p.detail.vp.ScrollUp(detailWheelLines)
-		case area == focusDetail && d > 0:
-			p.detail.vp.ScrollDown(detailWheelLines)
 		case d < 0:
 			p.tree.Up()
 		case d > 0:
@@ -224,7 +282,7 @@ func (p *TreePage) mouse(msg tea.MouseMsg) tea.Cmd {
 		return nil
 	}
 	p.focus = area
-	if area == focusDetail || cy < 0 {
+	if cy < 0 {
 		return nil
 	}
 	line := cy + p.tree.ViewportYOffset()
@@ -262,15 +320,30 @@ func (p *TreePage) syncDetail() {
 	switch {
 	case !ok:
 		p.detail.show("", "", Detail{})
+	case ref.group < 0 && p.rootDetail != nil:
+		p.detail.show(ref.key(), ref.label, *p.rootDetail)
 	case ref.group < 0:
-		p.detail.show("root", ref.label, Detail{Fields: []Field{{Label: "Summary", Value: p.status()}}})
+		p.detail.show(ref.key(), ref.label, Detail{Fields: []Field{{Label: "Summary", Value: p.status()}}})
 	case ref.item < 0:
-		g := p.groups[ref.group]
-		p.detail.show(fmt.Sprintf("g%d", ref.group), g.Title, g.Detail)
+		p.detail.show(ref.key(), p.groups[ref.group].Title, p.groups[ref.group].Detail)
 	default:
 		it := p.groups[ref.group].Items[ref.item]
-		p.detail.show(fmt.Sprintf("g%d/%d", ref.group, ref.item), it.Title, it.Detail)
+		p.detail.show(ref.key(), it.Title, it.Detail)
 	}
+}
+
+// previewRows are the page's first n groups as detail rows, for the home
+// page's preview of a command.
+func (p *TreePage) previewRows(n int) []Row {
+	rows := make([]Row, 0, min(n, len(p.groups)))
+	for _, g := range p.groups[:min(n, len(p.groups))] {
+		r := Row{Text: g.Title, Badge: g.Badge, Route: g.Route}
+		if len(g.Items) > 0 {
+			r.Note = countLabel(len(g.Items), "item")
+		}
+		rows = append(rows, r)
+	}
+	return rows
 }
 
 func (p *TreePage) view() string {
@@ -278,29 +351,19 @@ func (p *TreePage) view() string {
 	if len(p.groups) == 0 {
 		content = p.st.empty.Render("Nothing to show")
 	}
-	main := pane(p.st, p.name, "", content, p.layout.mainW, p.layout.mainH, p.focus == focusMain)
-	if !p.layout.detail {
-		return main
-	}
-	return p.layout.join(main, p.detail.view(p.focus == focusDetail))
+	return p.join(pane(p.st, p.name, "", content, p.layout.mainW, p.layout.mainH, p.focus == focusMain))
 }
 
 func (p *TreePage) bindings() []key.Binding {
-	if p.focus == focusDetail {
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "scroll")),
-			paneKeys.SwitchFocus,
-		}
+	if p.focus != focusMain {
+		return p.detailBindings()
 	}
 	b := []key.Binding{
 		paneKeys.Up, paneKeys.Down,
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "expand/open")),
 		key.NewBinding(key.WithKeys("h", "l"), key.WithHelp("←/→", "collapse/expand")),
 	}
-	if p.layout.detail {
-		b = append(b, paneKeys.SwitchFocus)
-	}
-	return append(b, paneKeys.TogglePane)
+	return append(b, p.paneBindings()...)
 }
 
 var _ Page = (*TreePage)(nil)

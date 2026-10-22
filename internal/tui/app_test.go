@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -44,6 +45,7 @@ type harness struct {
 
 func newHarness(t *testing.T, cfg Config) *harness {
 	t.Helper()
+	cfg.previewDelay = time.Nanosecond
 	h := &harness{t: t, a: newApp(context.Background(), cfg)}
 	h.send(tea.WindowSizeMsg{Width: 120, Height: 30})
 	h.run(h.a.Init())
@@ -350,13 +352,21 @@ const (
 // TestMouseSelectsAndOpensRows covers clicking: a click selects a row and
 // focuses its pane, and clicking the selected row opens it.
 func TestMouseSelectsAndOpensRows(t *testing.T) {
-	h := newHarness(t, Config{Routes: []Route{staticRoute("match", filesPage), staticRoute("coverage", filesPage)}})
+	match, coverage := staticRoute("match", filesPage), staticRoute("coverage", filesPage)
+	commands := func() Page {
+		return NewListPage("Commands", []Item{
+			{Title: "match", Detail: Detail{Fields: []Field{{Label: "Command", Value: "kit match"}}}, Route: &match},
+			{Title: "coverage", Detail: Detail{Fields: []Field{{Label: "Command", Value: "kit coverage"}}}, Route: &coverage},
+		})
+	}
+	start := staticRoute("commands", commands)
+	h := newHarness(t, Config{Routes: []Route{match, coverage}, Start: &start, StartPage: commands()})
 	h.send(click(listX, firstRowY+rowStride))
-	if len(h.a.stack) != 1 || !strings.Contains(h.screen(), "kit coverage") {
+	if len(h.a.stack) != 2 || !strings.Contains(h.screen(), "kit coverage") {
 		t.Fatalf("a click must select the second row without opening it:\n%s", h.screen())
 	}
 	h.send(click(listX, firstRowY+rowStride+1)) // description line of the same row
-	if got := h.crumbs(); !strings.Contains(got, "kit › coverage") {
+	if got := h.crumbs(); !strings.Contains(got, "commands › coverage") {
 		t.Fatalf("clicking the selected row must open it, header %q", got)
 	}
 	// Spacing rows and the border map to no row.

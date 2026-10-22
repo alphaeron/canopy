@@ -22,6 +22,8 @@ func routeFor(c *cobra.Command, v tui.Values) (tui.Route, bool) {
 	switch {
 	case c == matchCmd:
 		return matchRoute(v), true
+	case c == reviewCmd:
+		return reviewRoute(v), true
 	case c == coverageCmd:
 		return coverageRoute(v), true
 	case c == validateCmd:
@@ -41,14 +43,32 @@ func routeFor(c *cobra.Command, v tui.Values) (tui.Route, bool) {
 	case c == rulesRemoveCmd:
 		return rulesRemoveRoute(v), true
 	case c.Parent() == rootCmd && c.Name() == "help":
-		return helpRoute(c, v), true
+		r := helpRoute(c, v)
+		r.Utility = true
+		return r, true
 	case c.Parent() != nil && c.Parent().Parent() == rootCmd && c.Parent().Name() == "completion":
-		return completionRoute(c, v), true
+		r := completionRoute(c, v)
+		r.Utility = true
+		return r, true
 	case c != rootCmd && !c.Runnable() && c.HasAvailableSubCommands():
 		// A command group such as `kit rules` prints its help.
-		return commandRoute(c, v, func(context.Context, tui.Values) (tui.Page, error) { return helpPage(c), nil }), true
+		r := commandRoute(c, v, func(context.Context, tui.Values) (tui.Page, error) { return helpPage(c), nil })
+		r.Utility = c.Name() == "completion"
+		if c == rulesCmd {
+			r.Summary = rulesSummary
+		}
+		return r, true
 	}
 	return tui.Route{}, false
+}
+
+// rulesSummary is the home page's live line for `kit rules`.
+func rulesSummary(context.Context) (string, error) {
+	s, err := openKitSet()
+	if err != nil {
+		return "", err
+	}
+	return countOf(len(s.entries("")), "rule") + " in " + countOf(len(s.rules), "KIT file"), nil
 }
 
 // visibleCommands are c's subcommands that `kit --help` lists.

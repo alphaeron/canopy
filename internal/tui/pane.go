@@ -106,18 +106,24 @@ func fitLines(s string, w, h int) []string {
 
 // Split thresholds. Below sideBySideMinWidth the detail pane stacks under
 // the main pane; below stackedMinHeight there is no room for both and the
-// detail pane is hidden.
+// detail pane is hidden. From threeColumnMinWidth, a page whose rows have
+// tabs gets a third column: the summary and the selected tab side by side.
 const (
-	sideBySideMinWidth = 90
-	stackedMinHeight   = 16
-	mainPanePercent    = 45
+	sideBySideMinWidth  = 90
+	stackedMinHeight    = 16
+	mainPanePercent     = 45
+	threeColumnMinWidth = 160
+	threeMainPercent    = 30
+	threeDetailPercent  = 30
 )
 
 // splitLayout is the geometry of a page that pairs a main pane with a
-// detail pane.
+// detail pane, which on very wide terminals is two columns.
 type splitLayout struct {
 	mainW, mainH     int
 	detailW, detailH int
+	// auxW is the third column's width, 0 when there is none.
+	auxW int
 	// sideBySide is true when the panes sit left and right, false when
 	// they are stacked.
 	sideBySide bool
@@ -127,11 +133,15 @@ type splitLayout struct {
 
 // computeSplit divides a w×h body between the main and detail panes,
 // mirroring crush's sidebar on wide terminals and pug's stacked preview on
-// narrow ones.
-func computeSplit(w, h int, showDetail bool) splitLayout {
+// narrow ones. wantAux asks for the third column when there is room.
+func computeSplit(w, h int, showDetail, wantAux bool) splitLayout {
 	switch {
 	case !showDetail:
 		return splitLayout{mainW: w, mainH: h}
+	case wantAux && w >= threeColumnMinWidth:
+		mw := w * threeMainPercent / 100
+		dw := w * threeDetailPercent / 100
+		return splitLayout{mainW: mw, mainH: h, detailW: dw, detailH: h, auxW: w - mw - dw, sideBySide: true, detail: true}
 	case w >= sideBySideMinWidth:
 		mw := w * mainPanePercent / 100
 		return splitLayout{mainW: mw, mainH: h, detailW: w - mw, detailH: h, sideBySide: true, detail: true}
@@ -166,7 +176,25 @@ func (l splitLayout) hit(x, y int) (area focusArea, cx, cy int, ok bool) {
 		cx, cy = content(dx, dy)
 		return focusDetail, cx, cy, true
 	}
+	if ax := dx + l.detailW; l.auxW > 0 && x >= ax && y >= dy && x < ax+l.auxW && y < dy+l.detailH {
+		cx, cy = content(ax, dy)
+		return focusAux, cx, cy, true
+	}
 	return focusMain, 0, 0, false
+}
+
+// nextFocus is the pane tab moves focus to: main, detail, then the third
+// column when there is one.
+func (l splitLayout) nextFocus(f focusArea) focusArea {
+	switch {
+	case !l.detail:
+		return focusMain
+	case f == focusMain:
+		return focusDetail
+	case f == focusDetail && l.auxW > 0:
+		return focusAux
+	}
+	return focusMain
 }
 
 // wheelDelta is -1 for wheel up, +1 for wheel down, and 0 otherwise.

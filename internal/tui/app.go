@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -63,6 +64,13 @@ type Config struct {
 	// data before starting the TUI so load errors surface as ordinary CLI
 	// errors; when nil, Start is loaded in the background instead.
 	StartPage Page
+	// Overview, when set, describes the repository on the home page's
+	// root row. It runs off the UI loop.
+	Overview func(ctx context.Context) (Detail, error)
+
+	// previewDelay overrides how long the home page waits for the cursor
+	// to rest before previewing; tests shorten it.
+	previewDelay time.Duration
 }
 
 // Run starts the full-screen TUI and blocks until the user quits.
@@ -183,7 +191,11 @@ func newApp(ctx context.Context, cfg Config) *app {
 		spinner: spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 	}
 	a.help.Styles = st.help
-	a.stack = []entry{{page: newHomePage(cfg.Routes)}}
+	home := newHomePage(ctx, cfg.Routes, cfg.Overview)
+	if cfg.previewDelay > 0 {
+		home.delay = cfg.previewDelay
+	}
+	a.stack = []entry{{page: home}}
 	switch {
 	case cfg.Start != nil && cfg.StartPage != nil:
 		r := *cfg.Start
@@ -201,10 +213,13 @@ func newApp(ctx context.Context, cfg Config) *app {
 func (a *app) top() entry { return a.stack[len(a.stack)-1] }
 
 func (a *app) Init() tea.Cmd {
-	cmds := []tea.Cmd{tea.RequestBackgroundColor, a.top().page.init()}
+	cmds := []tea.Cmd{tea.RequestBackgroundColor}
 	if a.pendingStart != nil {
+		// Home is not shown yet: it starts its previews when revealed.
 		cmds = append(cmds, navigate(*a.pendingStart))
 		a.pendingStart = nil
+	} else {
+		cmds = append(cmds, a.top().page.init())
 	}
 	return tea.Batch(cmds...)
 }
@@ -258,7 +273,11 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.load(msg.route, replace)
 	case homeMsg:
 		a.palette = nil
+		revealed := len(a.stack) > 1
 		a.stack = a.stack[:1]
+		if revealed {
+			return a, a.revealHome()
+		}
 		return a, nil
 	case loadedMsg:
 		return a, a.loaded(msg)
@@ -283,6 +302,13 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.handleKey(msg)
 	case tea.MouseWheelMsg, tea.MouseClickMsg:
 		return a, a.handleMouse(msg.(tea.MouseMsg))
+	case homeTarget:
+		if _, due := msg.(previewDueMsg); due && len(a.stack) > 1 {
+			// Previews load only while home is shown; revealing it
+			// starts them again.
+			return a, nil
+		}
+		return a, a.stack[0].page.update(msg)
 	}
 	return a, a.top().page.update(msg)
 }
@@ -336,6 +362,10 @@ func (a *app) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	case key.Matches(msg, globalKeys.Back):
 		if page.back() {
 			return nil
+		}
+		if len(a.stack) == 2 {
+			a.pop()
+			return a.revealHome()
 		}
 		a.pop()
 		return nil
@@ -469,10 +499,22 @@ func (a *app) pop() {
 
 func (a *app) reload() tea.Cmd {
 	top := a.top()
+	if len(a.stack) == 1 {
+		return a.revealHome()
+	}
 	if top.route == nil {
 		return nil
 	}
 	return a.load(*top.route, top.page)
+}
+
+// revealHome refreshes the home page when it is shown again, so its
+// previews reflect anything the user changed meanwhile.
+func (a *app) revealHome() tea.Cmd {
+	if h, ok := a.stack[0].page.(interface{ revealed() tea.Cmd }); ok {
+		return h.revealed()
+	}
+	return nil
 }
 
 func (a *app) applyOutcome(msg outcomeMsg) tea.Cmd {

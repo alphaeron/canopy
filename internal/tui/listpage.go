@@ -24,6 +24,8 @@ type Item struct {
 	Route *Route
 	// Value is opaque caller data handed back to actions.
 	Value any
+	// Badge is a status glyph shown before the title.
+	Badge Badge
 }
 
 // Action is a page-specific key bound to an operation on the hovered row,
@@ -54,7 +56,7 @@ type listRow struct {
 }
 
 func (r listRow) FilterValue() string { return r.Item.Title + " " + r.Item.Description }
-func (r listRow) Title() string       { return r.Item.Title }
+func (r listRow) Title() string       { return withGlyph(r.Badge, r.Item.Title) }
 func (r listRow) Description() string { return r.Item.Description }
 
 type focusArea int
@@ -62,24 +64,22 @@ type focusArea int
 const (
 	focusMain focusArea = iota
 	focusDetail
+	// focusAux is the third column on very wide terminals.
+	focusAux
 )
 
 // ListPage is a filterable list with a detail pane that follows the cursor:
 // the list on the left (or top) and the hovered row's Detail on the right
 // (or bottom).
 type ListPage struct {
-	name       string
-	summary    string
-	st         *styles
-	items      []Item
-	actions    []Action
-	list       list.Model
-	delegate   list.DefaultDelegate
-	detail     detailPane
-	focus      focusArea
-	hideDetail bool
-	layout     splitLayout
-	w, h       int
+	name     string
+	summary  string
+	st       *styles
+	items    []Item
+	actions  []Action
+	list     list.Model
+	delegate list.DefaultDelegate
+	paneSplit
 }
 
 // NewListPage builds a list page titled name over items.
@@ -107,11 +107,14 @@ func NewListPage(name string, items []Item) *ListPage {
 	l.KeyMap.ShowFullHelp.SetEnabled(false)
 	l.KeyMap.CloseFullHelp.SetEnabled(false)
 	p := &ListPage{
-		name:     name,
-		items:    items,
-		list:     l,
-		delegate: d,
-		detail:   newDetailPane(st),
+		name:      name,
+		items:     items,
+		list:      l,
+		delegate:  d,
+		paneSplit: newPaneSplit(st),
+	}
+	for _, it := range items {
+		p.wantAux = p.wantAux || detailHasTabs(it.Detail)
 	}
 	p.setStyles(st)
 	return p
@@ -152,13 +155,7 @@ func (p *ListPage) setStyles(st *styles) {
 }
 
 func (p *ListPage) setSize(w, h int) {
-	p.w, p.h = w, h
-	p.layout = computeSplit(w, h, !p.hideDetail)
-	if !p.layout.detail {
-		p.focus = focusMain
-	}
-	p.list.SetSize(max(0, p.layout.mainW-paneFrameWidth), max(0, p.layout.mainH-paneFrameHeight))
-	p.detail.setSize(p.layout.detailW, p.layout.detailH)
+	p.list.SetSize(p.resize(w, h))
 }
 
 func (p *ListPage) capturing() bool { return p.list.SettingFilter() }
@@ -178,8 +175,7 @@ func (p *ListPage) cursor() *tea.Cursor {
 }
 
 func (p *ListPage) back() bool {
-	if p.focus == focusDetail {
-		p.focus = focusMain
+	if p.paneSplit.back() {
 		return true
 	}
 	if p.list.IsFiltered() {
@@ -206,19 +202,13 @@ func (p *ListPage) update(msg tea.Msg) tea.Cmd {
 }
 
 func (p *ListPage) handleKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
-	switch {
-	case key.Matches(k, paneKeys.SwitchFocus):
-		if p.layout.detail {
-			p.focus = 1 - p.focus
+	if cmd, handled, relayout := p.paneSplit.handleKey(k); handled {
+		if relayout {
+			p.setSize(p.w, p.h)
 		}
-		return nil, true
-	case key.Matches(k, paneKeys.TogglePane):
-		p.hideDetail = !p.hideDetail
-		p.setSize(p.w, p.h)
-		return nil, true
-	case p.focus == focusDetail:
-		return p.detail.update(k), true
-	case key.Matches(k, paneKeys.Open):
+		return cmd, true
+	}
+	if key.Matches(k, paneKeys.Open) {
 		return p.open(), true
 	}
 	for _, a := range p.actions {
@@ -236,27 +226,26 @@ func (p *ListPage) open() tea.Cmd {
 	case !ok:
 	case it.Route != nil:
 		return navigate(*it.Route)
-	case p.layout.detail:
-		p.focus = focusDetail
+	default:
+		p.focusDetailPane()
 	}
 	return nil
 }
 
-// mouse handles the wheel (move the selection, or scroll the detail pane
+// mouse handles the wheel (move the selection, or scroll the detail column
 // under the pointer) and left clicks (focus the pane; select a row, or open
-// it when it is already selected).
+// it when it is already selected; open a link in the detail pane).
 func (p *ListPage) mouse(msg tea.MouseMsg) tea.Cmd {
 	m := msg.Mouse()
 	area, _, cy, ok := p.layout.hit(m.X, m.Y)
 	if !ok || p.list.SettingFilter() {
 		return nil
 	}
+	if area != focusMain {
+		return p.paneSplit.mouse(msg, area, cy)
+	}
 	if _, wheel := msg.(tea.MouseWheelMsg); wheel {
 		switch d := wheelDelta(m.Button); {
-		case area == focusDetail && d < 0:
-			p.detail.vp.ScrollUp(detailWheelLines)
-		case area == focusDetail && d > 0:
-			p.detail.vp.ScrollDown(detailWheelLines)
 		case d < 0:
 			p.list.CursorUp()
 		case d > 0:
@@ -269,9 +258,6 @@ func (p *ListPage) mouse(msg tea.MouseMsg) tea.Cmd {
 		return nil
 	}
 	p.focus = area
-	if area == focusDetail {
-		return nil
-	}
 	idx, ok := p.rowAt(cy)
 	if !ok {
 		return nil
@@ -338,11 +324,17 @@ func (p *ListPage) view() string {
 	if p.list.IsFiltered() && !p.list.SettingFilter() {
 		title += " · filter: " + p.list.FilterValue()
 	}
-	main := pane(p.st, title, info, p.list.View(), p.layout.mainW, p.layout.mainH, p.focus == focusMain)
-	if !p.layout.detail {
-		return main
+	return p.join(pane(p.st, title, info, p.list.View(), p.layout.mainW, p.layout.mainH, p.focus == focusMain))
+}
+
+// previewRows are the page's first n rows as detail rows, links included,
+// for the home page's preview of a command.
+func (p *ListPage) previewRows(n int) []Row {
+	rows := make([]Row, 0, min(n, len(p.items)))
+	for _, it := range p.items[:min(n, len(p.items))] {
+		rows = append(rows, Row{Text: it.Title, Note: it.Description, Badge: it.Badge, Route: it.Route})
 	}
-	return p.layout.join(main, p.detail.view(p.focus == focusDetail))
+	return rows
 }
 
 func (p *ListPage) bindings() []key.Binding {
@@ -352,20 +344,14 @@ func (p *ListPage) bindings() []key.Binding {
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 		}
 	}
-	if p.focus == focusDetail {
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "scroll")),
-			paneKeys.SwitchFocus,
-		}
+	if p.focus != focusMain {
+		return p.detailBindings()
 	}
 	b := []key.Binding{paneKeys.Up, paneKeys.Down, paneKeys.Open, paneKeys.Filter}
 	for _, a := range p.actions {
 		b = append(b, a.binding())
 	}
-	if p.layout.detail {
-		b = append(b, paneKeys.SwitchFocus)
-	}
-	return append(b, paneKeys.TogglePane)
+	return append(b, p.paneBindings()...)
 }
 
 func countLabel(n int, noun string) string {

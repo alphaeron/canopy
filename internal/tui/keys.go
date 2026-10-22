@@ -35,6 +35,8 @@ type paneKeyMap struct {
 	Filter      key.Binding
 	Up          key.Binding
 	Down        key.Binding
+	NextView    key.Binding
+	PrevView    key.Binding
 }
 
 var paneKeys = paneKeyMap{
@@ -44,6 +46,8 @@ var paneKeys = paneKeyMap{
 	Filter:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 	Up:          key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 	Down:        key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	NextView:    key.NewBinding(key.WithKeys("]"), key.WithHelp("[/]", "views")),
+	PrevView:    key.NewBinding(key.WithKeys("["), key.WithHelp("[/]", "views")),
 }
 
 // confirmKeys answer a y/n prompt.

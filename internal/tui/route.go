@@ -22,6 +22,15 @@ type Route struct {
 	Title string
 	// Description is a one-line summary.
 	Description string
+	// Long is the command's full help text, shown on the home page.
+	Long string
+	// Utility marks a command that is not about the repository (help,
+	// shell completion): the home page lists it last, its group collapsed.
+	Utility bool
+	// Summary, when set, is the live one-line description the home page
+	// previews for the route, for a route whose page is not itself a good
+	// preview (a command group).
+	Summary func(ctx context.Context) (string, error)
 	// Params are the command's arguments and flags, in display order.
 	Params []Param
 	// Values are the arguments and flags this route opens with.
