@@ -58,7 +58,7 @@ type stubFetch struct {
 	err   error
 }
 
-func (s *stubFetch) Execute() (string, map[string]kitfile.Rules, error) {
+func (s *stubFetch) Execute() (string, kitfile.Set, error) {
 	return s.root, s.rules, s.err
 }
 

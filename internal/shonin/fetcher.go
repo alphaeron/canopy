@@ -10,9 +10,9 @@ import (
 type Fetcher interface {
 	// Execute runs the fetch phase: it locates every KIT file in the
 	// source (the local working tree, or a remote revision's tree) and
-	// parses its rules, returning the repository root, a map of KIT file
-	// path to its parsed rules, and any error encountered while locating,
+	// parses its rules, returning the repository root, the KIT file set
+	// (each repo-relative KIT path to its parsed rules), and any error encountered while locating,
 	// reading, or parsing KIT files. Implementations must not swallow
 	// errors.
-	Execute() (string, map[string]kitfile.Rules, error)
+	Execute() (string, kitfile.Set, error)
 }

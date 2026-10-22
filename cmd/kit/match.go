@@ -102,7 +102,7 @@ func renderMatchByScope(mode outputMode, groups []kenin.ScopeGroup) error {
 		rows := make([][]string, 0, len(groups))
 		for _, g := range groups {
 			files := strings.Join(g.Files, "\n")
-			rows = append(rows, []string{g.Scope.Name, g.Scope.Pattern, g.Scope.KITFile, files})
+			rows = append(rows, []string{g.Scope.Name, g.Scope.Pattern, g.Scope.KitFile, files})
 		}
 		if err := tui.TablePrinter(os.Stdout, header, rows); err != nil {
 			return err

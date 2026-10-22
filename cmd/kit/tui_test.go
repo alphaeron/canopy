@@ -193,7 +193,7 @@ func TestRuleActions(t *testing.T) {
 	if _, err := remove.Run(context.Background(), tui.Item{Title: "bogus", Value: "not a rule"}); err == nil {
 		t.Error("remove must reject a row that does not hold a rule")
 	}
-	out, err := remove.Run(context.Background(), tui.Item{Value: ruleEntry{kitFile: "svc/KIT", rule: kitfile.Rule{Pattern: `.*\.go`}}})
+	out, err := remove.Run(context.Background(), tui.Item{Value: kitfile.DeclaredRule{KitFile: "svc/KIT", Rule: kitfile.Rule{Pattern: `.*\.go`}}})
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -209,10 +209,10 @@ func TestRuleActions(t *testing.T) {
 }
 
 func TestRulesListOutput(t *testing.T) {
-	entries := []ruleEntry{
-		{kitFile: "KIT", rule: kitfile.Rule{Pattern: `.*\.go`, Name: "security", CombineStrategy: kitfile.RuleCombineStrategyUnion,
+	entries := []kitfile.DeclaredRule{
+		{KitFile: "KIT", Rule: kitfile.Rule{Pattern: `.*\.go`, Name: "security", CombineStrategy: kitfile.RuleCombineStrategyUnion,
 			Approvers: kitfile.ApproverTargets{{Target: "org/sec", RequiredCount: 1}}}},
-		{kitFile: "svc/KIT", rule: kitfile.Rule{Pattern: `.*`}},
+		{KitFile: "svc/KIT", Rule: kitfile.Rule{Pattern: `.*`}},
 	}
 	js := rulesJSON(entries)
 	if js[0].KitFile != "KIT" || js[0].CombineStrategy != "union" || js[0].Approvers[0] != (approverJSON{"org/sec", 1}) {

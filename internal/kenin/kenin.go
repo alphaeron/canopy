@@ -88,21 +88,9 @@ func (e *Engine) Requirements(chain shonin.RuleChain) *shonin.ReviewState {
 }
 
 // rules loads the source's KIT rules through its platform's fetcher.
-func (e *Engine) rules() (map[string]kitfile.Rules, error) {
+func (e *Engine) rules() (kitfile.Set, error) {
 	_, rules, err := e.Source.Reviewer().Fetch.Execute()
 	return rules, err
-}
-
-// declaresScope reports whether any KIT file has a rule named name.
-func declaresScope(rules map[string]kitfile.Rules, name string) bool {
-	for _, list := range rules {
-		for _, r := range list {
-			if r.Name == name {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // ErrUnknownScope reports a scope filter (Match or Coverage) naming a rule
@@ -160,7 +148,7 @@ func (e *Engine) match(opts Options) (*MatchResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if opts.ScopeName != "" && !declaresScope(rules, opts.ScopeName) {
+	if opts.ScopeName != "" && !slices.Contains(rules.Names(), opts.ScopeName) {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownScope, opts.ScopeName)
 	}
 	chain := shonin.GetFileRuleChain(rules, universe, nil, logOrDefault(e.Log))
@@ -169,7 +157,7 @@ func (e *Engine) match(opts Options) (*MatchResult, error) {
 		fm := FileMatch{Path: file}
 		for _, layer := range chain.FileChains[file] {
 			for _, rule := range layer.Rules {
-				fm.Scopes = append(fm.Scopes, newScope(layer.DirectoryPath, rule))
+				fm.Scopes = append(fm.Scopes, newScope(kitfile.DeclaredRule{KitFile: layer.KitFile(), Rule: rule.Rule}))
 			}
 		}
 		res.Files = append(res.Files, fm)

@@ -37,8 +37,8 @@ func repoOverview(context.Context) (tui.Detail, error) {
 	}
 
 	d.Fields = append(d.Fields, tui.Field{Label: "KIT files", Value: countOf(len(s.rules), "KIT file") + " · " + countOf(len(s.entries("")), "rule")})
-	if _, errs := validateGrouped(s.rules); len(errs) > 0 {
-		d.Fields = append(d.Fields, tui.Field{Label: "Validation", Value: countOf(len(errs), "violation"), Badge: tui.BadgeFail})
+	if n := violationCount(s.rules.Validate()); n > 0 {
+		d.Fields = append(d.Fields, tui.Field{Label: "Validation", Value: countOf(n, "violation"), Badge: tui.BadgeFail})
 	} else {
 		d.Fields = append(d.Fields, tui.Field{Label: "Validation", Value: "valid", Badge: tui.BadgeOK})
 	}

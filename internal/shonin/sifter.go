@@ -18,7 +18,7 @@ import (
 // errors. A nil events builder is allowed for callers that only want the
 // chain without a trace.
 func GetFileRuleChain(
-	repoRules map[string]kitfile.Rules,
+	repoRules kitfile.Set,
 	files []string,
 	events *ReviewStateBuilder,
 	log *slog.Logger,
@@ -56,7 +56,7 @@ func (c patternCache) compile(pattern string) (*regexp.Regexp, error) {
 }
 
 func getFileRuleLayers(
-	repoRules map[string]kitfile.Rules,
+	repoRules kitfile.Set,
 	patterns patternCache,
 	fileName string,
 	events *ReviewStateBuilder,

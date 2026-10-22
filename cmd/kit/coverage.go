@@ -70,7 +70,7 @@ func renderCoverage(mode outputMode, report *kenin.CoverageReport) error {
 			if name == "" {
 				name = sc.Scope.Pattern
 			}
-			rows = append(rows, []string{name, sc.Scope.Pattern, sc.Scope.KITFile,
+			rows = append(rows, []string{name, sc.Scope.Pattern, sc.Scope.KitFile,
 				fmt.Sprintf("%d", sc.Files), fmt.Sprintf("%.2f%%", sc.Percent)})
 		}
 		if err := tui.TablePrinter(os.Stdout, header, rows); err != nil {

@@ -87,7 +87,7 @@ func findKitFiles(pattern, revision string) ([]string, error) {
 	if files == nil {
 		files = []string{}
 	}
-	slices.SortFunc(files, compareKitPaths)
+	slices.SortFunc(files, kitfile.ComparePaths)
 	return files, nil
 }
 

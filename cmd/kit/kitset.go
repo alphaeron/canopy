@@ -21,14 +21,8 @@ import (
 // every command and the TUI, and the same set the engine matches with, so
 // they always agree on which rules exist.
 type kitSet struct {
-	root  string                   // repository root on disk
-	rules map[string]kitfile.Rules // keyed by repo-relative, slash-separated path
-}
-
-// ruleEntry is one rule and the KIT file that declares it.
-type ruleEntry struct {
-	kitFile string
-	rule    kitfile.Rule
+	root  string      // repository root on disk
+	rules kitfile.Set // keyed by repo-relative, slash-separated path
 }
 
 // errNoKitFiles is reported when an operation needs a KIT file and the
@@ -49,35 +43,16 @@ func openKitSet() (*kitSet, error) {
 	return &kitSet{root: root, rules: rules}, nil
 }
 
-// paths lists the KIT files: the repository-root KIT first, then by path.
-func (s *kitSet) paths() []string {
-	return slices.SortedFunc(maps.Keys(s.rules), compareKitPaths)
-}
-
-// compareKitPaths orders KIT file paths: the repository-root KIT first, then
-// by path.
-func compareKitPaths(a, b string) int {
-	switch {
-	case a == b:
-		return 0
-	case a == kitfile.FileName:
-		return -1
-	case b == kitfile.FileName:
-		return 1
-	}
-	return strings.Compare(a, b)
-}
-
 // entries lists every rule in paths order, or only only's rules when it is
 // set.
-func (s *kitSet) entries(only string) []ruleEntry {
-	var out []ruleEntry
-	for _, p := range s.paths() {
+func (s *kitSet) entries(only string) []kitfile.DeclaredRule {
+	var out []kitfile.DeclaredRule
+	for _, p := range s.rules.Paths() {
 		if only != "" && p != only {
 			continue
 		}
 		for _, r := range s.rules[p] {
-			out = append(out, ruleEntry{kitFile: p, rule: r})
+			out = append(out, kitfile.DeclaredRule{KitFile: p, Rule: r})
 		}
 	}
 	return out
@@ -116,7 +91,7 @@ func (s *kitSet) resolve(flag string) (string, error) {
 		if len(s.rules) == 0 {
 			return "", errNoKitFiles
 		}
-		return "", fmt.Errorf("no KIT file at %q (KIT files: %s)", p, strings.Join(s.paths(), ", "))
+		return "", fmt.Errorf("no KIT file at %q (KIT files: %s)", p, strings.Join(s.rules.Paths(), ", "))
 	}
 	return p, nil
 }
@@ -145,7 +120,7 @@ func realPath(p string) string {
 // withPattern lists the KIT files declaring a rule with pattern.
 func (s *kitSet) withPattern(pattern string) []string {
 	var out []string
-	for _, p := range s.paths() {
+	for _, p := range s.rules.Paths() {
 		if slices.ContainsFunc(s.rules[p], func(r kitfile.Rule) bool { return r.Pattern == pattern }) {
 			out = append(out, p)
 		}
@@ -206,23 +181,10 @@ func (s *kitSet) nearest() string {
 			}
 		}
 	}
-	if ps := s.paths(); len(ps) > 0 {
+	if ps := s.rules.Paths(); len(ps) > 0 {
 		return ps[0]
 	}
 	return ""
-}
-
-// scopeNames lists the distinct rule names, the values --scope accepts.
-func (s *kitSet) scopeNames() []string {
-	seen := map[string]bool{}
-	for _, rules := range s.rules {
-		for _, r := range rules {
-			if r.Name != "" {
-				seen[r.Name] = true
-			}
-		}
-	}
-	return slices.Sorted(maps.Keys(seen))
 }
 
 // ruleTarget finds the KIT file holding the rule keyed by pattern, for

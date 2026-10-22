@@ -175,9 +175,9 @@ func TestUncoveredSection(t *testing.T) {
 // TestRuleMatchesOverlaps: a rule's overlaps are the other rules matching
 // its files, most shared first.
 func TestRuleMatchesOverlaps(t *testing.T) {
-	root := kenin.Scope{Pattern: ".*", KITFile: "KIT", Name: "all"}
-	goRule := kenin.Scope{Pattern: `\.go$`, KITFile: "svc/KIT", Name: "go"}
-	docs := kenin.Scope{Pattern: `\.md$`, KITFile: "KIT"}
+	root := kenin.Scope{Pattern: ".*", KitFile: "KIT", Name: "all"}
+	goRule := kenin.Scope{Pattern: `\.go$`, KitFile: "svc/KIT", Name: "go"}
+	docs := kenin.Scope{Pattern: `\.md$`, KitFile: "KIT"}
 	m := newRuleMatches(&kenin.MatchResult{Files: []kenin.FileMatch{
 		{Path: "svc/a.go", Scopes: []kenin.Scope{root, goRule}},
 		{Path: "svc/b.go", Scopes: []kenin.Scope{root, goRule}},
@@ -187,7 +187,7 @@ func TestRuleMatchesOverlaps(t *testing.T) {
 	if len(rows) != 2 || !strings.HasPrefix(rows[0].Text, "go:") || rows[0].Note != "2 shared files" || rows[1].Note != "1 shared file" {
 		t.Fatalf("overlaps = %+v", rows)
 	}
-	it := ruleItem(ruleEntry{kitFile: "svc/KIT", rule: kitfile.Rule{Pattern: `\.go$`}}, m)
+	it := ruleItem(kitfile.DeclaredRule{KitFile: "svc/KIT", Rule: kitfile.Rule{Pattern: `\.go$`}}, m)
 	if !strings.Contains(it.Description, "2 files") || len(it.Detail.Tabs) != 1 || len(it.Detail.Tabs[0].Sections[0].Rows) != 2 {
 		t.Errorf("rule item = %+v", it)
 	}

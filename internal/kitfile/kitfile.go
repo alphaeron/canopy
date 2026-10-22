@@ -18,8 +18,9 @@ var ErrPatternNotFound = errors.New("no rule with that pattern in the KIT file")
 // Rules keeps the file's exact rule order (YAML sequence order), so saving a
 // KitFile reproduces the original file modulo formatting.
 type KitFile struct {
-	// Path records where the file was loaded from, when loaded via Load;
-	// it is empty for files synthesized in memory.
+	// Path records where the file came from: the path given to
+	// LoadKitFile, or the repo-relative key of a Set entry. It is empty for
+	// files synthesized in memory.
 	Path  string
 	Rules Rules
 }
@@ -107,12 +108,17 @@ func (k *KitFile) Remove(pattern string) error {
 	return fmt.Errorf("remove: %w: %q", ErrPatternNotFound, pattern)
 }
 
-// Validate reports every integrity violation in the file: duplicate
-// patterns, patterns that are not valid regular expressions, and approver
-// targets with no target name or no required count. It returns a combined
-// error covering all violations, never just the first one, so a user can
-// fix every problem in one pass.
+// Validate reports every integrity violation in the file (see Violations)
+// as one combined error, never just the first one, so a user can fix every
+// problem in one pass. It is nil when the file is valid.
 func (k *KitFile) Validate() error {
+	return errors.Join(k.Violations()...)
+}
+
+// Violations lists every integrity violation in the file: duplicate
+// patterns, patterns that are not valid regular expressions, and approver
+// targets with no target name or no required count.
+func (k *KitFile) Violations() []error {
 	seen := make(map[string]bool, len(k.Rules))
 	var all []error
 	for _, rule := range k.Rules {
@@ -135,7 +141,7 @@ func (k *KitFile) Validate() error {
 			}
 		}
 	}
-	return errors.Join(all...)
+	return all
 }
 
 // FileName is the name every KIT file has, in any directory.

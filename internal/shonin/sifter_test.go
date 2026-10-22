@@ -37,7 +37,7 @@ func TestGetFileRuleChainLayersAndByRule(t *testing.T) {
 	}
 	var got []entry
 	for _, rf := range chain.ByRule() {
-		got = append(got, entry{rf.KitFile(), rf.Rule.Name, rf.Files})
+		got = append(got, entry{rf.KitFile, rf.Rule.Name, rf.Files})
 	}
 	want := []entry{
 		{"KIT", "all", []string{"README.md", "src/api/v1.go", "src/main.go"}},
@@ -55,5 +55,17 @@ func TestEffectiveCombineStrategyDefaultsToOverride(t *testing.T) {
 	}
 	if got := EffectiveCombineStrategy(kitfile.RuleCombineStrategyUnion); got != kitfile.RuleCombineStrategyUnion {
 		t.Errorf("union = %v, want union", got)
+	}
+}
+
+// TestByRuleMatchesScopeIdentity pins that ByRule groups rules by
+// kitfile.RuleKey, the same identity kenin scopes use: a pattern declared
+// twice in one KIT file is one rule, whatever its names.
+func TestByRuleMatchesScopeIdentity(t *testing.T) {
+	rules := kitfile.Set{"KIT": {{Pattern: `.*`, Name: "first"}, {Pattern: `.*`, Name: "second"}}}
+	chain := GetFileRuleChain(rules, []string{"a.go"}, nil, slog.New(slog.DiscardHandler))
+	got := chain.ByRule()
+	if len(got) != 1 || got[0].Rule.Name != "first" || !reflect.DeepEqual(got[0].Files, []string{"a.go"}) {
+		t.Errorf("ByRule() = %+v, want one entry for the first declaration", got)
 	}
 }

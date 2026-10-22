@@ -7,50 +7,51 @@ import (
 	"sort"
 
 	"github.com/alphaeron/kit/internal/kitfile"
-	"github.com/alphaeron/kit/internal/shonin"
 )
 
 // Scope is one match between a file and a rule, carrying rule identity and
-// provenance. Two rules with the same pattern registered in two different
-// KIT files are two distinct scopes, because they cover different layers.
+// provenance: the JSON view of a kitfile.DeclaredRule. Two rules with the
+// same pattern registered in two different KIT files are two distinct
+// scopes, because they cover different layers.
 type Scope struct {
 	// Name is the user-visible rule name from the KIT file.
 	Name string `json:"name"`
 	// Pattern is the rule's regular expression; the matching identity.
 	Pattern string `json:"pattern"`
 	// Directory is the layer directory this rule lives in (empty string for
-	// a rule registered in the repository-root KIT file).
+	// a rule registered in the repository-root KIT file); always
+	// kitfile.Dir(KitFile).
 	Directory string `json:"directory,omitempty"`
-	// KITFile is the path of the KIT file that registered the rule: "KIT" at
+	// KitFile is the path of the KIT file that registered the rule: "KIT" at
 	// the repository root, "<dir>/KIT" otherwise.
-	KITFile string `json:"kit_file"`
+	KitFile string `json:"kit_file"`
 }
 
-// newScope is the scope of rule as declared by the KIT file in dir: the
-// one place a shonin rule layer becomes a kenin scope.
-func newScope(dir string, rule shonin.Rule) Scope {
+// newScope is the scope of a declared rule: the one place a shonin rule
+// becomes a kenin scope.
+func newScope(d kitfile.DeclaredRule) Scope {
 	return Scope{
-		Name:      rule.Name,
-		Pattern:   rule.Pattern,
-		Directory: dir,
-		KITFile:   kitfile.PathInDir(dir),
+		Name:      d.Rule.Name,
+		Pattern:   d.Rule.Pattern,
+		Directory: kitfile.Dir(d.KitFile),
+		KitFile:   d.KitFile,
 	}
 }
 
 // String gives a human-facing reference to the scope, used in TUI rendering.
 func (s Scope) String() string {
-	out := s.Pattern + " in " + s.KITFile
+	out := s.Pattern + " in " + s.KitFile
 	if s.Name != "" {
 		out += " (" + s.Name + ")"
 	}
 	return out
 }
 
-// Identity returns a stable key for grouping scopes: the KIT file and the
-// pattern, which a KIT file declares at most once. Two scopes compare equal
-// by identity when they came from the same rule in the same KIT file.
-func (s Scope) Identity() string {
-	return s.KITFile + "\x00" + s.Pattern
+// Identity is the scope's rule identity, shared with shonin.RuleChain.ByRule:
+// two scopes compare equal by identity when they came from the same rule in
+// the same KIT file.
+func (s Scope) Identity() kitfile.RuleKey {
+	return kitfile.RuleKey{KitFile: s.KitFile, Pattern: s.Pattern}
 }
 
 // FileMatch pairs one file in the universe with the scopes that matched it.
@@ -97,10 +98,10 @@ func (r *MatchResult) FilterScope(name string) *MatchResult {
 
 // GroupByScope groups the result by Scope identity and returns one entry
 // per distinct scope, each with its sorted file list. Scopes are listed in
-// stable order (by Name, KITFile, Directory).
+// stable order (by Name, then identity).
 func (r *MatchResult) GroupByScope() []ScopeGroup {
-	byID := map[string]*ScopeGroup{}
-	var order []string
+	byID := map[kitfile.RuleKey]*ScopeGroup{}
+	var order []kitfile.RuleKey
 	for _, fm := range r.Files {
 		for _, s := range fm.Scopes {
 			id := s.Identity()
@@ -110,15 +111,8 @@ func (r *MatchResult) GroupByScope() []ScopeGroup {
 			}
 		}
 	}
-	sort.Slice(order, func(i, j int) bool {
-		a, b := byID[order[i]].Scope, byID[order[j]].Scope
-		if a.Name != b.Name {
-			return a.Name < b.Name
-		}
-		if a.KITFile != b.KITFile {
-			return a.KITFile < b.KITFile
-		}
-		return a.Directory < b.Directory
+	slices.SortFunc(order, func(a, b kitfile.RuleKey) int {
+		return cmp.Or(cmp.Compare(byID[a].Scope.Name, byID[b].Scope.Name), a.Compare(b))
 	})
 	out := make([]ScopeGroup, 0, len(byID))
 	for _, id := range order {
@@ -148,7 +142,7 @@ type ScopeOverlap struct {
 // then by identity.
 func (r *MatchResult) Overlaps(s Scope) []ScopeOverlap {
 	id := s.Identity()
-	byID := map[string]*ScopeOverlap{}
+	byID := map[kitfile.RuleKey]*ScopeOverlap{}
 	for _, fm := range r.Files {
 		if !slices.ContainsFunc(fm.Scopes, func(o Scope) bool { return o.Identity() == id }) {
 			continue
@@ -165,8 +159,8 @@ func (r *MatchResult) Overlaps(s Scope) []ScopeOverlap {
 		}
 	}
 	ids := slices.Collect(maps.Keys(byID))
-	slices.SortFunc(ids, func(a, b string) int {
-		return cmp.Or(cmp.Compare(byID[b].Shared, byID[a].Shared), cmp.Compare(a, b))
+	slices.SortFunc(ids, func(a, b kitfile.RuleKey) int {
+		return cmp.Or(cmp.Compare(byID[b].Shared, byID[a].Shared), a.Compare(b))
 	})
 	out := make([]ScopeOverlap, len(ids))
 	for i, oid := range ids {

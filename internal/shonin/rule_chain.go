@@ -1,7 +1,6 @@
 package shonin
 
 import (
-	"cmp"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -277,26 +276,25 @@ func (rc *RuleChain) evaluateFallback(
 // it: the chain inverted from "which rules apply to this file" to "which
 // files does this rule apply to".
 type RuleFiles struct {
-	// Directory is the layer directory whose KIT file declares the rule.
-	Directory string
-	Rule      Rule
+	kitfile.DeclaredRule
 	// Files is sorted and holds each file once.
 	Files []string
 }
 
-// ByRule inverts the chain into one entry per distinct rule (by declaring
-// KIT file, pattern, and name), sorted by pattern, then KIT file, then name.
+// ByRule inverts the chain into one entry per distinct rule, by
+// kitfile.RuleKey, sorted by pattern, then KIT file. A pattern declared
+// twice in one KIT file (a Validate violation) is reported once, under the
+// first declaration.
 func (rc *RuleChain) ByRule() []RuleFiles {
-	type key struct{ dir, pattern, name string }
-	byKey := map[key]*RuleFiles{}
+	byKey := map[kitfile.RuleKey]*RuleFiles{}
 	for file, layers := range rc.FileChains {
 		for _, layer := range layers {
 			for _, rule := range layer.Rules {
-				k := key{layer.DirectoryPath, rule.Pattern, rule.Name}
-				rf, ok := byKey[k]
+				d := kitfile.DeclaredRule{KitFile: layer.KitFile(), Rule: rule.Rule}
+				rf, ok := byKey[d.Key()]
 				if !ok {
-					rf = &RuleFiles{Directory: layer.DirectoryPath, Rule: rule}
-					byKey[k] = rf
+					rf = &RuleFiles{DeclaredRule: d}
+					byKey[d.Key()] = rf
 				}
 				// Files are visited one at a time, so a repeat (a pattern
 				// declared twice in one KIT file) is always the last entry.
@@ -311,17 +309,6 @@ func (rc *RuleChain) ByRule() []RuleFiles {
 		slices.Sort(rf.Files)
 		out = append(out, *rf)
 	}
-	slices.SortFunc(out, func(a, b RuleFiles) int {
-		return cmp.Or(
-			cmp.Compare(a.Rule.Pattern, b.Rule.Pattern),
-			cmp.Compare(a.KitFile(), b.KitFile()),
-			cmp.Compare(a.Rule.Name, b.Rule.Name),
-		)
-	})
+	slices.SortFunc(out, func(a, b RuleFiles) int { return a.Key().Compare(b.Key()) })
 	return out
-}
-
-// KitFile is the KIT file that declares the rule.
-func (rf *RuleFiles) KitFile() string {
-	return kitfile.PathInDir(rf.Directory)
 }

@@ -103,14 +103,14 @@ var choiceFlags = map[string]func(context.Context) ([]string, error){
 		if err != nil {
 			return nil, err
 		}
-		return s.paths(), nil
+		return s.rules.Paths(), nil
 	},
 	"scope": func(context.Context) ([]string, error) {
 		s, err := openKitSet()
 		if err != nil {
 			return nil, err
 		}
-		return s.scopeNames(), nil
+		return s.rules.Names(), nil
 	},
 }
 
@@ -348,7 +348,7 @@ func coveragePage(report *kenin.CoverageReport, match *kenin.MatchResult, s *kit
 			Sections: []tui.Section{fileLinks("Files", match.FilesOf(sc.Scope))},
 		}
 		it := tui.Item{
-			Title:       scopeLabel(sc.Scope) + " in " + sc.Scope.KITFile,
+			Title:       scopeLabel(sc.Scope) + " in " + sc.Scope.KitFile,
 			Description: fmt.Sprintf("%d file(s), %.1f%%", sc.Files, sc.Percent),
 			Detail:      d,
 		}
@@ -462,7 +462,7 @@ func newRuleMatches(match *kenin.MatchResult, err error) ruleMatches {
 
 // scopeOf is the scope of the rule keyed by pattern in kitFile.
 func scopeOf(kitFile, pattern string) kenin.Scope {
-	return kenin.Scope{KITFile: kitFile, Pattern: pattern}
+	return kenin.Scope{KitFile: kitFile, Pattern: pattern}
 }
 
 // files are the files the rule keyed by pattern in kitFile matched.
@@ -478,7 +478,7 @@ func (m ruleMatches) overlaps(kitFile, pattern string) []tui.Row {
 	for _, o := range overlaps {
 		sc := o.Scope
 		r := rulesGetRoute(tui.Values{Args: []string{sc.Pattern}})
-		rows = append(rows, tui.Row{Text: ruleLabel(sc.Name, sc.Pattern) + " in " + sc.KITFile, Note: countOf(o.Shared, "shared file"), Route: &r})
+		rows = append(rows, tui.Row{Text: ruleLabel(sc.Name, sc.Pattern) + " in " + sc.KitFile, Note: countOf(o.Shared, "shared file"), Route: &r})
 	}
 	return rows
 }
@@ -507,21 +507,21 @@ func rulesPage(s *kitSet, only string, matches ruleMatches) tui.Page {
 // the same files, with the files themselves in a tab. Enter drills into
 // `kit rules get <pattern>`, the files the pattern matches and their rule
 // chains.
-func ruleItem(e ruleEntry, matches ruleMatches) tui.Item {
-	route := rulesGetRoute(tui.Values{Args: []string{e.rule.Pattern}})
-	fields := append(ruleFieldsDetail(e.kitFile, e.rule),
-		tui.Field{Label: "Effect", Value: strategyEffect(shonin.EffectiveCombineStrategy(e.rule.CombineStrategy), false)},
+func ruleItem(e kitfile.DeclaredRule, matches ruleMatches) tui.Item {
+	route := rulesGetRoute(tui.Values{Args: []string{e.Rule.Pattern}})
+	fields := append(ruleFieldsDetail(e.KitFile, e.Rule),
+		tui.Field{Label: "Effect", Value: strategyEffect(shonin.EffectiveCombineStrategy(e.Rule.CombineStrategy), false)},
 	)
-	desc := orNone(e.rule.Name) + " · " + e.kitFile
+	desc := orNone(e.Rule.Name) + " · " + e.KitFile
 	d := tui.Detail{Fields: fields}
 	if matches.err == nil {
-		files := matches.files(e.kitFile, e.rule.Pattern)
+		files := matches.files(e.KitFile, e.Rule.Pattern)
 		d.Fields = append(d.Fields, tui.Field{Label: "Matches", Value: countOf(len(files), "file")})
-		d.Sections = []tui.Section{{Title: "Overlaps · rules matching the same files", Rows: matches.overlaps(e.kitFile, e.rule.Pattern)}}
+		d.Sections = []tui.Section{{Title: "Overlaps · rules matching the same files", Rows: matches.overlaps(e.KitFile, e.Rule.Pattern)}}
 		d.Tabs = []tui.Tab{{Title: "Files", Sections: []tui.Section{fileLinks("Files", files)}}}
 		desc += " · " + countOf(len(files), "file")
 	}
-	return tui.Item{Title: e.rule.Pattern, Description: desc, Detail: d, Route: &route, Value: e}
+	return tui.Item{Title: e.Rule.Pattern, Description: desc, Detail: d, Route: &route, Value: e}
 }
 
 func ruleFieldsDetail(path string, r kitfile.Rule) []tui.Field {
@@ -550,13 +550,13 @@ func ruleActions(s *kitSet) []tui.Action {
 		{
 			Key: "a", Help: "add rule",
 			Run: func(ctx context.Context, it tui.Item) (tui.Outcome, error) {
-				choices := s.paths()
+				choices := s.rules.Paths()
 				if len(choices) == 0 {
 					return tui.Outcome{}, errNoKitFiles
 				}
 				seed := tui.RuleFields{KitFile: s.nearest()}
 				if e, err := entryOf(it); err == nil {
-					seed.KitFile = e.kitFile
+					seed.KitFile = e.KitFile
 				}
 				page := tui.NewRuleFormPage("add rule", seed, choices, func(ctx context.Context, f tui.RuleFields) (string, error) {
 					return addRule(s, f.KitFile, f)
@@ -571,8 +571,8 @@ func ruleActions(s *kitSet) []tui.Action {
 				if err != nil {
 					return tui.Outcome{}, err
 				}
-				page := tui.NewRuleFormPage("edit rule", fieldsFromRule(e.rule), nil, func(ctx context.Context, f tui.RuleFields) (string, error) {
-					return editRule(s, e.kitFile, e.rule.Pattern, f)
+				page := tui.NewRuleFormPage("edit rule", fieldsFromRule(e.Rule), nil, func(ctx context.Context, f tui.RuleFields) (string, error) {
+					return editRule(s, e.KitFile, e.Rule.Pattern, f)
 				})
 				return tui.Outcome{Page: page}, nil
 			},
@@ -581,7 +581,7 @@ func ruleActions(s *kitSet) []tui.Action {
 			Key: "x", Help: "remove rule", RequiresItem: true,
 			Confirm: func(it tui.Item) string {
 				if e, err := entryOf(it); err == nil {
-					return fmt.Sprintf("Remove rule %q from %s?", e.rule.Pattern, e.kitFile)
+					return fmt.Sprintf("Remove rule %q from %s?", e.Rule.Pattern, e.KitFile)
 				}
 				return fmt.Sprintf("Remove rule %q?", it.Title)
 			},
@@ -590,7 +590,7 @@ func ruleActions(s *kitSet) []tui.Action {
 				if err != nil {
 					return tui.Outcome{}, err
 				}
-				info, err := removeRule(s, e.kitFile, e.rule.Pattern)
+				info, err := removeRule(s, e.KitFile, e.Rule.Pattern)
 				return tui.Outcome{Info: info, Reload: true}, err
 			},
 		},
@@ -598,10 +598,10 @@ func ruleActions(s *kitSet) []tui.Action {
 }
 
 // entryOf recovers the rule a rules-page row was built from (see ruleItem).
-func entryOf(it tui.Item) (ruleEntry, error) {
-	e, ok := it.Value.(ruleEntry)
+func entryOf(it tui.Item) (kitfile.DeclaredRule, error) {
+	e, ok := it.Value.(kitfile.DeclaredRule)
 	if !ok {
-		return ruleEntry{}, fmt.Errorf("row %q does not hold a rule", it.Title)
+		return kitfile.DeclaredRule{}, fmt.Errorf("row %q does not hold a rule", it.Title)
 	}
 	return e, nil
 }
@@ -718,13 +718,13 @@ func rulesGetPage(chain shonin.RuleChain, own ownership) tui.Page {
 			own.annotate(&it, f)
 			items = append(items, it)
 		}
-		title := rf.Rule.Pattern + " in " + rf.KitFile()
+		title := rf.Rule.Pattern + " in " + rf.KitFile
 		if rf.Rule.Name != "" {
 			title += " (" + rf.Rule.Name + ")"
 		}
 		groups = append(groups, tui.TreeGroup{
 			Title:  title,
-			Detail: tui.Detail{Fields: append(ruleFieldsDetail(rf.KitFile(), rf.Rule.Rule), tui.Field{Label: "Files", Value: strconv.Itoa(len(rf.Files))})},
+			Detail: tui.Detail{Fields: append(ruleFieldsDetail(rf.KitFile, rf.Rule), tui.Field{Label: "Files", Value: strconv.Itoa(len(rf.Files))})},
 			Items:  items,
 		})
 	}
@@ -824,12 +824,11 @@ func validateRoute(v tui.Values) tui.Route {
 		}
 		var items []tui.Item
 		total := 0
-		for _, path := range s.paths() {
+		for _, path := range s.rules.Paths() {
 			if only != "" && path != only {
 				continue
 			}
-			violations, _ := validateGrouped(map[string]kitfile.Rules{path: s.rules[path]})
-			errs := violations[path]
+			errs := violationText(kitfile.Set{path: s.rules[path]}.Validate())[path]
 			total += len(errs)
 			desc := "valid"
 			if len(errs) > 0 {
@@ -923,12 +922,12 @@ func scopeFields(s kenin.Scope) []tui.Field {
 		{Label: "Scope", Value: s.Name},
 		{Label: "Pattern", Value: s.Pattern},
 		{Label: "Directory", Value: s.Directory},
-		{Label: "KIT file", Value: s.KITFile},
+		{Label: "KIT file", Value: s.KitFile},
 	}
 }
 
 func scopeLines(s kenin.Scope) []string {
-	return []string{"pattern   " + s.Pattern, "declared  " + s.KITFile}
+	return []string{"pattern   " + s.Pattern, "declared  " + s.KitFile}
 }
 
 // exactPath is the rules get pattern matching exactly one path.

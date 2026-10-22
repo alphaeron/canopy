@@ -45,20 +45,20 @@ var twoKitFiles = map[string]kitfile.Rules{
 
 func TestKitSetPathsAndEntries(t *testing.T) {
 	s := &kitSet{rules: twoKitFiles}
-	if got, want := s.paths(), []string{"KIT", "a/KIT", "cmd/kit/KIT"}; !reflect.DeepEqual(got, want) {
+	if got, want := s.rules.Paths(), []string{"KIT", "a/KIT", "cmd/kit/KIT"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("paths = %v, want %v (root first, then by path)", got, want)
 	}
 	var files []string
 	for _, e := range s.entries("") {
-		files = append(files, e.kitFile+" "+e.rule.Pattern)
+		files = append(files, e.KitFile+" "+e.Rule.Pattern)
 	}
 	if want := []string{"KIT .*\\.go", "KIT docs/.*", "cmd/kit/KIT .*\\.go"}; !reflect.DeepEqual(files, want) {
 		t.Errorf("entries = %v, want %v", files, want)
 	}
-	if got := s.entries("cmd/kit/KIT"); len(got) != 1 || got[0].rule.Name != "Core Backend Review" {
+	if got := s.entries("cmd/kit/KIT"); len(got) != 1 || got[0].Rule.Name != "Core Backend Review" {
 		t.Errorf("entries(only) = %+v", got)
 	}
-	if got, want := s.scopeNames(), []string{"Core Backend Review", "Docs", "Security Review"}; !reflect.DeepEqual(got, want) {
+	if got, want := s.rules.Names(), []string{"Core Backend Review", "Docs", "Security Review"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("scopeNames = %v, want %v", got, want)
 	}
 }

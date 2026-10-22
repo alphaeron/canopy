@@ -37,7 +37,7 @@ var rulesAddCmd = &cobra.Command{
 			seed := tui.RuleFields{Strategy: "union"}
 			var choices []string
 			if target == "" {
-				if choices = s.paths(); len(choices) == 0 {
+				if choices = s.rules.Paths(); len(choices) == 0 {
 					return errNoKitFiles
 				}
 				seed.KitFile = s.nearest()

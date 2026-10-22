@@ -28,9 +28,9 @@ type LocalFetcher struct {
 // the repository root or list the working tree is returned as an error;
 // per-file read/parse errors are accumulated into the returned error while
 // the successful rules are still provided to the caller.
-func (lf *LocalFetcher) Execute() (string, map[string]kitfile.Rules, error) {
+func (lf *LocalFetcher) Execute() (string, kitfile.Set, error) {
 	log := lf.log()
-	rules := make(map[string]kitfile.Rules)
+	rules := make(kitfile.Set)
 
 	repoRoot, err := lf.Repo.Root()
 	if err != nil {
@@ -61,8 +61,9 @@ func (lf *LocalFetcher) Execute() (string, map[string]kitfile.Rules, error) {
 	return repoRoot, rules, errors.Join(fetchErrors...)
 }
 
-// getRulesForKitFile reads and parses a single KIT file, returning a wrapped
-// error describing the failed step instead of silently yielding nil rules.
+// getRulesForKitFile loads a single KIT file through kitfile.LoadKitFile
+// once its name is confirmed with exact casing, returning a wrapped error
+// describing the failed step instead of silently yielding nil rules.
 func getRulesForKitFile(repoRoot string, fileName string, log *slog.Logger) (kitfile.Rules, error) {
 	f := path.Join(repoRoot, fileName)
 
@@ -78,21 +79,13 @@ func getRulesForKitFile(repoRoot string, fileName string, log *slog.Logger) (kit
 		return nil, fmt.Errorf("KIT file %s does not exist", f)
 	}
 
-	dat, err := os.ReadFile(f)
+	k, err := kitfile.LoadKitFile(f)
 	if err != nil {
-		log.Error("kit: failed to read KIT file",
+		log.Error("kit: failed to load KIT file",
 			"component", "fetcher", "phase", "fetch", "path", fileName, "error", err)
-		return nil, fmt.Errorf("read %s: %w", f, err)
+		return nil, err
 	}
-
-	rules, err := kitfile.ParseRules(dat)
-	if err != nil {
-		log.Error("kit: failed to parse KIT file",
-			"component", "fetcher", "phase", "fetch", "path", fileName, "error", err)
-		return nil, fmt.Errorf("parse %s: %w", fileName, err)
-	}
-
-	return rules, nil
+	return k.Rules, nil
 }
 
 // fileExistsCaseSensitive checks if path exists, is a regular file, and

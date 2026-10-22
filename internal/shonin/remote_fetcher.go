@@ -40,9 +40,9 @@ type RemoteFetcher struct {
 // Any per-file read or parse error is accumulated into the returned error;
 // the partial result is still provided so callers can report which files
 // failed rather than dropping the entire fetch.
-func (rf *RemoteFetcher) Execute() (string, map[string]kitfile.Rules, error) {
+func (rf *RemoteFetcher) Execute() (string, kitfile.Set, error) {
 	log := rf.log()
-	rules := make(map[string]kitfile.Rules)
+	rules := make(kitfile.Set)
 	ctx := context.Background()
 
 	tree, _, err := rf.Client.Git.GetTree(ctx, rf.Owner, rf.Repo, rf.BaseSHA, true)

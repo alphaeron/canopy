@@ -77,21 +77,21 @@ type approverJSON struct {
 }
 
 // rulesJSON converts entries to the JSON list; it is never null.
-func rulesJSON(entries []ruleEntry) []ruleJSON {
+func rulesJSON(entries []kitfile.DeclaredRule) []ruleJSON {
 	out := make([]ruleJSON, 0, len(entries))
 	for _, e := range entries {
-		approvers := make([]approverJSON, 0, len(e.rule.Approvers))
-		for _, a := range e.rule.Approvers {
+		approvers := make([]approverJSON, 0, len(e.Rule.Approvers))
+		for _, a := range e.Rule.Approvers {
 			approvers = append(approvers, approverJSON{Target: a.Target, RequiredCount: a.RequiredCount})
 		}
 		out = append(out, ruleJSON{
-			KitFile:              e.kitFile,
-			Pattern:              e.rule.Pattern,
-			Name:                 e.rule.Name,
-			CombineStrategy:      strategyName(e.rule),
-			IgnoreParentDirs:     e.rule.IgnoreParentDirs,
-			CurrentDirectoryOnly: e.rule.CurrentDirectoryOnly,
-			SelfApprove:          e.rule.SelfApprove,
+			KitFile:              e.KitFile,
+			Pattern:              e.Rule.Pattern,
+			Name:                 e.Rule.Name,
+			CombineStrategy:      strategyName(e.Rule),
+			IgnoreParentDirs:     e.Rule.IgnoreParentDirs,
+			CurrentDirectoryOnly: e.Rule.CurrentDirectoryOnly,
+			SelfApprove:          e.Rule.SelfApprove,
 			Approvers:            approvers,
 		})
 	}
@@ -99,14 +99,14 @@ func rulesJSON(entries []ruleEntry) []ruleJSON {
 }
 
 // ruleRows are the table rows for entries.
-func ruleRows(entries []ruleEntry) [][]string {
+func ruleRows(entries []kitfile.DeclaredRule) [][]string {
 	rows := make([][]string, 0, len(entries))
 	for _, e := range entries {
-		strategy := strategyName(e.rule)
+		strategy := strategyName(e.Rule)
 		if strategy == "" {
 			strategy = "(default)"
 		}
-		rows = append(rows, []string{e.kitFile, e.rule.Pattern, e.rule.Name, strategy, approversLabel(e.rule.Approvers)})
+		rows = append(rows, []string{e.KitFile, e.Rule.Pattern, e.Rule.Name, strategy, approversLabel(e.Rule.Approvers)})
 	}
 	return rows
 }

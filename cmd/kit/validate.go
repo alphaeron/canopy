@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -32,20 +31,21 @@ file in the repository's working tree. --file narrows the check to one KIT file.
 		}
 		grouped := s.rules
 		if only != "" {
-			grouped = map[string]kitfile.Rules{only: s.rules[only]}
+			grouped = kitfile.Set{only: s.rules[only]}
 		}
 
-		violations, errList := validateGrouped(grouped)
+		violations := grouped.Validate()
+		total := violationCount(violations)
 
 		mode, _ := resolveOutputMode(cmd)
 		if mode == modeJSON {
-			return tui.JSONEncoder(os.Stdout, violations)
+			return tui.JSONEncoder(os.Stdout, violationText(violations))
 		}
 		var header = []string{"KIT File", "Violation"}
-		rows := make([][]string, 0, len(errList))
-		for _, path := range s.paths() {
+		rows := make([][]string, 0, total)
+		for _, path := range s.rules.Paths() {
 			for _, e := range violations[path] {
-				rows = append(rows, []string{path, e})
+				rows = append(rows, []string{path, e.Error()})
 			}
 		}
 		if err := tui.TablePrinter(os.Stdout, header, rows); err != nil {
@@ -58,36 +58,28 @@ file in the repository's working tree. --file narrows the check to one KIT file.
 			fmt.Printf("All %d KIT file(s) are valid.\n", len(grouped))
 			return nil
 		}
-		return fmt.Errorf("%d violation(s) in %d KIT file(s)", len(errList), len(violations))
+		return fmt.Errorf("%d violation(s) in %d KIT file(s)", total, len(violations))
 	},
 }
 
-// validateGrouped runs KitFile.Validate on every KIT file and splits each
-// combined error back into its individual violation lines. A file that
-// produces no violations does not appear in the result map, so an empty map
-// means every file is clean.
-func validateGrouped(grouped map[string]kitfile.Rules) (map[string][]string, []string) {
-	violations := map[string][]string{}
-	var errList []string
-	for path, rules := range grouped {
-		kf := kitfile.KitFile{Path: path, Rules: rules}
-		if err := kf.Validate(); err == nil {
-			continue
-		} else {
-			var errs []string
-			var multi interface{ Unwrap() []error }
-			if errors.As(err, &multi) {
-				for _, e := range multi.Unwrap() {
-					errs = append(errs, e.Error())
-				}
-			} else {
-				errs = []string{err.Error()}
-			}
-			violations[path] = errs
-			errList = append(errList, errs...)
+// violationCount is the number of violations across every KIT file.
+func violationCount(violations map[string][]error) int {
+	n := 0
+	for _, errs := range violations {
+		n += len(errs)
+	}
+	return n
+}
+
+// violationText is violations as message strings, the validate JSON form.
+func violationText(violations map[string][]error) map[string][]string {
+	out := make(map[string][]string, len(violations))
+	for p, errs := range violations {
+		for _, e := range errs {
+			out[p] = append(out[p], e.Error())
 		}
 	}
-	return violations, errList
+	return out
 }
 
 func init() {
