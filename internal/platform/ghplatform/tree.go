@@ -66,7 +66,7 @@ func (b *baseTree) ReadFile(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("read %s: %d bytes: %w", path, blob.Size, rulesfile.ErrTooLarge)
 	}
 	sha := blob.SHA
-	if data, ok := b.cache.Blob(sha); ok {
+	if data, ok := b.cache.Blob(ctx, sha); ok {
 		return data, nil
 	}
 	data, err := b.readBlob(ctx, path, sha)
@@ -111,7 +111,7 @@ func (b *baseTree) list(ctx context.Context) (map[string]server.TreeBlob, error)
 	if b.blobs != nil {
 		return b.blobs, nil
 	}
-	if blobs, ok := b.cache.Tree(b.owner+"/"+b.repo, b.sha); ok {
+	if blobs, ok := b.cache.Tree(ctx, b.owner+"/"+b.repo, b.sha); ok {
 		b.blobs = blobs
 		return blobs, nil
 	}

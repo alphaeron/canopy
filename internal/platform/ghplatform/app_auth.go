@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/google/go-github/v93/github"
+
+	"github.com/alphaeron/canopy/internal/server"
 )
 
 // GitHub App token lifetimes. An App JWT may live at most ten minutes, and
@@ -152,11 +154,13 @@ func (a *appAuth) exchangeToken(ctx context.Context, installation int64) (*githu
 }
 
 // installationClient is a client acting as the app's installation: each
-// request carries the installation's token.
-func (a *appAuth) installationClient(installation int64) (*github.Client, error) {
+// request carries the installation's token, and the reads whose answers can
+// change are made conditional on the responses kept in cache, the
+// installation's scope (see conditionalTransport).
+func (a *appAuth) installationClient(installation int64, cache server.CacheScope) (*github.Client, error) {
 	return a.client(&bearer{
 		token: func(ctx context.Context) (string, error) { return a.token(ctx, installation) },
-		base:  a.transport,
+		base:  &conditionalTransport{base: a.transport, cache: cache},
 	})
 }
 

@@ -56,6 +56,15 @@ type Config struct {
 	// ShutdownTimeout bounds how long the review server waits for open requests
 	// once it is told to stop; defaults to 10 seconds.
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
+	// DatabaseURL is the review server's PostgreSQL connection string;
+	// empty runs the server without a database. It carries credentials,
+	// so it is never logged.
+	DatabaseURL string `mapstructure:"database_url"`
+	// DatabaseKey authenticates the platform data the review server caches
+	// in the database (see store.Options.Key): at least 32 bytes, the same
+	// on every replica, and never stored in the database. Required with
+	// DatabaseURL. It is a secret, so it is never logged.
+	DatabaseKey string `mapstructure:"database_key"`
 	// GitHub configures the GitHub platform for the review server.
 	GitHub GitHub `mapstructure:"github"`
 	// Path is the file the configuration was read from, when one existed.

@@ -35,7 +35,7 @@ type fakeGitHub struct {
 	maxListed   int                           // when positive, a recursive listing of more entries is truncated
 	mergeBase   string                        // the merge base the compare endpoint reports
 	head        map[string]string             // files at the head revision: path to contents
-	prPages     [][]*github.CommitFile        // the pull request's files, page by page
+	prPages     [][]*github.CommitFile        // the pull request's files, page by page; the comparison lists them all
 	reviewPages [][]*github.PullRequestReview // the pull request's reviews, page by page
 	teams       map[string][]string           // "org/slug" to member logins
 	users       map[string]bool               // known logins to whether they are suspended
@@ -45,6 +45,7 @@ type fakeGitHub struct {
 	calls     map[string]int                 // requests per endpoint, e.g. "tree", "files", "check-runs"
 	checkRuns []github.CreateCheckRunOptions // check runs created, in order
 	auth      []string                       // the Authorization header of every request
+	compared  []string                       // the base...head of every comparison
 }
 
 // blobSHA is the fake's SHA of a blob: its contents, so equal contents
@@ -145,7 +146,13 @@ func (f *fakeGitHub) serve(t *testing.T) string {
 		writeJSON(t, w, map[string]string{"encoding": "base64", "content": base64.StdEncoding.EncodeToString(content)})
 	})
 	mux.HandleFunc("GET /repos/o/r/compare/{basehead}", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, map[string]any{"merge_base_commit": map[string]string{"sha": f.mergeBase}})
+		f.mu.Lock()
+		f.compared = append(f.compared, r.PathValue("basehead"))
+		f.mu.Unlock()
+		// GitHub lists at most maxComparedFiles of a comparison's files.
+		files := slices.Concat(f.prPages...)
+		files = files[:min(len(files), maxComparedFiles)]
+		writeJSON(t, w, map[string]any{"merge_base_commit": map[string]string{"sha": f.mergeBase}, "files": files})
 	})
 	mux.HandleFunc("GET /repos/o/r/pulls/7/files", func(w http.ResponseWriter, r *http.Request) {
 		paged(t, w, r, srv.URL, f.prPages)
@@ -309,7 +316,9 @@ func fakeFromFixture(fx platformtest.Fixture) *fakeGitHub {
 		head[to] = head[from]
 		delete(head, from)
 	}
-	return &fakeGitHub{base: fx.Base, head: head, prPages: [][]*github.CommitFile{files}}
+	// The head's tree confirms a comparison listing no files.
+	return &fakeGitHub{base: fx.Base, head: head, prPages: [][]*github.CommitFile{files},
+		trees: map[string]map[string]string{"head": head}, mergeBase: "base"}
 }
 
 // prefixLines prefixes every line of s with prefix.

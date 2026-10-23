@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/go-github/v93/github"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/alphaeron/canopy/internal/brand"
 	"github.com/alphaeron/canopy/internal/config"
@@ -66,6 +67,7 @@ var appKey = sync.OnceValues(func() (*rsa.PrivateKey, error) { return rsa.Genera
 type env struct {
 	t      *testing.T
 	github *fakeGitHub
+	db     *pgx.Conn // the server's database; nil when it runs without one
 	pr     int
 	stop   func()
 }
@@ -164,6 +166,7 @@ func TestGitHubEndToEnd(t *testing.T) {
 				e.assertCheck(s.name, runs[i], s.want)
 			}
 
+			e.waitRecorded(len(tt.steps))
 			e.stop()
 			if runs := e.github.checkRuns(repo); len(runs) != len(tt.steps) {
 				t.Errorf("check runs = %d after teardown, want %d (one per step)", len(runs), len(tt.steps))
@@ -173,6 +176,7 @@ func TestGitHubEndToEnd(t *testing.T) {
 					t.Errorf("%s %s webhook answered %d, want 202", d.event, d.action, d.status)
 				}
 			}
+			e.assertRecorded(len(e.github.deliveries()), len(tt.steps))
 		})
 	}
 }
@@ -190,12 +194,21 @@ func newEnv(t *testing.T, feature map[string]string) *env {
 	gh.createRepo(owner, "widgets", baseFiles)
 	gh.push(t.Context(), repo, branch, "main", feature)
 
+	var (
+		repoStore server.RepoStore
+		recorder  server.Recorder
+	)
+	db, conn := testDatabase(t)
+	if db != nil {
+		repoStore, recorder = db, db
+	}
+	cache := server.NewRepoCache(repoStore, discardLogger())
 	platform, err := ghplatform.NewPRWebhook(config.GitHub{
 		AppID:         strconv.Itoa(appID),
 		PrivateKey:    string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})),
 		WebhookSecret: webhookSecret,
 		APIURL:        gh.url,
-	}, server.NewRepoCache(), discardLogger())
+	}, cache, discardLogger())
 	if err != nil {
 		t.Fatalf("NewPRWebhook: %v", err)
 	}
@@ -208,6 +221,7 @@ func newEnv(t *testing.T, feature map[string]string) *env {
 		ShutdownTimeout: stepTimeout,
 		Version:         "e2e",
 		Log:             discardLogger(),
+		Recorder:        recorder,
 	}, platform)
 	if err != nil {
 		cancel()
@@ -221,6 +235,7 @@ func newEnv(t *testing.T, feature map[string]string) *env {
 		web.Close()
 		cancel()
 		srv.Wait()
+		cache.Wait()
 	})
 	t.Cleanup(stop)
 
@@ -231,7 +246,7 @@ func newEnv(t *testing.T, feature map[string]string) *env {
 		webhookURL:   web.URL + platform.WebhookPath(),
 		secret:       webhookSecret,
 	})
-	return &env{t: t, github: gh, stop: stop}
+	return &env{t: t, github: gh, db: conn, stop: stop}
 }
 
 // assertCheck checks run is the app's check on the pull request's current

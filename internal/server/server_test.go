@@ -66,6 +66,8 @@ func (p *stubWebhook) VerifyWebhook(r *http.Request) (string, []byte, error) {
 	return r.Header.Get("X-Event"), body, nil
 }
 
+func (p *stubWebhook) DeliveryID(r *http.Request) string { return r.Header.Get("X-Delivery") }
+
 func (p *stubWebhook) PullRequest(event string, body []byte) (PullRequest, bool, error) {
 	if event == "malformed" {
 		return nil, false, errors.New("malformed event")
@@ -142,6 +144,10 @@ func (c *stubPullRequest) DiffContent(context.Context, string) (string, error) {
 func (c *stubPullRequest) Warnings() []string { return c.warnings }
 
 func (c *stubPullRequest) Key() string { return c.key }
+
+func (c *stubPullRequest) Info() PullRequestInfo {
+	return PullRequestInfo{Scope: "stub", Repo: "o/r", Number: 1, Author: c.input.Author, Action: "pr"}
+}
 
 func (c *stubPullRequest) ReviewInput(context.Context) (approval.ReviewInput, error) {
 	return c.input, nil
@@ -225,6 +231,7 @@ func post(t *testing.T, s *Server, path, event, token string) (int, map[string]a
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("X-Event", event)
 	r.Header.Set("X-Token", token)
+	r.Header.Set("X-Delivery", "delivery-"+event)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	var body map[string]any

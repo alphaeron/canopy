@@ -79,6 +79,11 @@ type ApproverResolver interface {
   itself (targets, approvals, the author, owners, members), so `Resolve` doesn't have to.
 - **Don't cache.** `approval.RuleChain.Execute` resolves each target once per review. One
   resolver can then serve every review without its group membership going stale.
+  To spare the rate limit, make the requests conditional instead, below the resolver: GitHub's
+  installation client keeps the last answer for a team's members, a user, and a pull request's
+  reviews in the server's `RepoCache` with its ETag, and serves it only when GitHub answers
+  `304 Not Modified` (`ghplatform/conditional_transport.go`). Never serve such an answer without
+  that confirmation.
 - **Validate before calling the API.** `RULES` files are untrusted input. If your platform has
   rules for target syntax, also implement `approval.TargetValidator`:
 
@@ -106,7 +111,7 @@ type Source interface {
 |---|---|
 | `Evaluator` | `&approval.Evaluator{Fetch: &approval.TreeFetcher{...}, Resolver: ..., Log: log}`, built once in the constructor |
 | `AllFiles` | every file at the revision the rules are read from (a hosted platform: the base revision; local: the working tree), sorted; `approval.ErrTreeTruncated` for a truncated listing |
-| `ChangedFiles` | every path the change adds, modifies, or removes, sorted. A rename lists **both** paths, so the rules over the place it left still apply. Added paths are not in `AllFiles`. Empty when nothing changed. When the platform's own listing is capped, list the files another way if you can (GitHub compares the head tree with the merge base's past 3000 files) and report it through `Warnings`; a listing you cannot complete is `approval.ErrFileListIncomplete`, never a partial list. |
+| `ChangedFiles` | every path the change adds, modifies, or removes, sorted. A rename lists **both** paths, so the rules over the place it left still apply. Added paths are not in `AllFiles`. Empty when nothing changed. **List it only through requests addressed by the event's base and head revisions**, never by the change's number: the platform answers a request by number for whatever the head is by then, which may be a newer push than the head the review reports on (GitHub compares `base...head` by SHA). When that listing is capped, list the files another way if you can (GitHub compares the head tree with the merge base's when the comparison lists 300 files, or none) and report it through `Warnings`; a listing you cannot complete is `approval.ErrFileListIncomplete`, never a partial list. |
 | `DiffContent` | the unified diff for `path`, or `""` when the change doesn't touch it, only renames it, or the platform has no text diff for it (binary, too large). |
 | `ReadHead` | a file as the change proposes it (local: the working tree); a missing path wraps `fs.ErrNotExist`, and a file over `rulesfile.MaxSize` wraps `rulesfile.ErrTooLarge` (check the size before downloading). `review.Engine.ValidateProposed` validates the rules files a change proposes with it, for the server and `canopy review` alike, skipping those the head doesn't have (deleted, or the old side of a rename). |
 
@@ -145,6 +150,7 @@ func (p *PRWebhook) PullRequest(event string, body []byte) (server.PullRequest, 
 type PullRequest interface {
     review.Change // review.Source + ReviewInput(ctx) and Warnings()
     Key() string
+    Info() server.PullRequestInfo
     Report(ctx context.Context, o approval.Outcome) error
 }
 ```
@@ -164,6 +170,10 @@ type PullRequest interface {
   waits replaces it, one requested while another runs cancels it, and a review superseded after it
   ran does not report. Two pull requests whose reports would replace each other must share a key;
   two that publish to different places must not.
+- **`Info`**: the pull request for the server's record (`server.PullRequestInfo`): the cache
+  scope, the repository lower-cased as `Key` names it, the number, base and head revisions,
+  author, and the event and action that requested the review (GitHub:
+  `pull_request.synchronize`). From the event alone, without calling the platform.
 - **`Report`**: publish `o` as the pull request's status, replacing the earlier one (one name per
   platform; GitHub: a completed check run named `canopy` on the head commit, a new one per report).
   Map `approval.Passed`, `approval.Pending`, and `approval.Failed` to distinct states, and
@@ -187,6 +197,7 @@ type PRWebhook interface {
     WebhookContentTypes() []string                                 // body media types, for OpenAPI
     WebhookDescription() string                                    // auth, headers, events (Markdown)
     VerifyWebhook(r *http.Request) (event string, body []byte, err error)
+    DeliveryID(r *http.Request) string                             // for the server's record; "" if none
     PullRequest(event string, body []byte) (server.PullRequest, bool, error) // false: not reviewable
 }
 ```

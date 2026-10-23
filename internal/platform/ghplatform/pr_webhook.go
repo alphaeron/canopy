@@ -121,7 +121,7 @@ func (p *PRWebhook) WebhookDescription() string {
 		"with the webhook secret. `X-GitHub-Event` names the event. `" + eventPullRequest + "` events (" +
 		strings.Join(pullRequestActions, ", ") + "; `edited` only when the base branch changes) and `" +
 		eventPullRequestReview + "` events (" + strings.Join(reviewActions, ", ") + ") start a review of the " +
-		"pull request; every other event is acknowledged and ignored."
+		"pull request, unless it is closed; every other event is acknowledged and ignored."
 }
 
 // VerifyWebhook checks the request's X-Hub-Signature-256 against the
@@ -134,6 +134,10 @@ func (p *PRWebhook) VerifyWebhook(r *http.Request) (string, []byte, error) {
 	}
 	return github.WebHookType(r), body, nil
 }
+
+// DeliveryID is the delivery's GitHub-assigned ID (X-GitHub-Delivery),
+// which a redelivery repeats.
+func (p *PRWebhook) DeliveryID(r *http.Request) string { return r.Header.Get("X-GitHub-Delivery") }
 
 // PullRequest turns a verified webhook into the pull request to review. It
 // reports false, with no error, for an event or action that does not start
@@ -171,6 +175,11 @@ func (p *PRWebhook) PullRequest(event string, body []byte) (server.PullRequest, 
 	default:
 		return nil, false, nil
 	}
+	// A closed (or merged) pull request has nothing left to review; one
+	// reopened is open again in its reopened event.
+	if pr.GetState() == "closed" {
+		return nil, false, nil
+	}
 	if inst.GetID() <= 0 {
 		return nil, false, fmt.Errorf("%s event has no app installation", event)
 	}
@@ -178,6 +187,7 @@ func (p *PRWebhook) PullRequest(event string, body []byte) (server.PullRequest, 
 	if err != nil {
 		return nil, false, fmt.Errorf("%s event: %w", event, err)
 	}
+	gh.action = event + "." + action
 	in, err := p.installation(inst.GetID())
 	if err != nil {
 		return nil, false, err
@@ -193,11 +203,12 @@ func (p *PRWebhook) installation(id int64) (*installation, error) {
 	if in, ok := p.installs[id]; ok {
 		return in, nil
 	}
-	client, err := p.auth.installationClient(id)
+	cache := p.cache.Scope(installationScope(id))
+	client, err := p.auth.installationClient(id, cache)
 	if err != nil {
 		return nil, fmt.Errorf("client for installation %d: %w", id, err)
 	}
-	in := &installation{client: client, resolver: NewApproverResolver(client), cache: p.cache.Scope(installationScope(id))}
+	in := &installation{client: client, resolver: NewApproverResolver(client), cache: cache}
 	p.installs[id] = in
 	return in, nil
 }

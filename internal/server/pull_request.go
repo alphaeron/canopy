@@ -19,9 +19,30 @@ type PullRequest interface {
 	// newer one. It must not call the platform's API.
 	Key() string
 
+	// Info describes the pull request for the server's record (see
+	// Recorder). It must not call the platform's API.
+	Info() PullRequestInfo
+
 	// Report publishes the review's outcome as the pull request's status,
 	// replacing the earlier one. The platform maps each verdict to its own
 	// status states and carries the outcome's Description as the status's
 	// description.
 	Report(ctx context.Context, o approval.Outcome) error
+}
+
+// PullRequestInfo describes a pull request for the server's record. Every
+// field comes from the verified webhook, not from the platform's API.
+type PullRequestInfo struct {
+	// Scope is the platform's cache scope for the pull request (see
+	// RepoCache.Scope): whatever limits what its reader may see.
+	Scope string
+	// Repo is the repository, "owner/name", lower-cased.
+	Repo    string
+	Number  int
+	BaseSHA string
+	HeadSHA string
+	Author  string
+	// Action is the webhook event and action that requested the review,
+	// e.g. "pull_request.synchronize".
+	Action string
 }

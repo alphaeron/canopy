@@ -286,7 +286,9 @@ func (f *fakeGitHub) routes() http.Handler {
 	api("GET /repos/{owner}/{repo}/git/blobs/{sha}", false, f.getBlob)
 	api("GET /repos/{owner}/{repo}/contents/{path...}", false, f.getContents)
 	api("POST /repos/{owner}/{repo}/pulls", false, f.createPull)
-	api("GET /repos/{owner}/{repo}/pulls/{number}/files", false, f.listPullFiles)
+	// No pull request file listing: the platform compares the event's
+	// revisions instead, so requesting it is an unexpected request.
+	api("GET /repos/{owner}/{repo}/compare/{basehead}", false, f.compareCommits)
 	api("GET /repos/{owner}/{repo}/pulls/{number}/reviews", false, f.listReviews)
 	api("POST /repos/{owner}/{repo}/pulls/{number}/reviews", false, f.createReview)
 	api("POST /repos/{owner}/{repo}/check-runs", true, f.createCheckRun)
@@ -423,16 +425,19 @@ func (f *fakeGitHub) pull(r *http.Request, repo *fakeRepo) *fakePull {
 
 // listPullFiles lists the files that differ between the pull request's
 // base and head tips, in one page.
-func (f *fakeGitHub) listPullFiles(w http.ResponseWriter, r *http.Request, _ caller, repo *fakeRepo) {
-	pr := f.pull(r, repo)
-	if pr == nil {
+// compareCommits compares two commits by SHA (base...head), reporting the
+// base as the merge base: the fake's branches never diverge from it.
+func (f *fakeGitHub) compareCommits(w http.ResponseWriter, r *http.Request, _ caller, repo *fakeRepo) {
+	base, head, ok := strings.Cut(r.PathValue("basehead"), "...")
+	f.mu.Lock()
+	from, inBase := repo.commits[base]
+	to, inHead := repo.commits[head]
+	f.mu.Unlock()
+	if !ok || !inBase || !inHead {
 		writeError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	f.mu.Lock()
-	files := pullFiles(repo.commits[repo.branches[pr.base]], repo.commits[repo.branches[pr.head]])
-	f.mu.Unlock()
-	writeJSON(w, http.StatusOK, files)
+	writeJSON(w, http.StatusOK, map[string]any{"merge_base_commit": map[string]string{"sha": base}, "files": pullFiles(from, to)})
 }
 
 // pullFiles is GitHub's file listing of the change from base to head:

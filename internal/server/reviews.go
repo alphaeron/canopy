@@ -34,9 +34,12 @@ type slot struct {
 
 // job is one requested review.
 type job struct {
-	platform string
-	pr       PullRequest
-	gen      uint64 // its generation within its key
+	platform   string
+	pr         PullRequest
+	gen        uint64 // its generation within its key, on this server
+	deliveryID string // the delivery that requested it
+	queuedAt   time.Time
+	order      int64 // its order among every replica's requests for its key (Recorder); 0 when unknown
 }
 
 // newReviews schedules reviews on workers, each bounded by timeout, until

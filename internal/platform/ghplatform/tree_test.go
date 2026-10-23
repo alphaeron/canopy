@@ -76,7 +76,7 @@ func TestGitHubFetchRunsOnce(t *testing.T) {
 // another revision; another installation shares none of it.
 func TestGitHubCacheSharesTreesAndBlobsAcrossReviews(t *testing.T) {
 	fake := &fakeGitHub{base: map[string]string{rulesfile.FileName: "- \".*\":\n  name: \"Root\"\n"}}
-	client, repo := fake.client(t), server.NewRepoCache()
+	client, repo := fake.client(t), server.NewRepoCache(nil, nil)
 	fetch := func(installation int64, sha string) {
 		t.Helper()
 		tree := newBaseTree(client, "o", "r", sha, repo.Scope(installationScope(installation)))

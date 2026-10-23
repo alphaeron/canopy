@@ -3,6 +3,7 @@ package ghplatform
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"reflect"
 	"strings"
@@ -91,11 +92,13 @@ func TestGitHubSourceIsOnTheGitHubPlatform(t *testing.T) {
 	}
 }
 
-// TestGitHubChangeListsAllPagesOnce: the changed files and their
-// patches come from every page of the file listing, listed once on first
-// use; a rename contributes the path it left as well as its new one; and
-// the source is bound to the event's repository and base revision.
-func TestGitHubChangeListsAllPagesOnce(t *testing.T) {
+// TestGitHubChangeListsFilesByComparingRevisions: the changed files and
+// their patches come from GitHub's comparison of the event's base and head
+// revisions, never from the pull request's file listing (which answers for
+// whatever the head is by then), listed once on first use; a rename
+// contributes the path it left as well as its new one; and the source is
+// bound to the event's repository and base revision.
+func TestGitHubChangeListsFilesByComparingRevisions(t *testing.T) {
 	fake := &fakeGitHub{prPages: [][]*github.CommitFile{
 		{{Filename: new("a.go"), Status: new("added"), Patch: new("+a\n")}},
 		{{Filename: new("b.go"), Status: new("modified"), Patch: new("+b\n")}, {Filename: new("bin.png"), Status: new("added")}},
@@ -105,8 +108,8 @@ func TestGitHubChangeListsAllPagesOnce(t *testing.T) {
 		},
 	}}
 	src := changeFromEvent(t, fake, pullRequestEvent("deadbeef")).(*Source)
-	if got := fake.callCount("files"); got != 0 {
-		t.Errorf("file listings before use = %d, want none", got)
+	if got := fake.callCount("compare"); got != 0 {
+		t.Errorf("comparisons before use = %d, want none", got)
 	}
 	changed, err := src.ChangedFiles(t.Context())
 	if err != nil {
@@ -132,8 +135,11 @@ func TestGitHubChangeListsAllPagesOnce(t *testing.T) {
 			t.Errorf("DiffContent(%s) = %q, %v; want %q", tt.path, got, err, tt.want)
 		}
 	}
-	if got := fake.callCount("files"); got != 3 {
-		t.Errorf("file listing requests = %d, want 3 (one listing, three pages)", got)
+	if !reflect.DeepEqual(fake.compared, []string{"deadbeef...head"}) {
+		t.Errorf("comparisons = %v, want one of deadbeef...head", fake.compared)
+	}
+	if got := fake.callCount("files"); got != 0 {
+		t.Errorf("pull request file listings = %d, want none", got)
 	}
 	if src.tree.owner != "o" || src.tree.repo != "r" || src.tree.sha != "deadbeef" {
 		t.Errorf("base tree = %s/%s@%s, want o/r@deadbeef", src.tree.owner, src.tree.repo, src.tree.sha)
@@ -187,16 +193,17 @@ func TestGitHubListingErrorSurfacesAndRetries(t *testing.T) {
 	}
 }
 
-// TestGitHubLargePullRequestIsListedByTrees: a pull request with more
-// files than GitHub lists, by the event's count or a listing cut short, is
-// listed by comparing the head tree with the merge base's, as completely as
-// GitHub's listing would be, and is warned of as large; one GitHub lists
-// whole is listed the usual way, without a warning.
-func TestGitHubLargePullRequestIsListedByTrees(t *testing.T) {
+// TestGitHubLargeOrEmptyComparisonIsListedByTrees: a comparison GitHub
+// may have cut short (maxComparedFiles files) is listed by comparing the
+// head tree with the merge base's, as completely as the comparison would
+// be, and warned of as large; a comparison listing no files is confirmed
+// the same way, without a warning, so files GitHub left out never pass for
+// an empty change; one listing fewer is used as is.
+func TestGitHubLargeOrEmptyComparisonIsListedByTrees(t *testing.T) {
 	page := func(n int) []*github.CommitFile {
 		files := make([]*github.CommitFile, n)
 		for i := range files {
-			files[i] = &github.CommitFile{Filename: new(string(rune('a'+i%26)) + string(rune('0'+i/26%10))), Status: new("added"), Patch: new("+\n")}
+			files[i] = &github.CommitFile{Filename: new(fmt.Sprintf("f%04d", i)), Status: new("added"), Patch: new("+\n")}
 		}
 		return files
 	}
@@ -206,42 +213,49 @@ func TestGitHubLargePullRequestIsListedByTrees(t *testing.T) {
 	}
 	byTrees := []string{"a.go", "c.go", "new/x.go", "old/x.go"}
 	tests := []struct {
-		name     string
-		reported int
-		pages    [][]*github.CommitFile
-		want     []string
-		listed   bool // the pull request's file listing was read
-		compared bool // the trees were compared instead
+		name    string
+		files   int
+		want    []string
+		byTrees bool
+		warned  bool
 	}{
-		{name: "more files reported than GitHub lists", reported: maxListedFiles + 1, want: byTrees, compared: true},
-		{name: "listing short of the reported count", reported: 5, pages: [][]*github.CommitFile{page(3)}, want: byTrees, listed: true, compared: true},
-		{name: "listing matches the reported count", reported: 3, pages: [][]*github.CommitFile{page(3)}, want: []string{"a0", "b0", "c0"}, listed: true},
-		{name: "count unknown, under the cap", pages: [][]*github.CommitFile{page(3)}, want: []string{"a0", "b0", "c0"}, listed: true},
+		{name: "comparison at GitHub's cap", files: maxComparedFiles + 5, want: byTrees, byTrees: true, warned: true},
+		{name: "comparison listing no files", want: byTrees, byTrees: true},
+		{name: "comparison under the cap", files: 3, want: []string{"f0000", "f0001", "f0002"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fake := &fakeGitHub{prPages: tt.pages, trees: trees, mergeBase: "mb"}
-			pr := testPR()
-			pr.changedFiles = tt.reported
-			src := newSource(pr, fake.client(t), nil, server.CacheScope{}, testLogger())
+			fake := &fakeGitHub{prPages: [][]*github.CommitFile{page(tt.files)}, trees: trees, mergeBase: "mb"}
+			src := newSource(testPR(), fake.client(t), nil, server.CacheScope{}, testLogger())
 			got, err := src.ChangedFiles(t.Context())
 			if err != nil || !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("ChangedFiles = %v, %v; want %v", got, err, tt.want)
 			}
-			if listed := fake.callCount("files") > 0; listed != tt.listed {
-				t.Errorf("listed the files: %v, want %v", listed, tt.listed)
-			}
-			if compared := fake.callCount("compare") > 0; compared != tt.compared {
-				t.Errorf("compared the trees: %v, want %v", compared, tt.compared)
+			if listed := fake.callCount("tree") > 0; listed != tt.byTrees {
+				t.Errorf("listed the trees: %v, want %v", listed, tt.byTrees)
 			}
 			warnings := src.Warnings()
-			if tt.compared && !reflect.DeepEqual(warnings, []string{"large pull request (4 files)"}) || !tt.compared && len(warnings) > 0 {
-				t.Errorf("warnings = %q, want a large pull request warning only when the trees were compared", warnings)
+			if tt.warned && !reflect.DeepEqual(warnings, []string{"large pull request (4 files)"}) || !tt.warned && len(warnings) > 0 {
+				t.Errorf("warnings = %q, want a large pull request warning only for a comparison at the cap", warnings)
 			}
 		})
 	}
-	if !incomplete(0, maxListedFiles) {
-		t.Error("a listing at GitHub's cap with no count to confirm it must count as incomplete")
+}
+
+// TestGitHubInfoDescribesThePullRequest: the record of a pull request
+// comes from the event alone.
+func TestGitHubInfoDescribesThePullRequest(t *testing.T) {
+	fake := &fakeGitHub{}
+	ev := pullRequestEvent("deadbeef")
+	ev.Repo.Owner.Login = new("Org")
+	ev.Action = new("synchronize")
+	src := changeFromEvent(t, fake, ev).(*Source)
+	want := server.PullRequestInfo{Scope: installationScope(5), Repo: "org/r", Number: 7, BaseSHA: "deadbeef", HeadSHA: "head", Author: "author", Action: "pull_request.synchronize"}
+	if got := src.Info(); got != want {
+		t.Errorf("Info = %+v, want %+v", got, want)
+	}
+	if len(fake.calls) != 0 {
+		t.Errorf("API calls = %v, want none", fake.calls)
 	}
 }
 

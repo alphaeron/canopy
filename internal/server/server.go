@@ -23,8 +23,10 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/alphaeron/canopy/internal/approval"
 	"github.com/alphaeron/canopy/internal/brand"
 	"github.com/alphaeron/canopy/internal/logx"
+	"github.com/alphaeron/canopy/internal/parallel"
 	"github.com/alphaeron/canopy/internal/review"
 )
 
@@ -51,7 +53,25 @@ type Options struct {
 	Version string
 	// Log receives the server's structured logs; nil means slog.Default().
 	Log *slog.Logger
+	// Recorder records webhooks and reviews and orders reports across
+	// replicas of the server; nil records nothing, and only this process's
+	// reports are ordered.
+	Recorder Recorder
 }
+
+// Bounds on recording: how long the calls a webhook or a review waits for
+// may take, and how many records are written at once in the background
+// (more are dropped) and for how long each.
+const (
+	recordTimeout       = 2 * time.Second
+	maxRecordWrites     = 16
+	recordWriteTimeout  = 10 * time.Second
+	maxDeliveryIDLength = 128
+)
+
+// unorderedSummary is the outcome a review reports instead of passing when
+// it could not be ordered with the other replicas' reports.
+const unorderedSummary = "review could not be recorded; see the server logs"
 
 // Paths the server serves besides the webhooks.
 const (
@@ -68,6 +88,7 @@ type Server struct {
 	log     *slog.Logger
 	handler http.Handler
 	reviews *reviews
+	records *parallel.Background // nil without a Recorder
 }
 
 // New builds the server over the deployment's one platform webhook and
@@ -105,6 +126,9 @@ func New(ctx context.Context, opts Options, webhook PRWebhook) (*Server, error) 
 	}
 	s.registerWebhook(api, webhook)
 	s.handler = router
+	if opts.Recorder != nil {
+		s.records = parallel.NewBackground(maxRecordWrites, recordWriteTimeout)
+	}
 	s.reviews = newReviews(ctx, opts.Workers, opts.Queue, opts.ReviewTimeout, s.review)
 	return s, nil
 }
@@ -113,8 +137,11 @@ func New(ctx context.Context, opts Options, webhook PRWebhook) (*Server, error) 
 func (s *Server) Handler() http.Handler { return s.handler }
 
 // Wait blocks until every review worker has stopped, after the context New
-// was given is done.
-func (s *Server) Wait() { s.reviews.wait() }
+// was given is done, and the records they started are written.
+func (s *Server) Wait() {
+	s.reviews.wait()
+	s.records.Wait()
+}
 
 // ListenAndServe serves on Options.Addr until ctx is done, then stops
 // accepting requests, waits up to Options.ShutdownTimeout for open ones, and waits
@@ -156,10 +183,12 @@ type webhookOutput struct {
 // verifiedKey is the context key of a webhook the platform verified.
 type verifiedKey struct{}
 
-// verified is a webhook the platform verified: its event type and body.
+// verified is a webhook the platform verified: its event type, body, and
+// delivery ID.
 type verified struct {
-	event string
-	body  []byte
+	event      string
+	body       []byte
+	deliveryID string
 }
 
 // registerWebhook registers p's webhook route. The platform verifies each
@@ -213,7 +242,11 @@ func (s *Server) verify(api huma.API, p PRWebhook) func(huma.Context, func(huma.
 		// The platform consumed the body; huma reads it again to enforce
 		// the documented request body.
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		next(huma.WithValue(ctx, verifiedKey{}, verified{event: event, body: body}))
+		id := p.DeliveryID(r)
+		if len(id) > maxDeliveryIDLength {
+			id = id[:maxDeliveryIDLength]
+		}
+		next(huma.WithValue(ctx, verifiedKey{}, verified{event: event, body: body, deliveryID: id}))
 	}
 }
 
@@ -223,36 +256,91 @@ func (s *Server) accept(ctx context.Context, p PRWebhook) (*webhookOutput, error
 	if !ok {
 		return nil, huma.Error401Unauthorized("webhook not verified")
 	}
-	log := s.log.With("component", "server", "platform", p.Name(), "event", wh.event)
+	log := s.log.With("component", "server", "platform", p.Name(), "event", wh.event, "delivery", wh.deliveryID)
+	delivery := DeliveryRecord{Platform: p.Name(), ID: wh.deliveryID, Event: wh.event}
 	pr, reviewable, err := p.PullRequest(wh.event, wh.body)
 	if err != nil {
 		log.Warn("webhook unusable", "error", err)
+		s.recordDelivery(delivery, DeliveryUnusable)
 		return nil, huma.Error400BadRequest("webhook event is not usable")
 	}
 	out := &webhookOutput{}
 	if !reviewable {
 		log.Debug("webhook ignored")
+		s.recordDelivery(delivery, DeliveryIgnored)
 		return out, nil
 	}
-	if !s.reviews.submit(job{platform: p.Name(), pr: pr}) {
+	info := pr.Info()
+	delivery.PullRequest = &info
+	j := job{platform: p.Name(), pr: pr, deliveryID: wh.deliveryID, queuedAt: time.Now(), order: s.requestOrder(ctx, info, log)}
+	if !s.reviews.submit(j) {
 		log.Error("review queue full; webhook dropped")
+		s.recordDelivery(delivery, DeliveryQueueFull)
 		return nil, huma.Error503ServiceUnavailable("review queue is full")
 	}
+	s.recordDelivery(delivery, DeliveryQueued)
 	out.Body.Queued = true
 	log.Info("review queued")
 	return out, nil
 }
 
+// requestOrder records a review of pr being requested, returning its
+// order among every replica's requests, or 0 when it could not be
+// recorded (the review then never reports a pass; see report).
+func (s *Server) requestOrder(ctx context.Context, pr PullRequestInfo, log *slog.Logger) int64 {
+	if s.opts.Recorder == nil {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(ctx, recordTimeout)
+	defer cancel()
+	order, err := s.opts.Recorder.RequestReview(ctx, pr)
+	if err != nil {
+		log.Error("recording the review request failed; the review cannot pass", "error", err)
+		return 0
+	}
+	return order
+}
+
+// recordDelivery records d, with disposition, in the background.
+func (s *Server) recordDelivery(d DeliveryRecord, disposition string) {
+	if s.opts.Recorder == nil {
+		return
+	}
+	d.Disposition = disposition
+	s.records.Go(func(ctx context.Context) {
+		if err := s.opts.Recorder.RecordDelivery(ctx, d); err != nil {
+			s.log.Warn("recording a webhook delivery failed", "component", "server", "delivery", d.ID, "error", err)
+		}
+	})
+}
+
 // review runs one queued review and reports its outcome as the pull
 // request's status, unless a newer review of its key superseded it
-// (current reports false; see reviews). A review that ran out of time
+// (current reports false; see reviews), or, with a Recorder, a newer
+// review on any replica reported first. A review that ran out of time
 // still reports, under a fresh deadline; one cancelled because the server
-// is stopping does not.
+// is stopping does not. With a Recorder, the review is recorded as it
+// starts and ends.
 func (s *Server) review(ctx context.Context, j job, current func() bool) {
 	log := s.log.With("component", "server", "platform", j.platform, "key", j.pr.Key())
-	outcome := review.Evaluate(ctx, j.pr, log)
+	started := time.Now()
+	id := s.startRecord(ctx, j, log)
+	ev := review.Evaluate(ctx, j.pr, log)
+	end := ReviewEnd{
+		Outcome:  ev.Outcome,
+		Input:    ev.Input,
+		State:    ev.State,
+		Targets:  targetsOf(ev.State),
+		Queued:   started.Sub(j.queuedAt),
+		Evaluate: time.Since(started),
+	}
+	if ev.Err != nil {
+		end.Err = ev.Err.Error()
+	}
+	defer func() { s.finishRecord(ctx, id, end, log) }()
 
 	if !current() {
+		end.Status = ReviewSuperseded
 		log.Info("review superseded by a newer one")
 		return
 	}
@@ -262,11 +350,91 @@ func (s *Server) review(ctx context.Context, j job, current func() bool) {
 		reportCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), s.opts.ReportTimeout)
 		defer cancel()
 	} else if ctx.Err() != nil {
+		end.Status = ReviewCancelled
 		log.Info("review cancelled", "error", ctx.Err())
 		return
 	}
-	if err := j.pr.Report(reportCtx, outcome); err != nil {
+	reportStart := time.Now()
+	sent, superseded, err := s.report(reportCtx, j, ev.Outcome, log)
+	end.Report = time.Since(reportStart)
+	end.Outcome = sent
+	switch {
+	case superseded:
+		end.Status = ReviewSuperseded
+		log.Info("review superseded by a newer one on another replica")
+	case err != nil:
+		end.Status = ReviewReportFailed
+		end.Err = err.Error()
 		log.Error("report failed", "error", err)
+	default:
+		end.Status = ReviewReported
+		log.Info("review reported", "verdict", sent.Verdict, "summary", sent.Summary)
 	}
-	log.Info("review reported", "verdict", outcome.Verdict, "summary", outcome.Summary)
+}
+
+// report publishes o as j's status. With a Recorder, it publishes in order
+// with every replica's reports of j's pull request
+// (Recorder.ReportInOrder), and is superseded, publishing nothing, when a
+// newer review already reported.
+// When the order cannot be checked, an older review may be publishing over
+// a newer one, so it publishes anything but a pass as is, and a pass as
+// Errored: it never lets a review that may be stale pass a pull request.
+// It returns the outcome it published.
+func (s *Server) report(ctx context.Context, j job, o approval.Outcome, log *slog.Logger) (approval.Outcome, bool, error) {
+	if s.opts.Recorder == nil {
+		return o, false, j.pr.Report(ctx, o)
+	}
+	if j.order > 0 {
+		called, err := s.opts.Recorder.ReportInOrder(ctx, j.pr.Info(), j.order, func(ctx context.Context) error {
+			return j.pr.Report(ctx, o)
+		})
+		switch {
+		case called:
+			return o, false, err
+		case err == nil:
+			return o, true, nil
+		}
+		log.Error("ordering the report failed; the review cannot pass", "error", err)
+	}
+	if o.Verdict == approval.Passed {
+		o = approval.Outcome{Verdict: approval.Errored, Summary: unorderedSummary, Warnings: o.Warnings}
+	}
+	return o, false, j.pr.Report(ctx, o)
+}
+
+// startRecord records j's review starting, returning its record's ID, or
+// 0 when it is not recorded.
+func (s *Server) startRecord(ctx context.Context, j job, log *slog.Logger) int64 {
+	if s.opts.Recorder == nil {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(ctx, recordTimeout)
+	defer cancel()
+	id, err := s.opts.Recorder.StartReview(ctx, ReviewStart{
+		Platform:    j.platform,
+		DeliveryID:  j.deliveryID,
+		PullRequest: j.pr.Info(),
+		Key:         j.pr.Key(),
+		Order:       j.order,
+		QueuedAt:    j.queuedAt,
+	})
+	if err != nil {
+		log.Warn("recording the review failed", "error", err)
+		return 0
+	}
+	return id
+}
+
+// finishRecord records how review id ended, if it was recorded. It runs
+// after the review reported, so it delays no status, and under its own
+// deadline, so a review the server cancelled is still recorded.
+func (s *Server) finishRecord(ctx context.Context, id int64, end ReviewEnd, log *slog.Logger) {
+	if id == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer cancel()
+	if err := s.opts.Recorder.FinishReview(ctx, id, end); err != nil {
+		log.Warn("recording the review's end failed", "review", id, "error", err)
+	}
 }

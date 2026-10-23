@@ -12,6 +12,20 @@ import (
 	"github.com/alphaeron/canopy/internal/approval"
 )
 
+// Evaluation is a review's outcome and what produced it, for a record of
+// the review.
+type Evaluation struct {
+	Outcome approval.Outcome
+	// Input is the review input the review used; nil when it was not read.
+	Input *approval.ReviewInput
+	// State is the review's state; nil when the review did not run.
+	State *approval.ReviewState
+	// Err is why the review could not run, when it could not (Outcome is
+	// then Errored). It may carry platform API details, so it is for
+	// operators, never for the outcome.
+	Err error
+}
+
 // Evaluate reviews pr: it lists the changed files, validates the rules
 // files among them as pr proposes them, and runs the review over the changed
 // files with the platform's review input. An invalid proposed rules file is
@@ -23,20 +37,25 @@ import (
 // The changed files, the review input, and the rules are independent, so
 // they are read concurrently; the review then reuses the rules fetch (see
 // Change).
-func Evaluate(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome {
-	o := outcome(ctx, pr, log)
-	o.Warnings = append(o.Warnings, pr.Warnings()...)
-	for _, w := range o.Warnings {
+func Evaluate(ctx context.Context, pr Change, log *slog.Logger) Evaluation {
+	ev := evaluate(ctx, pr, log)
+	ev.Outcome.Warnings = append(ev.Outcome.Warnings, pr.Warnings()...)
+	for _, w := range ev.Outcome.Warnings {
 		log.Warn("review warning", "warning", w)
 	}
-	return o
+	return ev
 }
 
-// outcome is Evaluate's outcome before the change's warnings.
-func outcome(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome {
-	fail := func(step string, err error) approval.Outcome {
+// evaluate is Evaluate's evaluation before the change's warnings.
+func evaluate(ctx context.Context, pr Change, log *slog.Logger) Evaluation {
+	var input *approval.ReviewInput
+	fail := func(step string, err error) Evaluation {
 		log.Error("review failed", "step", step, "error", err)
-		return approval.Outcome{Verdict: approval.Errored, Summary: failureSummary(ctx, err)}
+		return Evaluation{
+			Outcome: approval.Outcome{Verdict: approval.Errored, Summary: failureSummary(ctx, err)},
+			Input:   input,
+			Err:     fmt.Errorf("%s: %w", step, err),
+		}
 	}
 
 	engine := &Engine{Source: pr, Log: log}
@@ -72,6 +91,7 @@ func outcome(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome 
 	if inErr != nil {
 		return fail("review input", inErr)
 	}
+	input = &in
 	state := engine.Review(ctx, files, in)
 	if ctx.Err() != nil {
 		return fail("review", ctx.Err())
@@ -79,7 +99,7 @@ func outcome(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome 
 	for _, p := range slices.Sorted(maps.Keys(violations)) {
 		log.Warn("proposed rules file invalid", "path", p, "violations", fmt.Sprint(violations[p]))
 	}
-	return OutcomeOf(state, violations)
+	return Evaluation{Outcome: OutcomeOf(state, violations), Input: input, State: state}
 }
 
 // OutcomeOf is what a review means for a change, on every platform and in

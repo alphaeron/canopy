@@ -32,6 +32,10 @@ type PRWebhook interface {
 	// type and body. Any error rejects the request; nothing in it is
 	// trusted before this returns.
 	VerifyWebhook(r *http.Request) (event string, body []byte, err error)
+	// DeliveryID is the platform's ID for a webhook delivery, for the
+	// server's record; "" when it has none. It is not trusted to be
+	// unique: a redelivery may repeat it.
+	DeliveryID(r *http.Request) string
 	// PullRequest turns a verified webhook into the pull request to
 	// review, or reports false when the event does not start a review. It
 	// must not call the platform's API: the pull request does that when

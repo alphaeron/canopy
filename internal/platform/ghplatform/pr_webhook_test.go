@@ -158,6 +158,11 @@ func TestPRWebhookChange(t *testing.T) {
 	noInstallation.Installation = nil
 	ev := pullRequestEvent("base")
 	review := &github.PullRequestReviewEvent{Action: new("submitted"), Repo: ev.Repo, PullRequest: ev.PullRequest, Installation: ev.Installation}
+	closedPR := pullRequestEvent("base").PullRequest
+	closedPR.State = new("closed")
+	reviewOfClosed := &github.PullRequestReviewEvent{Action: new("submitted"), Repo: ev.Repo, PullRequest: closedPR, Installation: ev.Installation}
+	editOfClosed := pullRequestEvent("base")
+	editOfClosed.Action, editOfClosed.Changes, editOfClosed.PullRequest = new("edited"), baseChanged.Changes, closedPR
 
 	tests := []struct {
 		name       string
@@ -172,6 +177,8 @@ func TestPRWebhookChange(t *testing.T) {
 		{name: "title edited", event: "pull_request", body: withAction("edited")},
 		{name: "base branch changed", event: "pull_request", body: marshal(baseChanged), reviewable: true},
 		{name: "review submitted", event: "pull_request_review", body: marshal(review), reviewable: true},
+		{name: "review of a closed pull request", event: "pull_request_review", body: marshal(reviewOfClosed)},
+		{name: "base branch of a closed pull request changed", event: "pull_request", body: marshal(editOfClosed)},
 		{name: "ping", event: "ping", body: []byte(`{"zen":"hi"}`)},
 		{name: "no installation", event: "pull_request", body: marshal(noInstallation), wantErr: true},
 		{name: "malformed", event: "pull_request", body: []byte(`{`), wantErr: true},

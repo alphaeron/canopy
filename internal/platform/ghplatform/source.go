@@ -22,9 +22,9 @@ import (
 	"github.com/alphaeron/canopy/internal/server"
 )
 
-// maxListedFiles is the most files GitHub lists for one pull request; a
-// pull request with more is listed only partially.
-const maxListedFiles = 3000
+// maxComparedFiles is the most files GitHub's comparison of two commits
+// lists; a comparison listing this many may have been cut short.
+const maxComparedFiles = 300
 
 // pullRequest is what a Source needs to know about one pull request: enough
 // to fetch the base tree and its rules, list the changed files, read the
@@ -43,9 +43,9 @@ type pullRequest struct {
 	headSHA string
 	// author is the pull request author's login.
 	author string
-	// changedFiles is the number of files GitHub says the pull request
-	// changes, or 0 when the event does not say.
-	changedFiles int
+	// action is the webhook event and action that requested the review,
+	// e.g. "pull_request.synchronize", for the server's record.
+	action string
 }
 
 // String is the pull request's reference, owner/repo#number, used in errors.
@@ -132,13 +132,12 @@ func pullRequestFrom(repo *github.Repository, gh *github.PullRequest) (*pullRequ
 		return nil, errors.New("no pull request")
 	}
 	pr := &pullRequest{
-		owner:        repo.GetOwner().GetLogin(),
-		repo:         repo.GetName(),
-		number:       gh.GetNumber(),
-		baseSHA:      gh.GetBase().GetSHA(),
-		headSHA:      gh.GetHead().GetSHA(),
-		author:       gh.GetUser().GetLogin(),
-		changedFiles: gh.GetChangedFiles(),
+		owner:   repo.GetOwner().GetLogin(),
+		repo:    repo.GetName(),
+		number:  gh.GetNumber(),
+		baseSHA: gh.GetBase().GetSHA(),
+		headSHA: gh.GetHead().GetSHA(),
+		author:  gh.GetUser().GetLogin(),
 	}
 	switch {
 	case pr.owner == "" || pr.repo == "":
@@ -154,55 +153,61 @@ func pullRequestFrom(repo *github.Repository, gh *github.PullRequest) (*pullRequ
 }
 
 // listedFiles returns the pull request's changed files, listing them on
-// first use. GitHub lists at most maxListedFiles of a pull request's files;
-// a pull request that changes more, by the count the event reports or as a
-// listing cut short shows, is listed by comparing trees instead
-// (changedByTrees), without patches, and warned of as large. A failure is
-// not kept, so a later call retries. The lock is held across the listing so
-// concurrent first uses share one.
+// first use. The files are listed only through requests addressed by the
+// base and head revisions, never by the pull request's number: GitHub
+// answers a request by number for the pull request's head when it is
+// answered, which may already be a newer push than the head this review
+// reports on, so its files would be judged as another commit's.
+//
+// GitHub's comparison of the two revisions lists the files, with patches,
+// unless it lists maxComparedFiles, the most it lists, when the change is
+// listed by comparing trees instead (changedByTrees), without patches, and
+// warned of as large. A comparison listing no files is confirmed by
+// comparing trees too, so a listing GitHub left out can never pass for an
+// empty change. A failure is not kept, so a later call retries. The lock
+// is held across the listing so concurrent first uses share one.
 func (r *Source) listedFiles(ctx context.Context) (*changes, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.files != nil {
 		return r.files, nil
 	}
-	var files []prFile
-	if r.pr.changedFiles <= maxListedFiles {
-		listed, err := listFiles(ctx, r.client, r.pr)
-		if err != nil {
-			return nil, err
-		}
-		if !incomplete(r.pr.changedFiles, len(listed)) {
-			files = listed
-		}
+	// One commit per page: only the files and the merge base are read,
+	// and GitHub lists the files on the first page.
+	cmp, _, err := r.client.Repositories.CompareCommits(ctx, r.pr.owner, r.pr.repo, r.pr.baseSHA, r.pr.headSHA, &github.ListOptions{PerPage: 1})
+	if err != nil {
+		return nil, fmt.Errorf("compare %s with its base: %w", r.pr, err)
 	}
-	if files == nil {
-		compared, err := r.changedByTrees(ctx)
-		if err != nil {
-			return nil, err
+	if n := len(cmp.Files); n > 0 && n < maxComparedFiles {
+		files := make([]prFile, 0, n)
+		for _, f := range cmp.Files {
+			files = append(files, prFile{path: f.GetFilename(), previousPath: f.GetPreviousFilename(), patch: f.GetPatch()})
 		}
-		files = compared
+		r.files = newChanges(files)
+		return r.files, nil
+	}
+	mergeBase := cmp.GetMergeBaseCommit().GetSHA()
+	if mergeBase == "" {
+		return nil, fmt.Errorf("find the merge base of %s: none reported", r.pr)
+	}
+	files, err := r.changedByTrees(ctx, mergeBase)
+	if err != nil {
+		return nil, err
+	}
+	if len(cmp.Files) > 0 {
 		r.warnings = append(r.warnings, fmt.Sprintf("large pull request (%d files)", len(files)))
 	}
 	r.files = newChanges(files)
 	return r.files, nil
 }
 
-// changedByTrees lists the files the pull request changes as GitHub's file
-// listing does, without its limit: every path whose blob differs between
-// the merge base of the base and head revisions and the head, or that only
-// one of them has. A rename is the path it left and the path it arrived at.
-// It has no patches. It costs a comparison, for the merge base, and the two
-// tree listings (see listBlobs), the merge base's often the base's own.
-func (r *Source) changedByTrees(ctx context.Context) ([]prFile, error) {
-	cmp, _, err := r.client.Repositories.CompareCommits(ctx, r.pr.owner, r.pr.repo, r.pr.baseSHA, r.pr.headSHA, &github.ListOptions{PerPage: 1})
-	if err != nil {
-		return nil, fmt.Errorf("find the merge base of %s: %w", r.pr, err)
-	}
-	mergeBase := cmp.GetMergeBaseCommit().GetSHA()
-	if mergeBase == "" {
-		return nil, fmt.Errorf("find the merge base of %s: none reported", r.pr)
-	}
+// changedByTrees lists the files the pull request changes as GitHub's
+// comparison does, without its limit: every path whose blob differs between
+// mergeBase, the merge base of the base and head revisions, and the head,
+// or that only one of them has. A rename is the path it left and the path
+// it arrived at. It has no patches. It costs the two tree listings (see
+// listBlobs), the merge base's often the base's own.
+func (r *Source) changedByTrees(ctx context.Context, mergeBase string) ([]prFile, error) {
 	baseTree := r.tree
 	if mergeBase != r.pr.baseSHA {
 		baseTree = newBaseTree(r.client, r.pr.owner, r.pr.repo, mergeBase, r.tree.cache)
@@ -239,29 +244,6 @@ func (r *Source) Warnings() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return slices.Clone(r.warnings)
-}
-
-// incomplete reports whether a listing of listed files is short of the
-// reported count, or reached GitHub's cap without a count to confirm it.
-func incomplete(reported, listed int) bool {
-	return listed < reported || (reported == 0 && listed >= maxListedFiles)
-}
-
-// listFiles lists every file a pull request changes, with its patch.
-func listFiles(ctx context.Context, client *github.Client, pr *pullRequest) ([]prFile, error) {
-	page, err := collect(client.PullRequests.ListFilesIter(ctx, pr.owner, pr.repo, pr.number, &github.ListOptions{PerPage: perPage}))
-	if err != nil {
-		return nil, fmt.Errorf("list files of %s: %w", pr, err)
-	}
-	files := make([]prFile, 0, len(page))
-	for _, f := range page {
-		files = append(files, prFile{
-			path:         f.GetFilename(),
-			previousPath: f.GetPreviousFilename(),
-			patch:        f.GetPatch(),
-		})
-	}
-	return files, nil
 }
 
 // Evaluator is the GitHub review platform for the pull request: rules files
@@ -472,6 +454,21 @@ var checkConclusions = map[approval.Verdict]string{
 	approval.Pending: "action_required",
 	approval.Failed:  "failure",
 	approval.Errored: "failure",
+}
+
+// Info is the pull request as the server records it: its installation's
+// cache scope, repository (lower-cased, as Key names it), number,
+// revisions, author, and the event that requested the review.
+func (r *Source) Info() server.PullRequestInfo {
+	return server.PullRequestInfo{
+		Scope:   r.tree.cache.Name(),
+		Repo:    strings.ToLower(r.pr.owner + "/" + r.pr.repo),
+		Number:  r.pr.number,
+		BaseSHA: r.pr.baseSHA,
+		HeadSHA: r.pr.headSHA,
+		Author:  r.pr.author,
+		Action:  r.pr.action,
+	}
 }
 
 // Key is the pull request's repository and head revision, where Report

@@ -14,12 +14,15 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/alphaeron/canopy/internal/brand"
 	"github.com/alphaeron/canopy/internal/config"
 	"github.com/alphaeron/canopy/internal/platform/ghplatform"
 	"github.com/alphaeron/canopy/internal/server"
+	"github.com/alphaeron/canopy/internal/store"
 )
 
 // platforms builds each hosted platform the server can run, by name. A new
@@ -29,6 +32,9 @@ var platforms = map[config.Platform]func(cfg *config.Config, repo *server.RepoCa
 		return ghplatform.NewPRWebhook(cfg.GitHub, repo, log)
 	},
 }
+
+// pruneInterval is how often the server prunes its database.
+const pruneInterval = time.Hour
 
 func main() {
 	if err := run(); err != nil {
@@ -66,14 +72,48 @@ func run() error {
 	if !ok {
 		return errors.New("no platform configured: set one platform's settings (see the README's Configuration section)")
 	}
-	platform, err := newPlatform(cfg, server.NewRepoCache(), log)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// Interfaces stay nil without a database: a nil *store.Store in them
+	// would not be.
+	var (
+		repoStore server.RepoStore
+		recorder  server.Recorder
+	)
+	if cfg.DatabaseURL != "" {
+		db, err := store.Open(ctx, store.Options{
+			URL:      cfg.DatabaseURL,
+			Key:      []byte(cfg.DatabaseKey),
+			MinConns: int32(min(cfg.ReviewWorkers, 1<<20)) + 8,
+		})
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		if err := db.ApplySchema(ctx); err != nil {
+			return err
+		}
+		repoStore, recorder = db, db
+		log.Info("database ready", "component", "store")
+
+		// Stopped and waited for before the database closes, also when
+		// run returns early.
+		pruneCtx, stopPruning := context.WithCancel(ctx)
+		var pruning sync.WaitGroup
+		pruning.Go(func() { db.PruneEvery(pruneCtx, pruneInterval, log) })
+		defer func() {
+			stopPruning()
+			pruning.Wait()
+		}()
+	}
+	cache := server.NewRepoCache(repoStore, log)
+	defer cache.Wait() // before the database closes
+	platform, err := newPlatform(cfg, cache, log)
 	if err != nil {
 		return fmt.Errorf("platform %s: %w", name, err)
 	}
 	log.Info("platform selected", "component", "server", "platform", name)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	srv, err := server.New(ctx, server.Options{
 		Addr:            cfg.ServeAddr,
 		Workers:         cfg.ReviewWorkers,
@@ -83,6 +123,7 @@ func run() error {
 		ShutdownTimeout: cfg.ShutdownTimeout,
 		Version:         version(),
 		Log:             log,
+		Recorder:        recorder,
 	}, platform)
 	if err != nil {
 		return err

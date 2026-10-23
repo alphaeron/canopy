@@ -117,7 +117,7 @@ func TestEvaluate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			pr := newStubChange()
 			tt.setup(pr)
-			if got := Evaluate(t.Context(), pr, slog.New(slog.DiscardHandler)); !reflect.DeepEqual(got, tt.want) {
+			if got := Evaluate(t.Context(), pr, slog.New(slog.DiscardHandler)).Outcome; !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("outcome = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -131,7 +131,7 @@ func TestEvaluateEnforcesTheBaseRules(t *testing.T) {
 	pr.changedSet = []string{"main.go", rulesfile.FileName}
 	pr.head = map[string]string{rulesfile.FileName: "- \".*\":\n  name: Root\n  approvers:\n    - target: dev\n      required_count: 1\n"}
 	pr.input = approval.ReviewInput{Author: "dev", Approvers: []string{"dev"}}
-	if got := Evaluate(t.Context(), pr, slog.New(slog.DiscardHandler)).Verdict; got != approval.Pending {
+	if got := Evaluate(t.Context(), pr, slog.New(slog.DiscardHandler)).Outcome.Verdict; got != approval.Pending {
 		t.Errorf("verdict = %s, want pending: the proposed rules must not apply before merge", got)
 	}
 }
