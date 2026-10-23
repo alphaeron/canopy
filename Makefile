@@ -1,4 +1,4 @@
-.PHONY: test e2e cover cover-html fmt lint vulncheck smoke smoke-serve deadcode doc doc-all doc-serve
+.PHONY: test e2e cover cover-html fmt lint vulncheck smoke smoke-serve deadcode doc doc-all doc-serve release-check snapshot
 
 test:
 	@go test -v ./...
@@ -54,3 +54,17 @@ doc-all:
 doc-serve:
 	@echo "Serving docs at http://$(DOC_ADDR)/github.com/alphaeron/canopy"
 	@go run golang.org/x/pkgsite/cmd/pkgsite@$(PKGSITE_VERSION) -http=$(DOC_ADDR) .
+
+# GoReleaser (see .goreleaser.yaml) builds the CLI's release artifacts.
+GORELEASER_VERSION ?= latest
+GORELEASER ?= go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
+
+# release-check validates .goreleaser.yaml.
+release-check:
+	@$(GORELEASER) check
+
+# snapshot builds every release artifact into dist/ without publishing. The
+# snap needs snapcraft, so it is skipped where snapcraft is not installed; the
+# Windows and macOS installers are built only by the release workflow.
+snapshot:
+	@$(GORELEASER) release --snapshot --clean $(if $(shell command -v snapcraft),,--skip=snapcraft)

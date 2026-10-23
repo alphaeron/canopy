@@ -1,0 +1,113 @@
+# Releases the canopy CLI when a v* tag is pushed. GoReleaser builds the
+# archives and Linux packages into a draft GitHub release; the msi and pkg
+# jobs build the Windows and macOS installers from its archives; publish
+# attaches them, adds them to checksums.txt, and publishes the release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install snapcraft
+        run: sudo snap install snapcraft --classic
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # GoReleaser's version is the tag without its leading v.
+      - id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: archives
+          path: |
+            dist/canopy_*_windows_*.zip
+            dist/canopy_*_darwin_all.tar.gz
+          if-no-files-found: error
+
+  msi:
+    needs: goreleaser
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives
+          path: dist
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 7.0.0
+      - name: Build MSI
+        shell: pwsh
+        run: scripts/package-msi.ps1 -Version '${{ needs.goreleaser.outputs.version }}' -Arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-windows-${{ matrix.arch }}
+          path: dist/*.msi
+          if-no-files-found: error
+
+  pkg:
+    needs: goreleaser
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives
+          path: dist
+      - name: Build pkg
+        run: scripts/package-pkg.sh '${{ needs.goreleaser.outputs.version }}'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-macos
+          path: dist/*.pkg
+          if-no-files-found: error
+
+  publish:
+    needs: [msi, pkg]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: installer-*
+          path: dist
+          merge-multiple: true
+      - name: Attach installers and publish the release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release download "$TAG" --pattern checksums.txt
+          sha256sum *.msi *.pkg >> checksums.txt
+          gh release upload "$TAG" *.msi *.pkg checksums.txt --clobber
+          gh release edit "$TAG" --draft=false

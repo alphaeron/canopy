@@ -1,0 +1,33 @@
+<!--
+  WiX source for the canopy CLI's Windows installer, built by
+  scripts/package-msi.ps1. It installs canopy.exe under Program Files and adds
+  that directory to the system PATH.
+
+  UpgradeCode identifies the product across versions so a newer MSI replaces
+  an older one: never change it.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Canopy" Manufacturer="alphaeron" Version="$(var.Version)"
+           UpgradeCode="5FA33489-DF64-4BDF-BFE2-0B633583042B" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Canopy is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Links shown in Windows' installed apps list. -->
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/alphaeron/canopy" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/alphaeron/canopy/issues" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Canopy">
+        <Component Id="CanopyExe">
+          <File Source="$(var.BinDir)\canopy.exe" KeyPath="yes" />
+          <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Part="last"
+                       Action="set" System="yes" Permanent="no" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main">
+      <ComponentRef Id="CanopyExe" />
+    </Feature>
+  </Package>
+</Wix>

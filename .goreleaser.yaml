@@ -1,0 +1,83 @@
+# GoReleaser builds the canopy CLI's release (see the README's Releasing
+# section): archives, the universal macOS binary, deb/rpm/apk packages, and a
+# snap, published as a draft GitHub release. The Windows MSI and macOS pkg
+# installers are GoReleaser Pro features, so .github/workflows/release.yml
+# builds them from this output and then publishes the release.
+#
+# The review server (cmd/canopyweb) is released separately.
+version: 2
+
+project_name: canopy
+
+builds:
+  - id: canopy
+    main: ./cmd/canopy
+    binary: canopy
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/alphaeron/canopy/internal/cli.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+# One macOS binary for both Intel and Apple silicon, in place of the two.
+universal_binaries:
+  - ids: [canopy]
+    replace: true
+
+archives:
+  - ids: [canopy]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+nfpms:
+  - ids: [canopy]
+    package_name: canopy
+    homepage: https://github.com/alphaeron/canopy
+    # Packages require a maintainer address: GitHub's no-reply address for
+    # alphaeron, so reports go to the issue tracker (deb's Bugs field) instead.
+    maintainer: alphaeron <7694530+alphaeron@users.noreply.github.com>
+    description: Canopy code review CLI, which decides who must approve a change from RULES files kept in the repository.
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    deb:
+      fields:
+        Bugs: https://github.com/alphaeron/canopy/issues
+
+snapcrafts:
+  - ids: [canopy]
+    name: canopy
+    summary: Canopy code review CLI
+    description: Canopy decides who must approve a change from RULES files kept in the repository.
+    base: core24
+    grade: stable
+    # Classic: the CLI reads repositories anywhere on disk and its config from
+    # $HOME, both of which strict confinement hides.
+    confinement: classic
+    # Attached to the GitHub release only, not uploaded to the Snap Store.
+    publish: false
+    apps:
+      canopy:
+        command: canopy
+
+release:
+  github:
+    owner: alphaeron
+    name: canopy
+  # The release workflow publishes the draft once the installers are attached.
+  draft: true
+  replace_existing_draft: true
+  prerelease: auto
+
+changelog:
+  sort: asc

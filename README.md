@@ -2,12 +2,26 @@
 
 Canopy decides who must approve a change from `RULES` files kept in the repository. It ships as two binaries: `canopy`, a CLI that previews and edits the rules of a local checkout, and `canopyweb`, a review server that reviews pull requests on a hosted platform (GitHub) and reports the outcome back as a status.
 
-## Usage
+## Installation
+
+Each [GitHub release](https://github.com/alphaeron/canopy/releases) of the `canopy` CLI attaches, for amd64 and arm64 (macOS: one universal binary for both):
+
+| Platform | Installer | Archive |
+|---|---|---|
+| Windows | `canopy_<version>_windows_<arch>.msi`: installs under Program Files and adds it to `PATH` | `.zip` |
+| macOS | `canopy_<version>_darwin_all.pkg`: installs `/usr/local/bin/canopy` | `.tar.gz` |
+| Linux | `.deb`, `.rpm`, `.apk` (install `/usr/bin/canopy`), and `.snap` | `.tar.gz` |
+
+`checksums.txt` lists every file's SHA-256. Nothing is signed yet, so Windows SmartScreen and macOS Gatekeeper warn about the installers (on macOS, open the `.pkg` from Finder with Control-click → Open), and the snap, which is not in the Snap Store, installs with `sudo snap install --dangerous --classic ./canopy_<version>_linux_<arch>.snap`. `canopy --version` prints the installed version.
+
+From source:
 
 ```sh
 go install ./cmd/canopy      # the CLI
 go build ./cmd/canopyweb     # the review server (see Review Server)
 ```
+
+## Usage
 
 Every `canopy` command runs against the git repository containing the current directory. Run bare on a terminal, `canopy` opens a TUI listing every command; `--json` prints any command's result as JSON instead, and `-v` enables debug logging.
 
@@ -271,3 +285,9 @@ A pull request's changed files come from GitHub's comparison of the base and hea
 ## Development
 
 The `Makefile` wraps the common tasks: `make test`, `make lint` (golangci-lint), `make e2e` (each hosted platform's end-to-end tests), `make smoke` and `make smoke-serve` (build each binary and exercise it), `make deadcode`, `make vulncheck`, and `make doc` / `make doc-serve` for the package documentation. To add a review platform, see [internal/platform/README.md](internal/platform/README.md).
+
+### Releasing
+
+Pushing a `v*` tag (e.g. `git tag v1.2.0 && git push origin v1.2.0`) runs `.github/workflows/release.yml`, which releases the CLI; the review server is released separately. [GoReleaser](https://goreleaser.com) (`.goreleaser.yaml`) builds the archives, the universal macOS binary, and the deb, rpm, apk, and snap packages into a draft GitHub release, stamping the tag's version into `canopy --version`. Later jobs build the Windows MSI (`scripts/package-msi.ps1`, with WiX) and the macOS pkg (`scripts/package-pkg.sh`), attach them, add them to `checksums.txt`, and publish the release. A tag with a pre-release suffix (`v1.2.0-rc.1`) is published as a pre-release.
+
+`make release-check` validates `.goreleaser.yaml`, and `make snapshot` builds the GoReleaser artifacts into `dist/` without publishing (the snap only where `snapcraft` is installed).
