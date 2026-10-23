@@ -14,7 +14,7 @@ import (
 // repository: the base revision committed at HEAD, the change left
 // uncommitted in the working tree.
 func TestLocalMeetsTheSourceContract(t *testing.T) {
-	platformtest.RunSourceContract(t, func(t *testing.T, f platformtest.Fixture) review.Source {
+	platformtest.RunSourceContract(t, platformtest.HeadRevision, func(t *testing.T, f platformtest.Fixture) review.Source {
 		dir, repo := newScratchRepo(t, f.Base)
 		for path, content := range f.Change.Write {
 			writeTestFile(t, dir, path, content)

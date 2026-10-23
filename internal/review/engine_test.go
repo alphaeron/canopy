@@ -3,9 +3,12 @@ package review
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/approval"
@@ -25,20 +28,32 @@ type stubSource struct {
 	changedSet []string
 	diffs      map[string]string
 	diffCalls  []string
+	// resolver, when set, is the platform's resolver; the default
+	// pass-through one otherwise.
+	resolver approval.ApproverResolver
 }
 
 func (s *stubSource) RepoRoot() string { return s.root }
 
 // Evaluator is a local-style platform over the stub's rules.
 func (s *stubSource) Evaluator() *approval.Evaluator {
+	var resolver approval.ApproverResolver = &approval.DefaultApproverResolver{}
+	if s.resolver != nil {
+		resolver = s.resolver
+	}
 	return &approval.Evaluator{
 		Fetch:    &stubFetch{rules: s.rules, err: s.err},
-		Resolver: &approval.DefaultApproverResolver{},
+		Resolver: resolver,
 		Log:      slog.New(slog.DiscardHandler),
 	}
 }
 
 func (s *stubSource) AllFiles(context.Context) ([]string, error) { return s.allFiles, nil }
+
+// ReadHead has no proposed files; stubChange supplies them.
+func (s *stubSource) ReadHead(_ context.Context, path string) ([]byte, error) {
+	return nil, &fs.PathError{Op: "read", Path: path, Err: fs.ErrNotExist}
+}
 
 func (s *stubSource) ChangedFiles(context.Context) ([]string, error) {
 	if s.changedErr != nil {
@@ -412,5 +427,79 @@ func TestExactPattern(t *testing.T) {
 		if got := re.MatchString(path); got != want {
 			t.Errorf("match %q = %v, want %v", path, got, want)
 		}
+	}
+}
+
+// TestValidateProposed pins the check of the rules files a change proposes,
+// shared by the server and kit review: each is read as proposed, parse
+// errors and rule violations are reported, and files that are gone or not
+// rules files are skipped.
+func TestValidateProposed(t *testing.T) {
+	pr := newStubChange()
+	pr.head = map[string]string{
+		"ok/KIT":      "- \".*\":\n  name: Ok\n  approvers:\n    - target: lead\n      required_count: 1\n",
+		"broken/KIT":  "- [not: rules\n",
+		"badre/KIT":   "- \"(\":\n  name: Bad\n",
+		"nocount/KIT": "- \".*\":\n  name: NoCount\n  approvers:\n    - target: org/team\n",
+	}
+	// deleted/KIT is pending but absent at the head: deleted, so skipped.
+	// main.go is not a rules file, so it is not validated.
+	pending := []string{"ok/KIT", "broken/KIT", "badre/KIT", "nocount/KIT", "deleted/KIT", "main.go"}
+
+	got, err := New(pr, nil).ValidateProposed(t.Context(), pending)
+	if err != nil {
+		t.Fatalf("ValidateProposed: %v", err)
+	}
+	for _, p := range []string{"broken/KIT", "badre/KIT", "nocount/KIT"} {
+		if len(got[p]) == 0 {
+			t.Errorf("%s: no violations, want some", p)
+		}
+	}
+	for _, p := range []string{"ok/KIT", "deleted/KIT", "main.go"} {
+		if len(got[p]) != 0 {
+			t.Errorf("%s: violations %v, want none", p, got[p])
+		}
+	}
+
+	tooLarge := fmt.Errorf("read big/KIT: %w", rulesfile.ErrTooLarge)
+	pr.headErr = tooLarge
+	if got, err := New(pr, nil).ValidateProposed(t.Context(), []string{"big/KIT"}); err != nil || !errors.Is(got["big/KIT"][0], rulesfile.ErrTooLarge) {
+		t.Errorf("ValidateProposed with an oversized file = %v, %v; want it as a violation", got, err)
+	}
+
+	unreadable := errors.New("unreadable")
+	pr.headErr = unreadable
+	if _, err := New(pr, nil).ValidateProposed(t.Context(), pending[:1]); !errors.Is(err, unreadable) {
+		t.Errorf("ValidateProposed with an unreadable file err = %v, want the read error", err)
+	}
+}
+
+// strictResolver is a platform resolver that rejects targets with "!", as
+// GitHub rejects what is not a login or a team.
+type strictResolver struct {
+	*approval.DefaultApproverResolver
+}
+
+func (strictResolver) ValidateTarget(target string) error {
+	if strings.Contains(target, "!") {
+		return fmt.Errorf("%q: %w", target, approval.ErrInvalidTarget)
+	}
+	return nil
+}
+
+// TestValidateProposedChecksTargetSyntax pins that the platform's target
+// syntax is part of validating a proposed rules file.
+func TestValidateProposedChecksTargetSyntax(t *testing.T) {
+	pr := newStubChange()
+	pr.resolver = strictResolver{&approval.DefaultApproverResolver{}}
+	pr.head = map[string]string{
+		"svc/KIT": "- \".*\":\n  approvers:\n    - target: bad!name\n      required_count: 1\n    - target: lead\n      required_count: 1\n",
+	}
+	got, err := New(pr, nil).ValidateProposed(t.Context(), []string{"svc/KIT"})
+	if err != nil {
+		t.Fatalf("ValidateProposed: %v", err)
+	}
+	if errs := got["svc/KIT"]; len(errs) != 1 || !errors.Is(errs[0], approval.ErrInvalidTarget) {
+		t.Errorf("violations = %v, want the one invalid target", errs)
 	}
 }

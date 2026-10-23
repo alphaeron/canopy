@@ -44,6 +44,36 @@ type Change struct {
 	Rename map[string]string
 }
 
+// Revision is which side of a fixture a platform reads its rules and file
+// universe (Source.AllFiles) from: a hosted review enforces the base
+// revision's, a local review previews the working tree's, the head.
+type Revision int
+
+const (
+	// BaseRevision is the fixture's base revision.
+	BaseRevision Revision = iota
+	// HeadRevision is the base revision with the change applied.
+	HeadRevision
+)
+
+// files is the fixture's file paths at rev, sorted.
+func (f Fixture) files(rev Revision) []string {
+	paths := maps.Clone(f.Base)
+	if rev == HeadRevision {
+		for p, content := range f.Change.Write {
+			paths[p] = content
+		}
+		for _, p := range f.Change.Delete {
+			delete(paths, p)
+		}
+		for from, to := range f.Change.Rename {
+			paths[to] = paths[from]
+			delete(paths, from)
+		}
+	}
+	return slices.Sorted(maps.Keys(paths))
+}
+
 // SourceFactory builds the platform's review.Source over f: f.Base as the
 // base revision and f.Change as the change under review. It fails t when it
 // cannot.
@@ -88,19 +118,19 @@ func fixture() Fixture {
 }
 
 // RunSourceContract checks the review.Source that newSource builds against
-// the Source contract: the base revision's files, every changed path
-// (both sides of a rename), per-file diffs, and a complete evaluator that
-// reads the rules files.
-func RunSourceContract(t *testing.T, newSource SourceFactory) {
+// the Source contract: the files at rev, the revision the platform reads
+// rules from; every changed path (both sides of a rename); per-file diffs;
+// and a complete evaluator that reads the rules files.
+func RunSourceContract(t *testing.T, rev Revision, newSource SourceFactory) {
 	t.Helper()
 	f := fixture()
 
-	t.Run("AllFiles is the base revision, sorted", func(t *testing.T) {
+	t.Run("AllFiles is the rules revision, sorted", func(t *testing.T) {
 		got, err := newSource(t, f).AllFiles(t.Context())
 		if err != nil {
 			t.Fatalf("AllFiles: %v", err)
 		}
-		if want := slices.Sorted(maps.Keys(f.Base)); !slices.Equal(got, want) {
+		if want := f.files(rev); !slices.Equal(got, want) {
 			t.Errorf("AllFiles = %v, want %v", got, want)
 		}
 	})
@@ -455,9 +485,9 @@ func RunStatusReporterContract(t *testing.T, newReporter StatusReporterFactory) 
 
 	t.Run("each verdict is one report, and only a pass passes", func(t *testing.T) {
 		r, observe := newReporter(t)
-		verdicts := []review.Verdict{review.Passed, review.Pending, review.Failed, review.Errored}
+		verdicts := []approval.Verdict{approval.Passed, approval.Pending, approval.Failed, approval.Errored}
 		for _, v := range verdicts {
-			if err := r.Report(t.Context(), review.Outcome{Verdict: v, Summary: string(v)}); err != nil {
+			if err := r.Report(t.Context(), approval.Outcome{Verdict: v, Summary: string(v)}); err != nil {
 				t.Fatalf("Report(%s): %v", v, err)
 			}
 		}
@@ -481,8 +511,8 @@ func RunStatusReporterContract(t *testing.T, newReporter StatusReporterFactory) 
 
 	t.Run("a later report replaces the earlier one", func(t *testing.T) {
 		r, observe := newReporter(t)
-		for _, v := range []review.Verdict{review.Pending, review.Passed} {
-			if err := r.Report(t.Context(), review.Outcome{Verdict: v, Summary: "s"}); err != nil {
+		for _, v := range []approval.Verdict{approval.Pending, approval.Passed} {
+			if err := r.Report(t.Context(), approval.Outcome{Verdict: v, Summary: "s"}); err != nil {
 				t.Fatalf("Report(%s): %v", v, err)
 			}
 		}
@@ -495,7 +525,7 @@ func RunStatusReporterContract(t *testing.T, newReporter StatusReporterFactory) 
 	t.Run("an oversized summary is cut, not rejected", func(t *testing.T) {
 		r, observe := newReporter(t)
 		long := strings.Repeat("ü", 100_000)
-		if err := r.Report(t.Context(), review.Outcome{Verdict: review.Failed, Summary: long}); err != nil {
+		if err := r.Report(t.Context(), approval.Outcome{Verdict: approval.Failed, Summary: long}); err != nil {
 			t.Fatalf("Report: %v", err)
 		}
 		got := observe()

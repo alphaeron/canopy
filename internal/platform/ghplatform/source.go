@@ -18,7 +18,6 @@ import (
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/brand"
 	"github.com/alphaeron/kit/internal/logx"
-	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/server"
 )
@@ -276,7 +275,7 @@ func (r *Source) Evaluator() *approval.Evaluator { return r.evaluator }
 // that the rules will match against when the PR is merged. This is the
 // GitHub equivalent of AllFiles over the worktree: every file that could be
 // affected, not just the ones the PR happens to touch. A truncated tree
-// listing is review.ErrTreeTruncated.
+// listing is approval.ErrTreeTruncated.
 func (r *Source) AllFiles(ctx context.Context) ([]string, error) {
 	return r.tree.Files(ctx)
 }
@@ -359,8 +358,9 @@ const (
 //     later change request or dismissal cancels an earlier approval;
 //     comments change nothing. Approvals count whatever commit they were
 //     made on, so pushing after an approval does not cancel it. The
-//     author's own reviews are ignored: self_approve rules decide whether
-//     the author counts.
+//     author's own reviews are ignored: authoring the pull request is the
+//     author's approval (see approval.ReviewInput.Author), which
+//     self_approve rules decide whether to count.
 //   - IsActive: a user is inactive when GitHub reports their account
 //     suspended (suspended_at) or does not know them. Each user is looked
 //     up once, through ctx, which must outlive the review. A failed lookup
@@ -473,11 +473,11 @@ const maxCheckSummary = 65535
 // passed review succeeds; one waiting on approvals requires action (the
 // approvals), and a change that fails the review and a review that could
 // not produce a result both fail, told apart by the title.
-var checkConclusions = map[review.Verdict]string{
-	review.Passed:  "success",
-	review.Pending: "action_required",
-	review.Failed:  "failure",
-	review.Errored: "failure",
+var checkConclusions = map[approval.Verdict]string{
+	approval.Passed:  "success",
+	approval.Pending: "action_required",
+	approval.Failed:  "failure",
+	approval.Errored: "failure",
 }
 
 // Key is the pull request's repository and head revision, where Report
@@ -491,7 +491,7 @@ func (r *Source) Key() string {
 // request's head revision, superseding the earlier report. The title is
 // o.Description fitted to maxCheckTitle; the summary lists the outcome in
 // full (see checkSummary).
-func (r *Source) Report(ctx context.Context, o review.Outcome) error {
+func (r *Source) Report(ctx context.Context, o approval.Outcome) error {
 	conclusion, ok := checkConclusions[o.Verdict]
 	if !ok {
 		return fmt.Errorf("report on %s: unknown verdict %q", r.pr, o.Verdict)
@@ -518,10 +518,10 @@ func (r *Source) Report(ctx context.Context, o review.Outcome) error {
 // as fit, each list ending with how many more there are. Items (file paths
 // and approver names) come from the pull request, so each is shown as code,
 // which Markdown does not interpret.
-func checkSummary(o review.Outcome, limit int) string {
+func checkSummary(o approval.Outcome, limit int) string {
 	var b strings.Builder
 	// Only a summary is cut, the way Description cuts one too long alone.
-	b.WriteString("**" + review.Outcome{Summary: o.Summary}.Description(limit/2) + "**\n")
+	b.WriteString("**" + approval.Outcome{Summary: o.Summary}.Description(limit/2) + "**\n")
 	list := func(heading string, items []string, code bool) {
 		if len(items) == 0 {
 			return

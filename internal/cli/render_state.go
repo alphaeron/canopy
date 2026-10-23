@@ -147,6 +147,17 @@ func ruleLabel(name, pattern string) string {
 	return name + ": " + pattern
 }
 
+// verdictBadge is the badge for a review's verdict.
+func verdictBadge(v approval.Verdict) tui.Badge {
+	switch v {
+	case approval.Passed:
+		return tui.BadgeOK
+	case approval.Pending:
+		return tui.BadgePending
+	}
+	return tui.BadgeFail
+}
+
 func joinNotes(a, b string) string {
 	switch {
 	case a == "":

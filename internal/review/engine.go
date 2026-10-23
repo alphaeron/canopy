@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"regexp"
 	"slices"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/logx"
+	"github.com/alphaeron/kit/internal/parallel"
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
@@ -204,6 +206,63 @@ func (e *Engine) Coverage(ctx context.Context, opts Options) (*CoverageReport, *
 		report = report.FilterScope(opts.ScopeName)
 	}
 	return report, m, nil
+}
+
+// ValidateProposed validates the rules files among files (a change's
+// files) as the source proposes them (ReadHead): parse errors, and the
+// platform's validation of the rules (approval.Evaluator.Validate). A path
+// the head does not have (a deleted rules file, or the old side of a
+// rename) is skipped. Violations are keyed
+// by rules file path, and a valid file is omitted. A file over
+// rulesfile.MaxSize is a violation; any other file that cannot be read is
+// an operational error.
+//
+// The rules a review enforces come from the base revision, so this is what
+// keeps a pull request from merging a rules file that only fails once it
+// takes effect.
+func (e *Engine) ValidateProposed(ctx context.Context, files []string) (map[string][]error, error) {
+	var pending []string
+	for _, f := range files {
+		if rulesfile.IsRulesFile(f) {
+			pending = append(pending, f)
+		}
+	}
+	// Each read is a round trip, so read the files concurrently, then
+	// handle them in order.
+	heads := make([]struct {
+		data []byte
+		err  error
+	}, len(pending))
+	parallel.For(len(pending), parallel.Limit, func(i int) {
+		heads[i].data, heads[i].err = e.Source.ReadHead(ctx, pending[i])
+	})
+
+	out := map[string][]error{}
+	proposed := rulesfile.Set{}
+	for i, p := range pending {
+		data, err := heads[i].data, heads[i].err
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if errors.Is(err, rulesfile.ErrTooLarge) {
+			out[p] = []error{err}
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read proposed rules file %s: %w", p, err)
+		}
+		rules, err := rulesfile.ParseRules(data)
+		if err != nil {
+			out[p] = []error{err}
+			continue
+		}
+		proposed[p] = rules
+	}
+	// A file that failed to parse is not in proposed, so the keys are disjoint.
+	for p, errs := range e.Source.Evaluator().Validate(proposed) {
+		out[p] = errs
+	}
+	return out, nil
 }
 
 // Review runs the full approval review (fetch, sift, approve) over files on

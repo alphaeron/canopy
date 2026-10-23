@@ -1,15 +1,11 @@
-package review
+package approval
 
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"math"
-	"slices"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/alphaeron/kit/internal/approval"
 )
 
 // Verdict is what a review means for a change, in the terms every platform
@@ -27,7 +23,7 @@ const (
 	// proposes an invalid rules file. Only a change to it fixes that.
 	Failed Verdict = "failed"
 	// Errored: the review could not produce a valid result
-	// (approval.StatusError: a platform failure, a listing too large to
+	// (StatusError: a platform failure, a listing too large to
 	// evaluate, a skipped or unsatisfiable rule; or the review could not
 	// run at all). It is not a judgement of the change.
 	Errored Verdict = "errored"
@@ -118,60 +114,17 @@ func plural(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// OutcomeOf maps a review state to its outcome, so platforms cannot
-// disagree on what a review means: StatusSatisfied and StatusDone pass,
-// StatusError is Errored, and every other status is pending (approvals are
-// still missing or unresolved). A pending outcome's items are the approvers
-// still needed, each with how many more approvals it owes the file that
-// needs the most.
-func OutcomeOf(state *approval.ReviewState) Outcome {
-	switch state.Overall {
-	case approval.StatusSatisfied, approval.StatusDone:
-		n := len(state.Files)
-		if n == 0 {
-			return Outcome{Verdict: Passed, Summary: "no files to approve"}
-		}
-		if n == 1 {
-			return Outcome{Verdict: Passed, Summary: "1 file approved"}
-		}
-		return Outcome{Verdict: Passed, Summary: fmt.Sprintf("all %d files approved", n)}
-	case approval.StatusError:
-		return Outcome{Verdict: Errored, Summary: errorSummary(state)}
-	}
-	waiting := 0
-	owed := map[string]int{}
-	for _, fs := range state.Files {
-		if fs.Status == approval.StatusSatisfied {
-			continue
-		}
-		waiting++
-		for _, r := range fs.Required {
-			if !r.Satisfied {
-				owed[r.Target] = max(owed[r.Target], r.RequiredCount-r.SatisfiedCount)
-			}
-		}
-	}
-	var items []string
-	for _, t := range slices.Sorted(maps.Keys(owed)) {
-		if owed[t] > 1 {
-			items = append(items, fmt.Sprintf("%s ×%d", t, owed[t]))
-		} else {
-			items = append(items, t)
-		}
-	}
-	summary := fmt.Sprintf("%d of %d files await approval", waiting, len(state.Files))
-	if waiting == 1 {
-		summary = fmt.Sprintf("1 of %d files awaits approval", len(state.Files))
-		if len(state.Files) == 1 {
-			summary = "1 file awaits approval"
-		}
-	}
-	return Outcome{Verdict: Pending, Summary: summary, Items: items}
+// InvalidRulesOutcome is the outcome of a change that proposes invalid
+// rules files: Failed, whatever its approvals, naming the files. Only a
+// change to them fixes it.
+func InvalidRulesOutcome(paths []string) Outcome {
+	summary := plural(len(paths), "invalid proposed rules file")
+	return Outcome{Verdict: Failed, Summary: summary, Items: paths}
 }
 
 // errorSummary names why a review errored without quoting the error, which
 // may carry platform API details.
-func errorSummary(state *approval.ReviewState) string {
+func errorSummary(state *ReviewState) string {
 	if s := LimitSummary(state.Err); s != "" {
 		return s
 	}

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 
 	"github.com/alphaeron/kit/internal/logx"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // Evaluator orchestrates a code review: it fetches the repository's rules,
@@ -91,6 +92,28 @@ func (s *Evaluator) Execute(ctx context.Context, in ReviewInput, files []string)
 // and want who must approve each file under in.
 func (s *Evaluator) Approve(ctx context.Context, in ReviewInput, chain RuleChain) *ReviewState {
 	return chain.Execute(ctx, in, s.Resolver, NewReviewStateBuilder(), s.log())
+}
+
+// Validate reports the violations of every rules file in rules, keyed by
+// path (see rulesfile.Set.Validate), with the platform's own checks added:
+// a target the platform's resolver rejects (TargetValidator) is a
+// violation of its rule. A file with none is omitted.
+func (s *Evaluator) Validate(rules rulesfile.Set) map[string][]error {
+	out := rules.Validate()
+	v, ok := s.Resolver.(TargetValidator)
+	if !ok {
+		return out
+	}
+	for p, file := range rules {
+		for i, rule := range file {
+			for _, t := range rule.Approvers {
+				if err := v.ValidateTarget(t.Target); err != nil {
+					out[p] = append(out[p], &rulesfile.RuleViolation{Position: i, Pattern: rule.Pattern, Err: fmt.Errorf("rule %q: %w", rule.Pattern, err)})
+				}
+			}
+		}
+	}
+	return out
 }
 
 // log returns the configured logger or the default one.

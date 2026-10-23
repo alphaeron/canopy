@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 
+	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/review"
 )
 
@@ -22,5 +23,5 @@ type PullRequest interface {
 	// replacing the earlier one. The platform maps each verdict to its own
 	// status states and carries the outcome's Description as the status's
 	// description.
-	Report(ctx context.Context, o review.Outcome) error
+	Report(ctx context.Context, o approval.Outcome) error
 }

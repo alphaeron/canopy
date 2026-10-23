@@ -2,7 +2,6 @@ package review
 
 import (
 	"context"
-	"errors"
 
 	"github.com/alphaeron/kit/internal/approval"
 )
@@ -24,9 +23,11 @@ type Source interface {
 	// resolver itself.
 	Evaluator() *approval.Evaluator
 
-	// AllFiles returns every file at the base revision: the universe over
-	// which to match and evaluate coverage. A listing the platform
-	// truncated is ErrTreeTruncated, never a partial result.
+	// AllFiles returns every file the rules are read from: the base
+	// revision on a hosted platform, the working tree locally. It is the
+	// universe over which to match and evaluate coverage. A listing the
+	// platform truncated is approval.ErrTreeTruncated, never a partial
+	// result.
 	AllFiles(ctx context.Context) ([]string, error)
 
 	// ChangedFiles returns every path the change adds, modifies, or
@@ -36,7 +37,7 @@ type Source interface {
 	// not a subset of it. Empty when nothing changed. A platform that can
 	// only list part of a change's files lists them another way when it
 	// can (and may then have no diffs for them); a listing it cannot
-	// complete is ErrFileListIncomplete, never a partial list.
+	// complete is approval.ErrFileListIncomplete, never a partial list.
 	ChangedFiles(ctx context.Context) ([]string, error)
 
 	// DiffContent returns the unified diff of the change to path, or ""
@@ -45,6 +46,13 @@ type Source interface {
 	// large for the platform to report, or either side of a rename. The
 	// header lines around the hunks are platform-specific.
 	DiffContent(ctx context.Context, path string) (string, error)
+
+	// ReadHead reads a file as the change proposes it, so rules files it
+	// changes can be validated before they take effect (see
+	// Engine.ValidateProposed). A path its head does not have wraps
+	// fs.ErrNotExist, and a file over rulesfile.MaxSize wraps
+	// rulesfile.ErrTooLarge.
+	ReadHead(ctx context.Context, path string) ([]byte, error)
 }
 
 // Rooted is implemented by a Source over an on-disk checkout. The Engine
@@ -54,18 +62,3 @@ type Rooted interface {
 	// RepoRoot returns the on-disk repository root.
 	RepoRoot() string
 }
-
-// ErrTreeTruncated reports that the platform listed a revision's files only
-// partially, as a platform may for a very large repository. The listing is
-// never used: a missing rules file would silently drop required
-// approvers, so a review over a truncated tree fails.
-var ErrTreeTruncated = errors.New("repository tree listing is truncated")
-
-// ErrFileListIncomplete reports that the platform listed a change's files
-// only partially, as a platform may past its own limit. The partial listing
-// is never presented as complete.
-var ErrFileListIncomplete = errors.New("changed file listing is incomplete")
-
-// ErrRateLimited reports that the platform refused a request under its rate
-// limit for longer than the review could wait.
-var ErrRateLimited = errors.New("rate limited by the platform")

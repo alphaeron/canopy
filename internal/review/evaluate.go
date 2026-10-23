@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"maps"
 	"slices"
 	"sync"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/parallel"
-	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // Evaluate reviews pr: it lists the changed files, validates the rules
@@ -25,7 +22,7 @@ import (
 // The changed files, the review input, and the rules are independent, so
 // they are read concurrently; the review then reuses the rules fetch (see
 // Change).
-func Evaluate(ctx context.Context, pr Change, log *slog.Logger) Outcome {
+func Evaluate(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome {
 	o := outcome(ctx, pr, log)
 	o.Warnings = pr.Warnings()
 	for _, w := range o.Warnings {
@@ -35,10 +32,10 @@ func Evaluate(ctx context.Context, pr Change, log *slog.Logger) Outcome {
 }
 
 // outcome is Evaluate's outcome before the change's warnings.
-func outcome(ctx context.Context, pr Change, log *slog.Logger) Outcome {
-	fail := func(step string, err error) Outcome {
+func outcome(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome {
+	fail := func(step string, err error) approval.Outcome {
 		log.Error("review failed", "step", step, "error", err)
-		return Outcome{Verdict: Errored, Summary: failureSummary(ctx, err)}
+		return approval.Outcome{Verdict: approval.Errored, Summary: failureSummary(ctx, err)}
 	}
 
 	var (
@@ -56,13 +53,7 @@ func outcome(ctx context.Context, pr Change, log *slog.Logger) Outcome {
 			filesStep = "changed files"
 			return
 		}
-		var proposed []string
-		for _, f := range files {
-			if rulesfile.IsRulesFile(f) {
-				proposed = append(proposed, f)
-			}
-		}
-		violations, filesErr = validateProposed(ctx, pr, proposed)
+		violations, filesErr = New(pr, log).ValidateProposed(ctx, files)
 		if filesErr != nil {
 			filesStep = "validate proposed rules files"
 		}
@@ -83,73 +74,27 @@ func outcome(ctx context.Context, pr Change, log *slog.Logger) Outcome {
 	if ctx.Err() != nil {
 		return fail("review", ctx.Err())
 	}
-	if len(violations) > 0 {
-		for _, p := range slices.Sorted(maps.Keys(violations)) {
-			log.Warn("proposed rules file invalid", "path", p, "violations", fmt.Sprint(violations[p]))
-		}
-		summary := fmt.Sprintf("%d invalid proposed rules files", len(violations))
-		if len(violations) == 1 {
-			summary = "1 invalid proposed rules file"
-		}
-		return Outcome{Verdict: Failed, Summary: summary, Items: slices.Sorted(maps.Keys(violations))}
+	for _, p := range slices.Sorted(maps.Keys(violations)) {
+		log.Warn("proposed rules file invalid", "path", p, "violations", fmt.Sprint(violations[p]))
 	}
-	return OutcomeOf(state)
+	return OutcomeOf(state, violations)
 }
 
-// validateProposed validates the pending rules files as pr proposes them,
-// with the same checks as `kit validate`: parse errors and
-// rulesfile.Set.Validate. A pending path pr's head does not have (a deleted
-// rules file, or the old side of a rename) is skipped. Violations are keyed
-// by rules file path, and a valid file is omitted. A file over
-// rulesfile.MaxSize is a violation; any other file that cannot be read is
-// an operational error.
-//
-// The rules a review enforces come from the base revision, so this is what
-// keeps a pull request from merging a rules file that only fails once it
-// takes effect.
-func validateProposed(ctx context.Context, pr Change, pending []string) (map[string][]error, error) {
-	// Each read is a round trip, so read the files concurrently, then
-	// handle them in order.
-	heads := make([]struct {
-		data []byte
-		err  error
-	}, len(pending))
-	parallel.For(len(pending), parallel.Limit, func(i int) {
-		heads[i].data, heads[i].err = pr.ReadHead(ctx, pending[i])
-	})
-
-	out := map[string][]error{}
-	proposed := rulesfile.Set{}
-	for i, p := range pending {
-		data, err := heads[i].data, heads[i].err
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if errors.Is(err, rulesfile.ErrTooLarge) {
-			out[p] = []error{err}
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read proposed rules file %s: %w", p, err)
-		}
-		rules, err := rulesfile.ParseRules(data)
-		if err != nil {
-			out[p] = []error{err}
-			continue
-		}
-		proposed[p] = rules
+// OutcomeOf is what a review means for a change, on every platform and in
+// the CLI alike: a change proposing an invalid rules file (proposed, as
+// Engine.ValidateProposed reports it) is Failed whatever its approvals,
+// and otherwise the review state decides (approval.ReviewState.Outcome).
+func OutcomeOf(state *approval.ReviewState, proposed map[string][]error) approval.Outcome {
+	if len(proposed) > 0 {
+		return approval.InvalidRulesOutcome(slices.Sorted(maps.Keys(proposed)))
 	}
-	// A file that failed to parse is not in proposed, so the keys are disjoint.
-	for p, errs := range proposed.Validate() {
-		out[p] = errs
-	}
-	return out, nil
+	return state.Outcome()
 }
 
 // failureSummary names why a review could not run, without quoting the
 // error, which may carry platform API details.
 func failureSummary(ctx context.Context, err error) string {
-	if s := LimitSummary(err); s != "" {
+	if s := approval.LimitSummary(err); s != "" {
 		return s
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {

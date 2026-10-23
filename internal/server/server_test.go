@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
@@ -97,7 +96,7 @@ type stubPullRequest struct {
 
 	startOnce sync.Once
 	mu        sync.Mutex
-	reports   []review.Outcome
+	reports   []approval.Outcome
 	done      chan struct{} // closed on the first report
 }
 
@@ -159,7 +158,7 @@ func (c *stubPullRequest) ReadHead(_ context.Context, path string) ([]byte, erro
 	return []byte(data), nil
 }
 
-func (c *stubPullRequest) Report(_ context.Context, o review.Outcome) error {
+func (c *stubPullRequest) Report(_ context.Context, o approval.Outcome) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reports = append(c.reports, o)
@@ -278,7 +277,7 @@ func TestWebhookReviewsAndReportsOnce(t *testing.T) {
 	c.wait(t)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.reports) != 1 || c.reports[0].Verdict != review.Passed {
+	if len(c.reports) != 1 || c.reports[0].Verdict != approval.Passed {
 		t.Errorf("reports = %+v, want one passed report", c.reports)
 	}
 }
@@ -425,7 +424,7 @@ func TestReviewTimeoutIsReported(t *testing.T) {
 	c.wait(t)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.reports) != 1 || !reflect.DeepEqual(c.reports[0], review.Outcome{Verdict: review.Errored, Summary: "review timed out"}) {
+	if len(c.reports) != 1 || !reflect.DeepEqual(c.reports[0], approval.Outcome{Verdict: approval.Errored, Summary: "review timed out"}) {
 		t.Errorf("reports = %+v, want one failed for the timeout", c.reports)
 	}
 }

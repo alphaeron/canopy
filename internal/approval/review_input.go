@@ -8,8 +8,10 @@ package approval
 // canonical form (ApproverResolver.Canonical), so they may be given in any
 // form the platform accepts.
 type ReviewInput struct {
-	// Author is the change's author, whose approvals count only under
-	// self-approve rules.
+	// Author is the change's author. Authoring a change is approving it, so
+	// the author counts as an approver wherever a rule allows
+	// self-approval, and nowhere else; a platform reports the author here
+	// and need not (and on GitHub cannot) report an approval by them.
 	Author string
 	// Approvers are the users who have approved the change.
 	Approvers []string
@@ -45,6 +47,9 @@ func newParticipants(in ReviewInput, canonical func(string) string) participants
 	}
 	for _, a := range in.Approvers {
 		p.approvers[canonical(a)] = true
+	}
+	if p.author != "" {
+		p.approvers[p.author] = true
 	}
 	for _, o := range in.Owners {
 		p.owners = append(p.owners, canonical(o))

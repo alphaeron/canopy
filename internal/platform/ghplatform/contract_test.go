@@ -15,7 +15,7 @@ import (
 // GitHub serving the fixture's base tree and a pull request making its
 // change, built the way the server builds it: from a pull_request event.
 func TestGitHubMeetsTheSourceContract(t *testing.T) {
-	platformtest.RunSourceContract(t, func(t *testing.T, f platformtest.Fixture) review.Source {
+	platformtest.RunSourceContract(t, platformtest.BaseRevision, func(t *testing.T, f platformtest.Fixture) review.Source {
 		return changeFromEvent(t, fakeFromFixture(f), pullRequestEvent("base"))
 	})
 }

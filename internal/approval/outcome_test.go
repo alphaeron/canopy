@@ -1,4 +1,4 @@
-package review
+package approval
 
 import (
 	"fmt"
@@ -6,32 +6,31 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-func TestOutcomeOf(t *testing.T) {
-	files := map[string]approval.FileState{
-		"a.go": {Status: approval.StatusSatisfied},
-		"b.go": {Status: approval.StatusMissingApprovers},
+func TestReviewStateOutcome(t *testing.T) {
+	files := map[string]FileState{
+		"a.go": {Status: StatusSatisfied},
+		"b.go": {Status: StatusMissingApprovers},
 	}
 	tests := []struct {
 		name    string
-		state   *approval.ReviewState
+		state   *ReviewState
 		want    Verdict
 		summary string
 	}{
-		{name: "satisfied passes", state: &approval.ReviewState{Overall: approval.StatusSatisfied, Files: files}, want: Passed, summary: "all 2 files approved"},
-		{name: "done passes", state: &approval.ReviewState{Overall: approval.StatusDone}, want: Passed},
-		{name: "missing approvers is pending", state: &approval.ReviewState{Overall: approval.StatusMissingApprovers, Files: files}, want: Pending, summary: "1 of 2 files awaits approval"},
-		{name: "unresolved is pending", state: &approval.ReviewState{Overall: approval.StatusUnresolved}, want: Pending},
-		{name: "unknown is pending", state: &approval.ReviewState{}, want: Pending},
-		{name: "error errors", state: &approval.ReviewState{Overall: approval.StatusError, Errors: []string{"x", "y"}}, want: Errored, summary: "review failed with 2 errors"},
-		{name: "truncated tree", state: &approval.ReviewState{Overall: approval.StatusError, Err: fmt.Errorf("list: %w", ErrTreeTruncated)}, want: Errored, summary: "repository too large to evaluate completely"},
+		{name: "satisfied passes", state: &ReviewState{Overall: StatusSatisfied, Files: files}, want: Passed, summary: "all 2 files approved"},
+		{name: "done passes", state: &ReviewState{Overall: StatusDone}, want: Passed},
+		{name: "missing approvers is pending", state: &ReviewState{Overall: StatusMissingApprovers, Files: files}, want: Pending, summary: "1 of 2 files awaits approval"},
+		{name: "unresolved is pending", state: &ReviewState{Overall: StatusUnresolved}, want: Pending},
+		{name: "unknown is pending", state: &ReviewState{}, want: Pending},
+		{name: "error errors", state: &ReviewState{Overall: StatusError, Errors: []string{"x", "y"}}, want: Errored, summary: "review failed with 2 errors"},
+		{name: "truncated tree", state: &ReviewState{Overall: StatusError, Err: fmt.Errorf("list: %w", ErrTreeTruncated)}, want: Errored, summary: "repository too large to evaluate completely"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := OutcomeOf(tt.state)
+			got := (tt.state).Outcome()
 			if got.Verdict != tt.want {
 				t.Errorf("Verdict = %s, want %s", got.Verdict, tt.want)
 			}
@@ -46,30 +45,30 @@ func TestOutcomeOf(t *testing.T) {
 // the change, so it never carries an error's text.
 func TestOutcomeNeverQuotesErrors(t *testing.T) {
 	secret := "GET https://api.example.com/x?token=abc: 500"
-	got := OutcomeOf(&approval.ReviewState{Overall: approval.StatusError, Errors: []string{secret}, Err: fmt.Errorf("%s", secret)})
+	got := (&ReviewState{Overall: StatusError, Errors: []string{secret}, Err: fmt.Errorf("%s", secret)}).Outcome()
 	if strings.Contains(got.Summary, "token") {
 		t.Errorf("Summary = %q quotes the error", got.Summary)
 	}
 }
 
-// TestOutcomeOfPendingNamesWhoIsNeeded: a pending outcome's items are the
+// TestOutcomePendingNamesWhoIsNeeded: a pending outcome's items are the
 // approvers still needed, each with the most approvals it still owes a file.
-func TestOutcomeOfPendingNamesWhoIsNeeded(t *testing.T) {
-	need := func(target string, required, satisfied int) approval.ApproverTargetState {
-		return approval.ApproverTargetState{
+func TestOutcomePendingNamesWhoIsNeeded(t *testing.T) {
+	need := func(target string, required, satisfied int) ApproverTargetState {
+		return ApproverTargetState{
 			ApproverTarget: rulesfile.ApproverTarget{Target: target, RequiredCount: required},
 			SatisfiedCount: satisfied, Satisfied: satisfied >= required,
 		}
 	}
-	state := &approval.ReviewState{Overall: approval.StatusMissingApprovers, Files: map[string]approval.FileState{
-		"a.go": {Status: approval.StatusMissingApprovers, Required: []approval.ApproverTargetState{need("org/backend", 2, 0), need("lead", 1, 1)}},
-		"b.go": {Status: approval.StatusMissingApprovers, Required: []approval.ApproverTargetState{need("org/backend", 2, 1), need("alice", 1, 0)}},
-		"c.go": {Status: approval.StatusSatisfied, Required: []approval.ApproverTargetState{need("lead", 1, 1)}},
+	state := &ReviewState{Overall: StatusMissingApprovers, Files: map[string]FileState{
+		"a.go": {Status: StatusMissingApprovers, Required: []ApproverTargetState{need("org/backend", 2, 0), need("lead", 1, 1)}},
+		"b.go": {Status: StatusMissingApprovers, Required: []ApproverTargetState{need("org/backend", 2, 1), need("alice", 1, 0)}},
+		"c.go": {Status: StatusSatisfied, Required: []ApproverTargetState{need("lead", 1, 1)}},
 	}}
-	got := OutcomeOf(state)
+	got := (state).Outcome()
 	want := Outcome{Verdict: Pending, Summary: "2 of 3 files await approval", Items: []string{"alice", "org/backend ×2"}}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("OutcomeOf = %+v, want %+v", got, want)
+		t.Errorf("Outcome = %+v, want %+v", got, want)
 	}
 }
 

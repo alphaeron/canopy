@@ -437,6 +437,31 @@ func TestAuthorApprovalCountedWhenSelfApproveAllowed(t *testing.T) {
 	}
 }
 
+// TestAuthorshipIsApproval pins how the author counts on a platform that
+// never reports an approval by them (GitHub does not let an author approve
+// their own pull request): authoring the change is their approval, which
+// satisfies a rule allowing self-approval and nothing else.
+func TestAuthorshipIsApproval(t *testing.T) {
+	for _, selfApprove := range []bool{true, false} {
+		pr := buildContext(approverSet(), activeAllOwners(), []string{"zowner"})
+		rc := RuleChain{FileChains: map[string][]RuleLayer{
+			"/src/x.go": {{DirectoryPath: "/", Rules: []ExecutableRule{newExecutableRule(rulesfile.Rule{
+				Name:        "root",
+				SelfApprove: selfApprove,
+				Approvers:   []rulesfile.ApproverTarget{approver("team-y", 1)},
+			})}}},
+		}}
+		fs := executeChainWithResolver(t, rc, pr, groupResolver{}).Files["/src/x.go"]
+		want := StatusMissingApprovers
+		if selfApprove {
+			want = StatusSatisfied
+		}
+		if fs.Status != want {
+			t.Errorf("self_approve %v with no approvals: status = %s, want %s", selfApprove, fs.Status, want)
+		}
+	}
+}
+
 func TestRulesPrunedToEmptyFallBackButStillErrors(t *testing.T) {
 	// Existing rules prune out (inactive target + self-approval): the rule
 	// is skipped - an error condition - and the owner fallback satisfies the

@@ -35,7 +35,7 @@ The review rules for a pull request are read from its **base branch**, at the ba
 
 As with CODEOWNERS, a pull request cannot change its own requirements: `KIT` files it adds, modifies, or deletes take effect once it merges. The review server validates the ones it adds or modifies (as `kit validate` does) at the pull request's head, failing the review on any violation (its report names the invalid files), so a broken `KIT` file cannot be merged.
 
-The CLI does the opposite on purpose: it reads the working tree's `KIT` files, uncommitted changes included, to preview the rules a branch proposes.
+The CLI does the opposite on purpose: it reads the working tree's `KIT` files, uncommitted changes included, to preview the rules a branch proposes. Otherwise `kit review` judges a change as the server does: it validates the `KIT` files the working tree changes, failing the review on any violation, and its exit status is the review's verdict, zero only when the review passes.
 
 ### Repository Owner Fallback
 
@@ -104,6 +104,7 @@ The self-approval policy is a requirement of the rule and travels with every app
 * **The target is the author themselves.** If `self_approve: false` and a rule directly targets the PR author, the target is `inactive` and never satisfiable, even if the author has approved.
 * **The author is a member of a resolved group.** Inactive members are ignored. If `self_approve: false`, the author's approval is sliced out of the group's eligible members: the group can still be satisfied by every other member, and the author never appears in `ResolvedBy`. If the group's only active member is the author, the whole target prunes away with the rule.
 * Setting `self_approve: true` counts the author's approval exactly like any other member's, in both cases (one approval, counted once).
+* Authoring a change is the author's approval: the platform reports who the author is, and the author counts as having approved wherever `self_approve: true` allows it. On GitHub, where an author cannot approve their own pull request, this is how `self_approve` takes effect.
 * The default is `false`: authors can never fulfill their own requirements unless a rule explicitly allows it.
 
 ### Approver Targets, Resolution, and Pruning
@@ -111,7 +112,7 @@ Every target occurrence is evaluated independently against the same pool of curr
 
 * A target whose members are all inactive prunes away; the rule then falls back to earlier rules or the parent directory (see above).
 * A target that cannot be resolved to any member at all is `unresolved`, which escalates the containing rule, layer, and file to `unresolved` and forces the overall status to `error`. A target the platform does not know (or that is malformed for it) prunes away like an inactive one; a platform failure while resolving (an outage, a rate limit) never prunes, so it cannot weaken a requirement, and its cause is recorded in the review's errors.
-* Names are compared in the platform's canonical form: GitHub logins are case-insensitive, so `Alice` in a `KIT` file matches an approval by `alice`. Local reviews compare names exactly.
+* Names are compared in the platform's canonical form: GitHub logins are case-insensitive, so `Alice` in a `KIT` file matches an approval by `alice`. Local reviews compare names case-insensitively too, so a local review agrees with GitHub on who approved.
 * Each target is resolved once per review, however many files and rules use it.
 * A group is `satisfied` once `required_count` of its eligible, active resolved members appear among current approvers.
 * Because each occurrence is independent, recurring targets under `union` are counted once per occurrence (see Recurring Approver Targets).
@@ -164,7 +165,7 @@ The runtime application evaluates a change (a GitHub pull request, or the local 
 3. Mark a rule block as **Satisfied** once each target's internal `actual_count >= required_count`.
 4. Report the result back on the platform — passing only if all rules across all files resolve to a **Satisfied** state. GitHub: a completed check run named `kit` on the pull request's head commit. Its title summarizes the outcome in one line, and its summary lists in full what the outcome is about (the approvers still needed, or the invalid `KIT` files) and any warnings, such as a very large pull request. Its conclusion is `success` when the review is satisfied, `action_required` while approvals are missing, and `failure` when the pull request proposes an invalid `KIT` file or the review could not produce a valid result: an internal `error` status (a GitHub failure, a listing too large to evaluate, a skipped or unsatisfiable rule) or a review that could not run or timed out; the title tells these apart. Each report is a new check run, and GitHub shows the latest. Require the `kit` check in branch protection to block merging until it succeeds. The review never comments on the pull request.
 
-On GitHub, approvals are each reviewer's latest decisive review: a later change request or dismissal cancels an approval, and comments change nothing. An approval made before the latest push still counts. The author's own reviews are ignored here; `self_approve` decides whether the author counts.
+On GitHub, approvals are each reviewer's latest decisive review: a later change request or dismissal cancels an approval, and comments change nothing. An approval made before the latest push still counts. The author's own reviews are ignored here: authoring the pull request is the author's approval, and `self_approve` decides whether it counts.
 
 ## Configuration
 

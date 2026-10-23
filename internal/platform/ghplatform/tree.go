@@ -14,7 +14,6 @@ import (
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/parallel"
-	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/server"
 )
@@ -102,7 +101,7 @@ func (b *baseTree) readBlob(ctx context.Context, path, sha string) ([]byte, erro
 
 // list returns the tree's blobs, listing them on first use unless the cache
 // has them (see listBlobs). A tree too large to list is
-// review.ErrTreeTruncated, never a partial tree: a missing rules file would
+// approval.ErrTreeTruncated, never a partial tree: a missing rules file would
 // silently drop required approvers. A failed listing is not cached, so a
 // later call retries it. The lock is held across the call so concurrent
 // first uses share one listing.
@@ -135,7 +134,7 @@ const maxTreeRequests = 256
 // tree's own entries and each subtree in the same way, so a tree too large
 // for one listing costs one more request per subtree that is. A tree that
 // still cannot be listed (one directory GitHub truncates on its own, or more
-// than maxTreeRequests requests) is review.ErrTreeTruncated.
+// than maxTreeRequests requests) is approval.ErrTreeTruncated.
 func listBlobs(ctx context.Context, client *github.Client, owner, repo, sha string) (map[string]server.TreeBlob, error) {
 	l := &treeLister{client: client, owner: owner, repo: repo, sem: make(chan struct{}, parallel.Limit), blobs: map[string]server.TreeBlob{}}
 	if err := l.list(ctx, sha, ""); err != nil {
@@ -171,7 +170,7 @@ func (l *treeLister) list(ctx context.Context, sha, prefix string) error {
 		return err
 	}
 	if tree.GetTruncated() {
-		return fmt.Errorf("directory %q: %w", prefix, review.ErrTreeTruncated)
+		return fmt.Errorf("directory %q: %w", prefix, approval.ErrTreeTruncated)
 	}
 	l.add(prefix, tree.Entries)
 	var subtrees []*github.TreeEntry
@@ -197,7 +196,7 @@ func (l *treeLister) get(ctx context.Context, sha string, recursive bool) (*gith
 	over := l.requests > maxTreeRequests
 	l.mu.Unlock()
 	if over {
-		return nil, fmt.Errorf("more than %d requests: %w", maxTreeRequests, review.ErrTreeTruncated)
+		return nil, fmt.Errorf("more than %d requests: %w", maxTreeRequests, approval.ErrTreeTruncated)
 	}
 	select {
 	case l.sem <- struct{}{}:

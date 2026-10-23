@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/kit/internal/approval"
 )
 
 func TestRetryTransport(t *testing.T) {
@@ -78,8 +78,8 @@ func TestRetryTransport(t *testing.T) {
 			resp, err := client.Do(req)
 			switch {
 			case tt.wantCode == 0:
-				if !errors.Is(err, review.ErrRateLimited) {
-					t.Errorf("err = %v, want review.ErrRateLimited", err)
+				if !errors.Is(err, approval.ErrRateLimited) {
+					t.Errorf("err = %v, want approval.ErrRateLimited", err)
 				}
 			case err != nil:
 				t.Fatalf("Do: %v", err)

@@ -27,7 +27,7 @@ rather than assumed to.
 
 | Package | Change under review | Rules read from | Approver targets |
 |---|---|---|---|
-| `local` | working tree vs. `HEAD` | the working tree, so the CLI previews the rules a branch proposes | stand for themselves; names compared exactly |
+| `local` | working tree vs. `HEAD` | the working tree, so the CLI previews the rules a branch proposes | stand for themselves; names compared case-insensitively, as on GitHub |
 | `ghplatform` | a pull request vs. its base revision | the base revision (the tip of the pull request's base branch it is compared against), so a change can't edit its own requirements | `login`, or `org/team-slug` expanded to the team's members; logins case-insensitive |
 | `platformtest` | — (the contract suites every platform runs) | | |
 
@@ -51,7 +51,7 @@ good files. Don't write your own fetcher.
 - Paths are repository-relative and slash-separated (`svc/api/KIT`), with no leading `/`.
 - Pick the revision deliberately. A hosted platform reads the change's **base** revision (its
   target branch, never the default branch), as GitHub's `baseTree` does.
-- A listing the platform truncated returns an error wrapping `review.ErrTreeTruncated`, never a
+- A listing the platform truncated returns an error wrapping `approval.ErrTreeTruncated`, never a
   partial tree: a missing rules file would silently drop required approvers.
 - List the tree once per review and share the listing with `Source.AllFiles`. `ghplatform`
   builds one `baseTree` and passes it to both the source and the evaluator.
@@ -97,15 +97,17 @@ type Source interface {
     AllFiles(ctx context.Context) ([]string, error)
     ChangedFiles(ctx context.Context) ([]string, error)
     DiffContent(ctx context.Context, path string) (string, error)
+    ReadHead(ctx context.Context, path string) ([]byte, error)
 }
 ```
 
 | Method | Must return |
 |---|---|
 | `Evaluator` | `&approval.Evaluator{Fetch: &approval.TreeFetcher{...}, Resolver: ..., Log: log}`, built once in the constructor |
-| `AllFiles` | every file at the base revision, sorted; `review.ErrTreeTruncated` for a truncated listing |
-| `ChangedFiles` | every path the change adds, modifies, or removes, sorted. A rename lists **both** paths, so the rules over the place it left still apply. Added paths are not in `AllFiles`. Empty when nothing changed. When the platform's own listing is capped, list the files another way if you can (GitHub compares the head tree with the merge base's past 3000 files) and report it through `Warnings`; a listing you cannot complete is `review.ErrFileListIncomplete`, never a partial list. |
+| `AllFiles` | every file at the revision the rules are read from (a hosted platform: the base revision; local: the working tree), sorted; `approval.ErrTreeTruncated` for a truncated listing |
+| `ChangedFiles` | every path the change adds, modifies, or removes, sorted. A rename lists **both** paths, so the rules over the place it left still apply. Added paths are not in `AllFiles`. Empty when nothing changed. When the platform's own listing is capped, list the files another way if you can (GitHub compares the head tree with the merge base's past 3000 files) and report it through `Warnings`; a listing you cannot complete is `approval.ErrFileListIncomplete`, never a partial list. |
 | `DiffContent` | the unified diff for `path`, or `""` when the change doesn't touch it, only renames it, or the platform has no text diff for it (binary, too large). |
+| `ReadHead` | a file as the change proposes it (local: the working tree); a missing path wraps `fs.ErrNotExist`, and a file over `rulesfile.MaxSize` wraps `rulesfile.ErrTooLarge` (check the size before downloading). `review.Engine.ValidateProposed` validates the rules files a change proposes with it, for the server and `kit review` alike, skipping those the head doesn't have (deleted, or the old side of a rename). |
 
 - Implement `review.Rooted` (`RepoRoot() string`) only if the source is an on-disk checkout. A
   hosted platform doesn't.
@@ -139,22 +141,18 @@ func (p *PRWebhook) PullRequest(event string, body []byte) (server.PullRequest, 
 type PullRequest interface {
     review.Source
     ReviewInput(ctx context.Context) (approval.ReviewInput, error)
-    ReadHead(ctx context.Context, path string) ([]byte, error)
     Warnings() []string
     Key() string
-    Report(ctx context.Context, o review.Outcome) error
+    Report(ctx context.Context, o approval.Outcome) error
 }
 ```
 
-- **`ReviewInput`**: the author; the approvers, each reviewer's latest decisive review (a later
-  change request or dismissal cancels an approval, comments change nothing, approvals before the
-  latest push still count, the author's own reviews are left to `self_approve`); `IsActive`; and
+- **`ReviewInput`**: the author, who counts as approving their own change wherever a rule allows
+  self-approval (so leave the author's own reviews out: authoring is their approval); the
+  approvers, each reviewer's latest decisive review (a later change request or dismissal cancels an
+  approval, comments change nothing, approvals before the latest push still count); `IsActive`; and
   the repository owners, the fallback reviewers. Names needn't be canonical. If an activity lookup
   fails, count the user as inactive: only a user the platform confirms is active.
-- **`ReadHead`**: a file as the pull request proposes it; a missing path wraps `fs.ErrNotExist`,
-  and a file over `rulesfile.MaxSize` wraps `rulesfile.ErrTooLarge` (check the size before
-  downloading). The server validates the rules files among the changed files with it, skipping those the head
-  doesn't have (deleted, or the old side of a rename).
 - **`Warnings`**: what reading the pull request found worth reporting that does not change the
   verdict (GitHub: a pull request too large for its file listing). The server calls it once the
   reads are done and adds the warnings to the outcome.
@@ -174,7 +172,7 @@ type PullRequest interface {
   is room for, so the platform never rejects it as too long. A platform with room for more may also
   list every item and warning, bounded by its limit (GitHub: the check run's Markdown summary, up
   to 65535 bytes, each item shown as code since items come from the pull request). Never decide
-  what a review means yourself (`review.OutcomeOf` does). Never publish tokens, raw API errors, or
+  what a review means yourself (`review.OutcomeOf` and `approval.ReviewState.Outcome` do). Never publish tokens, raw API errors, or
   file contents. The review reports only a status: it never comments on the pull request.
 
 ### `server.PRWebhook`: the pull request webhook
@@ -256,7 +254,7 @@ them. Put the calls in `contract_test.go`:
 
 ```go
 func TestGitLabMeetsTheSourceContract(t *testing.T) {
-    platformtest.RunSourceContract(t, func(t *testing.T, f platformtest.Fixture) review.Source {
+    platformtest.RunSourceContract(t, platformtest.BaseRevision, func(t *testing.T, f platformtest.Fixture) review.Source {
         // Serve f.Base as the base revision and f.Change as the merge request
         // from a fake API, then build the Source the way production does.
     })
@@ -281,7 +279,7 @@ func TestGitLabResolverMeetsTheResolverContract(t *testing.T) {
 
 | Suite | Checks |
 |---|---|
-| `RunSourceContract` | `AllFiles` is the base revision; `ChangedFiles` covers a modify, an add, a delete and both sides of a rename, and is empty with no change; diffs show each change and are `""` for untouched paths; the evaluator fetches the rules files |
+| `RunSourceContract` | `AllFiles` is the revision the platform reads rules from (`BaseRevision` or `HeadRevision`); `ChangedFiles` covers a modify, an add, a delete and both sides of a rename, and is empty with no change; diffs show each change and are `""` for untouched paths; the evaluator fetches the rules files |
 | `RunReviewInputContract` | *(hosted)* the author is reported; approvals are each reviewer's latest decision, sorted and deduplicated; change requests and dismissals cancel, comments don't; the author's own approval is left out |
 | `RunStatusReporterContract` | *(hosted)* one report per call; passed, pending, and failed in distinct states, and errored neither passed nor pending; a later report replaces the earlier one; an oversized summary is cut, not rejected |
 | `RunTreeContract` | `Files` is complete and sorted; `ReadFile` round-trips contents; a missing path is `fs.ErrNotExist` |

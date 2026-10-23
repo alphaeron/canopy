@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/kit/internal/approval"
 )
 
 // Rate limit retries: how often a request is retried, the longest
@@ -25,7 +25,7 @@ const (
 // GitHub asks for: the Retry-After of a secondary limit (403 or 429), or
 // the X-RateLimit-Reset of an exhausted primary limit. A wait longer than
 // the request's deadline allows, or past the retries, fails the request
-// with review.ErrRateLimited. Every other response, any other 4xx
+// with approval.ErrRateLimited. Every other response, any other 4xx
 // included, is returned as is, so retries never mask an error. Rate
 // limiting lives here, in the transport, rather than in the review
 // algorithm.
@@ -52,7 +52,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		_ = resp.Body.Close()
 		next, ok := rewind(req)
 		if attempt == maxRetries || delay > t.longestWait(req.Context(), limit) || !ok {
-			return nil, fmt.Errorf("%s %s: %s for %s: %w", req.Method, req.URL.Path, limit, delay, review.ErrRateLimited)
+			return nil, fmt.Errorf("%s %s: %s for %s: %w", req.Method, req.URL.Path, limit, delay, approval.ErrRateLimited)
 		}
 		if err := t.sleep(req.Context(), delay); err != nil {
 			return nil, err

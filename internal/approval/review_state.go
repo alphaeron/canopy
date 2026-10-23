@@ -98,6 +98,57 @@ func (rs *ReviewState) FileEvents(path string) []Event {
 	return out
 }
 
+// Outcome maps the review state to its outcome, so platforms (and the CLI)
+// cannot disagree on what a review means: StatusSatisfied and StatusDone pass,
+// StatusError is Errored, and every other status is pending (approvals are
+// still missing or unresolved). A pending outcome's items are the approvers
+// still needed, each with how many more approvals it owes the file that
+// needs the most.
+func (rs *ReviewState) Outcome() Outcome {
+	switch rs.Overall {
+	case StatusSatisfied, StatusDone:
+		n := len(rs.Files)
+		if n == 0 {
+			return Outcome{Verdict: Passed, Summary: "no files to approve"}
+		}
+		if n == 1 {
+			return Outcome{Verdict: Passed, Summary: "1 file approved"}
+		}
+		return Outcome{Verdict: Passed, Summary: fmt.Sprintf("all %d files approved", n)}
+	case StatusError:
+		return Outcome{Verdict: Errored, Summary: errorSummary(rs)}
+	}
+	waiting := 0
+	owed := map[string]int{}
+	for _, fs := range rs.Files {
+		if fs.Status == StatusSatisfied {
+			continue
+		}
+		waiting++
+		for _, r := range fs.Required {
+			if !r.Satisfied {
+				owed[r.Target] = max(owed[r.Target], r.RequiredCount-r.SatisfiedCount)
+			}
+		}
+	}
+	var items []string
+	for _, t := range slices.Sorted(maps.Keys(owed)) {
+		if owed[t] > 1 {
+			items = append(items, fmt.Sprintf("%s ×%d", t, owed[t]))
+		} else {
+			items = append(items, t)
+		}
+	}
+	summary := fmt.Sprintf("%d of %d files await approval", waiting, len(rs.Files))
+	if waiting == 1 {
+		summary = fmt.Sprintf("1 of %d files awaits approval", len(rs.Files))
+		if len(rs.Files) == 1 {
+			summary = "1 file awaits approval"
+		}
+	}
+	return Outcome{Verdict: Pending, Summary: summary, Items: items}
+}
+
 // MarshalJSON encodes the review in its stable wire form: statuses as their
 // snake_case names, files in SortedFiles order, each layer named by its rules
 // file, and every list present (never null) so consumers need no nil checks.

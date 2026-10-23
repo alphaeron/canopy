@@ -34,15 +34,15 @@ func TestGitHubAllFilesListsBlobsAtBaseTree(t *testing.T) {
 func TestGitHubTruncatedTreeFailsClosed(t *testing.T) {
 	fake := &fakeGitHub{base: map[string]string{rulesfile.FileName: ""}, truncated: true}
 	src := testSource(fake.client(t))
-	if _, err := src.AllFiles(t.Context()); !errors.Is(err, review.ErrTreeTruncated) {
-		t.Errorf("AllFiles err = %v, want review.ErrTreeTruncated", err)
+	if _, err := src.AllFiles(t.Context()); !errors.Is(err, approval.ErrTreeTruncated) {
+		t.Errorf("AllFiles err = %v, want approval.ErrTreeTruncated", err)
 	}
-	if _, err := src.Evaluator().Fetch.Execute(t.Context()); !errors.Is(err, review.ErrTreeTruncated) {
-		t.Errorf("Fetch err = %v, want review.ErrTreeTruncated", err)
+	if _, err := src.Evaluator().Fetch.Execute(t.Context()); !errors.Is(err, approval.ErrTreeTruncated) {
+		t.Errorf("Fetch err = %v, want approval.ErrTreeTruncated", err)
 	}
 	state := review.New(src, testLogger()).Review(t.Context(), []string{"a.go"}, approval.ReviewInput{})
-	if state.Overall != approval.StatusError || !errors.Is(state.Err, review.ErrTreeTruncated) {
-		t.Errorf("review = %s, %v; want an error wrapping review.ErrTreeTruncated", state.Overall, state.Err)
+	if state.Overall != approval.StatusError || !errors.Is(state.Err, approval.ErrTreeTruncated) {
+		t.Errorf("review = %s, %v; want an error wrapping approval.ErrTreeTruncated", state.Overall, state.Err)
 	}
 }
 
@@ -305,7 +305,7 @@ func TestGitHubReviewInput(t *testing.T) {
 
 func TestGitHubReportsOnTheHeadRevision(t *testing.T) {
 	fake := &fakeGitHub{}
-	if err := testSource(fake.client(t)).Report(t.Context(), review.Outcome{Verdict: review.Passed, Summary: "ok"}); err != nil {
+	if err := testSource(fake.client(t)).Report(t.Context(), approval.Outcome{Verdict: approval.Passed, Summary: "ok"}); err != nil {
 		t.Fatalf("Report: %v", err)
 	}
 	if len(fake.checkRuns) != 1 {
@@ -336,19 +336,19 @@ func TestGitHubKeyIsTheReportedRevision(t *testing.T) {
 func TestCheckSummary(t *testing.T) {
 	tests := []struct {
 		name  string
-		o     review.Outcome
+		o     approval.Outcome
 		limit int
 		want  string
 	}{
 		{
 			name:  "summary alone",
-			o:     review.Outcome{Summary: "1 file approved"},
+			o:     approval.Outcome{Summary: "1 file approved"},
 			limit: maxCheckSummary,
 			want:  "**1 file approved**\n",
 		},
 		{
 			name: "items and warnings",
-			o: review.Outcome{Summary: "2 of 3 files await approval", Items: []string{"alice", "org/backend ×2"},
+			o: approval.Outcome{Summary: "2 of 3 files await approval", Items: []string{"alice", "org/backend ×2"},
 				Warnings: []string{"large pull request (4012 files)"}},
 			limit: maxCheckSummary,
 			want: "**2 of 3 files await approval**\n\n- `alice`\n- `org/backend ×2`\n" +
@@ -356,13 +356,13 @@ func TestCheckSummary(t *testing.T) {
 		},
 		{
 			name:  "an item cannot end its code span or its line",
-			o:     review.Outcome{Summary: "1 invalid proposed rules file", Items: []string{"a`[x](y)`\nb/KIT"}},
+			o:     approval.Outcome{Summary: "1 invalid proposed rules file", Items: []string{"a`[x](y)`\nb/KIT"}},
 			limit: maxCheckSummary,
 			want:  "**1 invalid proposed rules file**\n\n- `a'[x](y)' b/KIT`\n",
 		},
 		{
 			name:  "items past the limit are counted",
-			o:     review.Outcome{Summary: "s", Items: []string{"a", "b", "c"}},
+			o:     approval.Outcome{Summary: "s", Items: []string{"a", "b", "c"}},
 			limit: len("**s**\n\n- `a`\n") + len("- … and 1000000 more\n"),
 			want:  "**s**\n\n- `a`\n- … and 2 more\n",
 		},
@@ -378,7 +378,7 @@ func TestCheckSummary(t *testing.T) {
 			}
 		})
 	}
-	long := checkSummary(review.Outcome{Summary: strings.Repeat("ü", 100_000), Items: make([]string, 100_000)}, maxCheckSummary)
+	long := checkSummary(approval.Outcome{Summary: strings.Repeat("ü", 100_000), Items: make([]string, 100_000)}, maxCheckSummary)
 	if len(long) > maxCheckSummary {
 		t.Errorf("checkSummary of a huge outcome is %d bytes, over GitHub's limit", len(long))
 	}

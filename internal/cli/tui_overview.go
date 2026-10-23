@@ -57,12 +57,12 @@ func repoOverview(ctx context.Context) (tui.Detail, error) {
 		d.Fields = append(d.Fields, tui.Field{Label: "Coverage", Value: fmt.Sprintf("%.1f%% of %d files", report.Percent, report.Universe), Badge: badge})
 	}
 
-	if state, err := reviewWith(ctx, engine, reviewOptions{changed: true}); err != nil {
+	if res, err := reviewWith(ctx, engine, reviewOptions{changed: true}); err != nil {
 		d.Fields = append(d.Fields, failed("Changed", err))
 	} else {
 		d.Fields = append(d.Fields,
-			tui.Field{Label: "Changed", Value: countOf(len(state.Files), "file")},
-			tui.Field{Label: "They need", Value: changedNeeds(state)},
+			tui.Field{Label: "Changed", Value: countOf(len(res.state.Files), "file")},
+			tui.Field{Label: "They need", Value: changedNeeds(res.state)},
 		)
 	}
 

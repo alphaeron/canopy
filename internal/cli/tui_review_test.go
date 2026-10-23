@@ -2,14 +2,19 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 func TestReviewOptionsFrom(t *testing.T) {
@@ -188,5 +193,66 @@ func TestRuleMatchesOverlaps(t *testing.T) {
 	it := ruleItem(rulesfile.Rule{RulesFile: rulesfile.PathInDir("svc"), Pattern: `\.go$`}, m)
 	if !strings.Contains(it.Description, "2 files") || len(it.Detail.Tabs) != 1 || len(it.Detail.Tabs[0].Sections[0].Rows) != 2 {
 		t.Errorf("rule item = %+v", it)
+	}
+}
+
+// TestReviewWithOutcome runs kit review's core over a real repository: the
+// working tree's files are reviewed (a new file counts, a deleted one does
+// not), the outcome is the shared verdict, and a rules file the working tree
+// changes into an invalid one fails the review, as it would a pull request.
+func TestReviewWithOutcome(t *testing.T) {
+	root := t.TempDir()
+	repo, err := git.PlainInit(root, false)
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	write := func(p, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, p), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+	write(rulesfile.FileName, "- \".*\":\n    approvers:\n      - target: lead\n        required_count: 1\n")
+	write("old.go", "package old\n")
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+	if err := wt.AddGlob("."); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, err := wt.Commit("init", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.com", When: time.Unix(0, 0)}}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	write("new.go", "package new\n")
+	if err := os.Remove(filepath.Join(root, "old.go")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	res, err := runReview(t.Context(), reviewOptions{}, quietLog)
+	if err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	if _, ok := res.state.Files["new.go"]; !ok {
+		t.Errorf("the new file must be reviewed: %v", res.state.SortedFiles())
+	}
+	if _, ok := res.state.Files["old.go"]; ok {
+		t.Errorf("the deleted file must not be reviewed")
+	}
+	if res.outcome.Verdict != approval.Pending {
+		t.Errorf("outcome without approvals = %+v, want pending", res.outcome)
+	}
+	if res, err := runReview(t.Context(), reviewOptions{approvers: []string{"Lead"}}, quietLog); err != nil || res.outcome.Verdict != approval.Passed {
+		t.Errorf("outcome approved by Lead = %+v, %v; want passed (names compare as on GitHub)", res.outcome, err)
+	}
+
+	write(rulesfile.FileName, "- \"(\":\n    approvers:\n      - target: lead\n        required_count: 1\n")
+	res, err = runReview(t.Context(), reviewOptions{approvers: []string{"lead"}}, quietLog)
+	if err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	if res.outcome.Verdict != approval.Failed || res.outcome.Summary != "1 invalid proposed rules file" {
+		t.Errorf("outcome with an invalid changed rules file = %+v, want failed", res.outcome)
 	}
 }

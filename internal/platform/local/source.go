@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"slices"
 	"sort"
 
 	"github.com/go-git/go-git/v6"
@@ -53,20 +52,19 @@ func (l *Source) RepoRoot() string {
 	return root
 }
 
-// AllFiles lists every tracked file at HEAD, i.e. the complete file universe
-// for matching and coverage, sorted for deterministic traversal downstream.
+// AllFiles lists the working tree's files, the file universe for matching,
+// coverage, and review: the files tracked at HEAD that still exist plus new
+// ones that are not ignored (gitrepo.Repository.WorktreeFiles), the same
+// files the rules are read from, so uncommitted additions count and
+// uncommitted deletions do not.
 func (l *Source) AllFiles(ctx context.Context) ([]string, error) {
-	// A repository with no commit yet has no tracked files: report an empty
-	// universe rather than a missing-HEAD error, so `match` is usable
-	// right after `git init`.
-	if !l.repo.HasCommits() {
-		return []string{}, nil
-	}
-	files, err := l.repo.HeadFiles(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return slices.Clone(files), nil
+	return l.repo.WorktreeFiles(ctx, func(string) bool { return true })
+}
+
+// ReadHead reads a file as the working tree has it, the head a local change
+// proposes (see review.Source).
+func (l *Source) ReadHead(ctx context.Context, path string) ([]byte, error) {
+	return (&worktree{repo: l.repo}).ReadFile(ctx, path)
 }
 
 // ChangedFiles returns the files in the working tree that are not identical

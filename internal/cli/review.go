@@ -73,10 +73,11 @@ func runReviewCmd(cmd *cobra.Command, args []string) error {
 	if verbose {
 		log = slog.Default()
 	}
-	state, err := runReview(cmd.Context(), opts, log)
+	res, err := runReview(cmd.Context(), opts, log)
 	if err != nil {
 		return err
 	}
+	state := res.state
 	if mode == modeJSON {
 		if err := writeJSON(os.Stdout, state); err != nil {
 			return err
@@ -91,31 +92,55 @@ func runReviewCmd(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("Overall: %s\n", statusLabel(state.Overall))
 	}
-	if state.Overall == approval.StatusError {
+	// The exit status is the review's verdict, as a hosted platform would
+	// report it, so a script can gate on it.
+	switch res.outcome.Verdict {
+	case approval.Passed:
+		return nil
+	case approval.Errored:
 		return fmt.Errorf("review did not run cleanly: %w", state.Err)
 	}
-	return nil
+	return fmt.Errorf("review %s: %s", res.outcome.Verdict, res.outcome.Description(0))
+}
+
+// reviewResult is a review and what it means: its state, and its outcome,
+// which also covers the rules files the working tree proposes.
+type reviewResult struct {
+	state   *approval.ReviewState
+	outcome approval.Outcome
 }
 
 // runReview selects the files and evaluates them: the working tree's files,
 // or its changed ones, kept when they match any pattern. log receives the
 // algorithm's structured output; the TUI discards it, as the state holds
 // everything it reports.
-func runReview(ctx context.Context, opts reviewOptions, log *slog.Logger) (*approval.ReviewState, error) {
+func runReview(ctx context.Context, opts reviewOptions, log *slog.Logger) (reviewResult, error) {
 	engine, err := openEngine(log)
 	if err != nil {
-		return nil, err
+		return reviewResult{}, err
 	}
 	return reviewWith(ctx, engine, opts)
 }
 
-// reviewWith is runReview on an open engine.
-func reviewWith(ctx context.Context, engine *review.Engine, opts reviewOptions) (*approval.ReviewState, error) {
+// reviewWith is runReview on an open engine. As on a hosted platform, the
+// rules files the change proposes (here, those the working tree changes)
+// are validated, and an invalid one fails the review whatever its
+// approvals (review.OutcomeOf).
+func reviewWith(ctx context.Context, engine *review.Engine, opts reviewOptions) (reviewResult, error) {
 	files, err := engine.Files(ctx, review.Options{ChangedOnly: opts.changed, Patterns: opts.patterns})
 	if err != nil {
-		return nil, fmt.Errorf("list files: %w", err)
+		return reviewResult{}, fmt.Errorf("list files: %w", err)
 	}
-	return engine.Review(ctx, files, opts.input()), nil
+	changed, err := engine.Source.ChangedFiles(ctx)
+	if err != nil {
+		return reviewResult{}, fmt.Errorf("list changed files: %w", err)
+	}
+	proposed, err := engine.ValidateProposed(ctx, changed)
+	if err != nil {
+		return reviewResult{}, err
+	}
+	state := engine.Review(ctx, files, opts.input())
+	return reviewResult{state: state, outcome: review.OutcomeOf(state, proposed)}, nil
 }
 
 // input is the review input the options describe. The local platform has
@@ -158,15 +183,16 @@ func reviewRoute(v tui.Values) tui.Route {
 		if err != nil {
 			return nil, err
 		}
-		state, err := runReview(ctx, opts, quietLog)
+		res, err := runReview(ctx, opts, quietLog)
 		if err != nil {
 			return nil, err
 		}
-		return reviewPage(state, opts), nil
+		return reviewPage(res, opts), nil
 	})
 }
 
-func reviewPage(state *approval.ReviewState, opts reviewOptions) tui.Page {
+func reviewPage(res reviewResult, opts reviewOptions) tui.Page {
+	state := res.state
 	files := state.SortedFiles()
 	counts := state.StatusCounts()
 	items := make([]tui.Item, 0, len(files)+1)
@@ -174,7 +200,7 @@ func reviewPage(state *approval.ReviewState, opts reviewOptions) tui.Page {
 		Title:       "Review",
 		Description: statusLabel(state.Overall) + " · " + countOf(len(files), "file"),
 		Badge:       statusBadge(state.Overall),
-		Detail:      reviewSummaryDetail(state, opts, counts),
+		Detail:      reviewSummaryDetail(res, opts, counts),
 	})
 	for _, fs := range files {
 		r := fileRulesRoute(fs.Path)
@@ -201,9 +227,11 @@ func reviewPage(state *approval.ReviewState, opts reviewOptions) tui.Page {
 
 // reviewSummaryDetail is the review as a whole: the inputs it ran with, the
 // file counts by status, and every error it collected.
-func reviewSummaryDetail(state *approval.ReviewState, opts reviewOptions, counts map[approval.Status]int) tui.Detail {
+func reviewSummaryDetail(res reviewResult, opts reviewOptions, counts map[approval.Status]int) tui.Detail {
+	state := res.state
 	d := tui.Detail{Fields: []tui.Field{
 		{Label: "Overall", Value: statusLabel(state.Overall), Badge: statusBadge(state.Overall)},
+		{Label: "Outcome", Value: res.outcome.Description(0), Badge: verdictBadge(res.outcome.Verdict)},
 		{Label: "Files", Value: filesLabel(opts)},
 		{Label: "Author", Value: opts.author},
 		{Label: "Approvals", Value: strings.Join(opts.approvers, ", ")},
