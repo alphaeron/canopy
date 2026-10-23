@@ -12,13 +12,13 @@ cover-html: cover
 
 smoke:
 	@tmp=$$(mktemp -d) && trap "rm -rf $$tmp" EXIT && \
-	go build -o $$tmp/kit ./cmd/kit && \
-	scripts/smoke.sh $$tmp/kit
+	go build -o $$tmp/canopy ./cmd/canopy && \
+	scripts/smoke.sh $$tmp/canopy
 
 smoke-serve:
 	@tmp=$$(mktemp -d) && trap "rm -rf $$tmp" EXIT && \
-	go build -o $$tmp/kitweb ./cmd/kitweb && \
-	scripts/smoke-serve.sh $$tmp/kitweb
+	go build -o $$tmp/canopyweb ./cmd/canopyweb && \
+	scripts/smoke-serve.sh $$tmp/canopyweb
 
 fmt:
 	@go fmt github.com/alphaeron/...
@@ -47,5 +47,5 @@ doc-all:
 
 # doc-serve browses the module's documentation as HTML at DOC_ADDR.
 doc-serve:
-	@echo "Serving docs at http://$(DOC_ADDR)/github.com/alphaeron/kit"
+	@echo "Serving docs at http://$(DOC_ADDR)/github.com/alphaeron/canopy"
 	@go run golang.org/x/pkgsite/cmd/pkgsite@$(PKGSITE_VERSION) -http=$(DOC_ADDR) .

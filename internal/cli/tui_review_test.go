@@ -201,7 +201,7 @@ func TestRuleMatchesOverlaps(t *testing.T) {
 	}
 }
 
-// TestReviewWithOutcome runs kit review's core over a real repository: the
+// TestReviewWithOutcome runs canopy review's core over a real repository: the
 // working tree's files are reviewed (a new file counts, a deleted one does
 // not), the outcome is the shared verdict, and a rules file the working tree
 // changes into an invalid one fails the review, as it would a pull request.

@@ -80,7 +80,7 @@ func TestOutcomePendingNamesWhoIsNeeded(t *testing.T) {
 // the summary, then the warnings (shortened to a count), then as many items
 // as fit.
 func TestOutcomeDescription(t *testing.T) {
-	paths := []string{"services/payments/api/KIT", "services/payments/worker/KIT", "services/ledger/KIT", "tools/release/KIT", "docs/KIT"}
+	paths := []string{"services/payments/api/RULES", "services/payments/worker/RULES", "services/ledger/RULES", "tools/release/RULES", "docs/RULES"}
 	large := "large pull request (4012 files)"
 	tests := []struct {
 		name  string
@@ -90,11 +90,11 @@ func TestOutcomeDescription(t *testing.T) {
 	}{
 		{name: "summary alone", o: Outcome{Summary: "all 3 files approved"}, limit: 140, want: "all 3 files approved"},
 		{name: "no limit lists everything", o: Outcome{Summary: "5 invalid proposed rules files", Items: paths, Warnings: []string{large}},
-			want: "5 invalid proposed rules files (services/payments/api/KIT, services/payments/worker/KIT, services/ledger/KIT, tools/release/KIT, docs/KIT) · warning: " + large},
-		{name: "items that do not all fit end with a count", o: Outcome{Summary: "6 invalid proposed rules files", Items: append(paths, "infra/terraform/KIT")}, limit: 140,
-			want: "6 invalid proposed rules files (services/payments/api/KIT, services/payments/worker/KIT, services/ledger/KIT, tools/release/KIT +2 more)"},
-		{name: "warnings keep their place before items", o: Outcome{Summary: "5 invalid proposed rules files", Items: paths, Warnings: []string{large}}, limit: 140,
-			want: "5 invalid proposed rules files (services/payments/api/KIT, services/payments/worker/KIT +3 more) · warning: " + large},
+			want: "5 invalid proposed rules files (services/payments/api/RULES, services/payments/worker/RULES, services/ledger/RULES, tools/release/RULES, docs/RULES) · warning: " + large},
+		{name: "items that do not all fit end with a count", o: Outcome{Summary: "6 invalid proposed rules files", Items: append(paths, "infra/terraform/RULES")}, limit: 148,
+			want: "6 invalid proposed rules files (services/payments/api/RULES, services/payments/worker/RULES, services/ledger/RULES, tools/release/RULES +2 more)"},
+		{name: "warnings keep their place before items", o: Outcome{Summary: "5 invalid proposed rules files", Items: paths, Warnings: []string{large}}, limit: 148,
+			want: "5 invalid proposed rules files (services/payments/api/RULES, services/payments/worker/RULES +3 more) · warning: " + large},
 		{name: "a warning too long whole is counted", o: Outcome{Summary: "all 3 files approved", Warnings: []string{strings.Repeat("w", 140)}}, limit: 140,
 			want: "all 3 files approved · 1 warning"},
 		{name: "no item fits", o: Outcome{Summary: "2 of 3 files await approval", Items: []string{strings.Repeat("t", 140)}}, limit: 140,

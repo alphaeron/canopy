@@ -49,7 +49,7 @@ Wrap it in `approval.TreeFetcher{Tree: tree, Log: log}`. That fetcher finds the 
 (`rulesfile.IsRulesFile`), reads and parses them, and reports per-file errors while keeping the
 good files. Don't write your own fetcher.
 
-- Paths are repository-relative and slash-separated (`svc/api/KIT`), with no leading `/`.
+- Paths are repository-relative and slash-separated (`svc/api/RULES`), with no leading `/`.
 - Pick the revision deliberately. A hosted platform reads the change's **base** revision (its
   target branch, never the default branch), as GitHub's `baseTree` does.
 - A listing the platform truncated returns an error wrapping `approval.ErrTreeTruncated`, never a
@@ -67,7 +67,7 @@ type ApproverResolver interface {
 }
 ```
 
-- **`Resolve`** turns a `KIT` target into the users who can approve for it. A user target returns
+- **`Resolve`** turns a `RULES` target into the users who can approve for it. A user target returns
   itself. A group target returns its members, across every page of the platform's listing.
 - **Unknown targets.** A target the platform doesn't have returns an error wrapping
   `approval.ErrUnknownTarget`. The review drops it from its rule, the same as an inactive target.
@@ -79,7 +79,7 @@ type ApproverResolver interface {
   itself (targets, approvals, the author, owners, members), so `Resolve` doesn't have to.
 - **Don't cache.** `approval.RuleChain.Execute` resolves each target once per review. One
   resolver can then serve every review without its group membership going stale.
-- **Validate before calling the API.** `KIT` files are untrusted input. If your platform has
+- **Validate before calling the API.** `RULES` files are untrusted input. If your platform has
   rules for target syntax, also implement `approval.TargetValidator`:
 
   ```go
@@ -108,7 +108,7 @@ type Source interface {
 | `AllFiles` | every file at the revision the rules are read from (a hosted platform: the base revision; local: the working tree), sorted; `approval.ErrTreeTruncated` for a truncated listing |
 | `ChangedFiles` | every path the change adds, modifies, or removes, sorted. A rename lists **both** paths, so the rules over the place it left still apply. Added paths are not in `AllFiles`. Empty when nothing changed. When the platform's own listing is capped, list the files another way if you can (GitHub compares the head tree with the merge base's past 3000 files) and report it through `Warnings`; a listing you cannot complete is `approval.ErrFileListIncomplete`, never a partial list. |
 | `DiffContent` | the unified diff for `path`, or `""` when the change doesn't touch it, only renames it, or the platform has no text diff for it (binary, too large). |
-| `ReadHead` | a file as the change proposes it (local: the working tree); a missing path wraps `fs.ErrNotExist`, and a file over `rulesfile.MaxSize` wraps `rulesfile.ErrTooLarge` (check the size before downloading). `review.Engine.ValidateProposed` validates the rules files a change proposes with it, for the server and `kit review` alike, skipping those the head doesn't have (deleted, or the old side of a rename). |
+| `ReadHead` | a file as the change proposes it (local: the working tree); a missing path wraps `fs.ErrNotExist`, and a file over `rulesfile.MaxSize` wraps `rulesfile.ErrTooLarge` (check the size before downloading). `review.Engine.ValidateProposed` validates the rules files a change proposes with it, for the server and `canopy review` alike, skipping those the head doesn't have (deleted, or the old side of a rename). |
 
 - Implement `review.Rooted` (`RepoRoot() string`) only if the source is an on-disk checkout. A
   hosted platform doesn't.
@@ -165,7 +165,7 @@ type PullRequest interface {
   ran does not report. Two pull requests whose reports would replace each other must share a key;
   two that publish to different places must not.
 - **`Report`**: publish `o` as the pull request's status, replacing the earlier one (one name per
-  platform; GitHub: a completed check run named `kit` on the head commit, a new one per report).
+  platform; GitHub: a completed check run named `canopy` on the head commit, a new one per report).
   Map `approval.Passed`, `approval.Pending`, and `approval.Failed` to distinct states, and
   `approval.Errored` to a state that neither passes nor waits (it may share the failed state, told
   apart by its text; GitHub: `success`, `action_required`, `failure`, and `failure`). Carry
@@ -201,7 +201,7 @@ type PRWebhook interface {
 - `PullRequest` parses the verified body, returns false for events that don't start a review, and
   makes no API calls. It owns the platform's client construction (GitHub: an App JWT exchanged for
   an installation token per installation) and reuses one resolver per installation.
-- Register the platform's constructor in `cmd/kitweb/main.go` (`platforms`), keyed by the name
+- Register the platform's constructor in `cmd/canopyweb/main.go` (`platforms`), keyed by the name
   `config.Config.SelectedPlatform` returns. Nothing else in the server changes.
 
 ## Adding a platform
@@ -227,7 +227,7 @@ The steps use GitLab as the example.
    (route, verification, event parsing, client construction), with
    `NewPRWebhook(cfg config.GitLab, repo *server.RepoCache, log)`. Read base trees and rules files
    through a `repo.Scope(...)` of the server's repository cache (`server.RepoCache`), named
-   for whatever limits what a reader may see (e.g. one installation). Register it in `cmd/kitweb/main.go`'s `platforms`.
+   for whatever limits what a reader may see (e.g. one installation). Register it in `cmd/canopyweb/main.go`'s `platforms`.
 7. **Configure it**: add a section to `internal/config`:
 
    ```go
@@ -241,7 +241,7 @@ The steps use GitLab as the example.
    }
    ```
 
-   Environment variables (`KIT_GITLAB_TOKEN`, ...) are bound automatically from the struct tags.
+   Environment variables (`CANOPY_GITLAB_TOKEN`, ...) are bound automatically from the struct tags.
    Give the section `Enabled()` and `Validate()` as `config.GitHub` has, add its name to
    `Config.SelectedPlatform`, and add each key to the Configuration table in the top-level README.
    Never log secret values.

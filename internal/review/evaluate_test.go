@@ -68,10 +68,10 @@ func TestEvaluate(t *testing.T) {
 			name: "an invalid proposed rules file fails even when approved",
 			setup: func(pr *stubChange) {
 				pr.input = approval.ReviewInput{Approvers: []string{"lead"}}
-				pr.changedSet = []string{"main.go", "old/KIT", "svc/KIT"}
-				pr.head = map[string]string{"svc/KIT": "- \".*\":\n  name: Svc\n  approvers:\n    - target: org/team\n"}
+				pr.changedSet = []string{"main.go", "old/RULES", "svc/RULES"}
+				pr.head = map[string]string{"svc/RULES": "- \".*\":\n  name: Svc\n  approvers:\n    - target: org/team\n"}
 			},
-			want: approval.Outcome{Verdict: approval.Failed, Summary: "1 invalid proposed rules file", Items: []string{"svc/KIT"}},
+			want: approval.Outcome{Verdict: approval.Failed, Summary: "1 invalid proposed rules file", Items: []string{"svc/RULES"}},
 		},
 		{
 			name:  "too many changed files",

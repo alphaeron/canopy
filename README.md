@@ -1,4 +1,4 @@
-# Kit - A Modular Code Review Tool
+# Canopy - A Modular Code Review Tool
 
 ## Architecture
 
@@ -31,11 +31,11 @@ If a file's requirement cannot be satisfied — no matching rule at all, or ever
 
 ### Branch Targets
 
-The review rules for a pull request are read from its **base branch**, at the base revision the pull request is compared against (`pull_request.base.sha` on GitHub), not from the repository's default branch. A pull request into `release/1.x` is reviewed against `release/1.x`'s `KIT` files.
+The review rules for a pull request are read from its **base branch**, at the base revision the pull request is compared against (`pull_request.base.sha` on GitHub), not from the repository's default branch. A pull request into `release/1.x` is reviewed against `release/1.x`'s `RULES` files.
 
-As with CODEOWNERS, a pull request cannot change its own requirements: `KIT` files it adds, modifies, or deletes take effect once it merges. The review server validates the ones it adds or modifies (as `kit validate` does) at the pull request's head, failing the review on any violation (its report names the invalid files), so a broken `KIT` file cannot be merged.
+As with CODEOWNERS, a pull request cannot change its own requirements: `RULES` files it adds, modifies, or deletes take effect once it merges. The review server validates the ones it adds or modifies (as `canopy validate` does) at the pull request's head, failing the review on any violation (its report names the invalid files), so a broken `RULES` file cannot be merged.
 
-The CLI does the opposite on purpose: it reads the working tree's `KIT` files, uncommitted changes included, to preview the rules a branch proposes. Otherwise `kit review` judges a change as the server does: it validates the `KIT` files the working tree changes, failing the review on any violation, and its exit status is the review's verdict, zero only when the review passes. `kit review --json` carries that verdict as its `outcome` (verdict, summary, items, and warnings) beside the review state. `kit validate` validates `KIT` files as the review's platform does.
+The CLI does the opposite on purpose: it reads the working tree's `RULES` files, uncommitted changes included, to preview the rules a branch proposes. Otherwise `canopy review` judges a change as the server does: it validates the `RULES` files the working tree changes, failing the review on any violation, and its exit status is the review's verdict, zero only when the review passes. `canopy review --json` carries that verdict as its `outcome` (verdict, summary, items, and warnings) beside the review state. `canopy validate` validates `RULES` files as the review's platform does.
 
 ### Repository Owner Fallback
 
@@ -43,11 +43,11 @@ When a file falls back to the repository owners, each owner becomes a reviewer f
 
 ## Configuration File Schema
 
-Each directory in the repository can host a `KIT` file to localize approval rules.
+Each directory in the repository can host a `RULES` file to localize approval rules.
 
 ```yaml
 # A regular expression matched against each file's full repository-relative
-# path (e.g. "svc/api/main.go"), whichever directory this KIT file is in.
+# path (e.g. "svc/api/main.go"), whichever directory this RULES file is in.
 - ".*\.go":
     name: "Core Backend Review"
 
@@ -77,7 +77,7 @@ Each directory in the repository can host a `KIT` file to localize approval rule
 When evaluating a changed target file (e.g., `/src/api/v1/auth.go`), the engine constructs a chain of rules starting from the repository root.
 
 ```
-[ Root /KIT ]   ──(Union / Override / Intersect)──>  [ /src/KIT ]  ──>  [ Target File ]
+[ Root /RULES ]   ──(Union / Override / Intersect)──>  [ /src/RULES ]  ──>  [ Target File ]
 ```
 
 ### Additional Rules
@@ -90,7 +90,7 @@ The approve phase is a chain of independent layers. Each layer consumes only the
 
 | Layer | Type | Command | State it returns |
 |---|---|---|---|
-| Fetch | `Fetcher` (interface), `TreeFetcher` over each platform's `Tree` | `Execute(ctx)` | parsed `KIT` rules |
+| Fetch | `Fetcher` (interface), `TreeFetcher` over each platform's `Tree` | `Execute(ctx)` | parsed `RULES` rules |
 | Sift | `RuleChain` builder | `GetFileRuleChain` | per-file ordered rule layers |
 | Chain | `RuleChain` | `Execute` | `ReviewState` (consumes only `LayerState`) |
 | Layer | `RuleLayer` | `Execute` | `LayerState` incl. per-rule states and the combined target footprint (`Required`) for the next layer |
@@ -113,7 +113,7 @@ Every target occurrence is evaluated independently against the same pool of curr
 
 * A target whose members are all inactive prunes away; the rule then falls back to earlier rules or the parent directory (see above).
 * A target that cannot be resolved to any member at all is `unresolved`, which escalates the containing rule, layer, and file to `unresolved` and forces the overall status to `error`. A target the platform does not know (or that is malformed for it) prunes away like an inactive one; a platform failure while resolving (an outage, a rate limit) never prunes, so it cannot weaken a requirement, and its cause is recorded in the review's errors.
-* Names are compared in the platform's canonical form: GitHub logins are case-insensitive, so `Alice` in a `KIT` file matches an approval by `alice`. Local reviews compare names case-insensitively too, so a local review agrees with GitHub on who approved.
+* Names are compared in the platform's canonical form: GitHub logins are case-insensitive, so `Alice` in a `RULES` file matches an approval by `alice`. Local reviews compare names case-insensitively too, so a local review agrees with GitHub on who approved.
 * Each target is resolved once per review, however many files and rules use it.
 * A group is `satisfied` once `required_count` of its eligible, active resolved members appear among current approvers.
 * Because each occurrence is independent, recurring targets under `union` are counted once per occurrence (see Recurring Approver Targets).
@@ -143,7 +143,7 @@ The runtime application evaluates a change (a GitHub pull request, or the local 
 #### Phase 1: Fetch
 1. List the change's file paths through the platform, counting a renamed file at both its old and new paths. (GitHub: the pull request's files through the API; the webhook does not carry them. Local: the working tree's status against `HEAD`.)
 2. For each unique file path, systematically map the trajectory from its local leaf directory vertically upward to the root repository level.
-3. Read the `KIT` files along the path sequentially.
+3. Read the `RULES` files along the path sequentially.
 4. If a file specifies `settings.ignore_parent_dirs: true`, halt tree traversal immediately.
 
 #### Phase 2: Sift
@@ -157,35 +157,35 @@ The runtime application evaluates a change (a GitHub pull request, or the local 
    * If `intersect`, keep only the criteria present in both the parent accumulation and the current rule.
 
 #### Phase 3: Approve
-1. Read the change's author and approvers from the platform (or, locally, from `kit review` flags), in the platform's canonical name form.
+1. Read the change's author and approvers from the platform (or, locally, from `canopy review` flags), in the platform's canonical name form.
 2. For each final rule block tied to an asset:
    * Resolve each `approvers` target to its member set through the platform (GitHub: `org/team-slug` targets expand to the team's members).
    * Apply the self-approval policy: if `self_approve` is `false`, slice the PR Author out of the eligible approver matching array.
    * Increment counts when an active approver matches a member identity target.
    * If a rule's targets have all been pruned away (inactive members, excluded author, or unresolvable targets), the rule is **skipped and the skip is recorded as an error**; it still falls back to the preceding rule's criteria, but the final overall state terminates `error` regardless of that fallback.
 3. Mark a rule block as **Satisfied** once each target's internal `actual_count >= required_count`.
-4. Report the result back on the platform — passing only if all rules across all files resolve to a **Satisfied** state. GitHub: a completed check run named `kit` on the pull request's head commit. Its title summarizes the outcome in one line, and its summary lists in full what the outcome is about (the approvers still needed, or the invalid `KIT` files) and any warnings, such as files no rule covers or a very large pull request. Its conclusion is `success` when the review is satisfied, `action_required` while approvals are missing, and `failure` when the pull request proposes an invalid `KIT` file or the review could not produce a valid result: an internal `error` status (a GitHub failure, a listing too large to evaluate, a skipped or unsatisfiable rule) or a review that could not run or timed out; the title tells these apart. Each report is a new check run, and GitHub shows the latest. Require the `kit` check in branch protection to block merging until it succeeds. The review never comments on the pull request.
+4. Report the result back on the platform — passing only if all rules across all files resolve to a **Satisfied** state. GitHub: a completed check run named `canopy` on the pull request's head commit. Its title summarizes the outcome in one line, and its summary lists in full what the outcome is about (the approvers still needed, or the invalid `RULES` files) and any warnings, such as files no rule covers or a very large pull request. Its conclusion is `success` when the review is satisfied, `action_required` while approvals are missing, and `failure` when the pull request proposes an invalid `RULES` file or the review could not produce a valid result: an internal `error` status (a GitHub failure, a listing too large to evaluate, a skipped or unsatisfiable rule) or a review that could not run or timed out; the title tells these apart. Each report is a new check run, and GitHub shows the latest. Require the `canopy` check in branch protection to block merging until it succeeds. The review never comments on the pull request.
 
 On GitHub, approvals are each reviewer's latest decisive review: a later change request or dismissal cancels an approval, and comments change nothing. An approval made before the latest push still counts. The author's own reviews are ignored here: authoring the pull request is the author's approval, and `self_approve` decides whether it counts.
 
 ## Configuration
 
-The CLI and the review server read the same configuration, in decreasing precedence: environment variables prefixed `KIT_`, the file given with `--config`, the file named by `KIT_CONFIG`, then `.kit.yaml` in the current directory or `$HOME`. Each hosted platform has its own section.
+The CLI and the review server read the same configuration, in decreasing precedence: environment variables prefixed `CANOPY_`, the file given with `--config`, the file named by `CANOPY_CONFIG`, then `.canopy.yaml` in the current directory or `$HOME`. Each hosted platform has its own section.
 
 | Key | Environment variable | Default | Purpose |
 |---|---|---|---|
-| `verbose` | `KIT_VERBOSE` | `false` | Debug-level logging |
-| `serve_addr` | `KIT_SERVE_ADDR` | `:8080` | Review server listen address |
-| `review_timeout` | `KIT_REVIEW_TIMEOUT` | `50s` | Longest one review may run |
-| `report_timeout` | `KIT_REPORT_TIMEOUT` | `30s` | Longest reporting the outcome of a timed-out review may take |
-| `review_workers` | `KIT_REVIEW_WORKERS` | `4` | Reviews the server runs at once |
-| `review_queue_per_worker` | `KIT_REVIEW_QUEUE_PER_WORKER` | `16` | Pull requests that may wait per worker; beyond that the server answers 503. More webhooks for a pull request already waiting or under review take no more room. `review_workers` × `review_queue_per_worker` may be at most 4096 |
-| `shutdown_timeout` | `KIT_SHUTDOWN_TIMEOUT` | `10s` | Longest the server waits for open requests when stopping |
-| `github.app_id` | `KIT_GITHUB_APP_ID` | | GitHub App ID |
-| `github.private_key` | `KIT_GITHUB_PRIVATE_KEY` | | GitHub App private key (PEM, PKCS #1 or #8) |
-| `github.webhook_secret` | `KIT_GITHUB_WEBHOOK_SECRET` | | GitHub webhook signing secret |
-| `github.api_url` | `KIT_GITHUB_API_URL` | `https://api.github.com/` | REST API base URL, for GitHub Enterprise Server |
-| `github.request_timeout` | `KIT_GITHUB_REQUEST_TIMEOUT` | `30s` | Longest one REST API request may wait for a response |
+| `verbose` | `CANOPY_VERBOSE` | `false` | Debug-level logging |
+| `serve_addr` | `CANOPY_SERVE_ADDR` | `:8080` | Review server listen address |
+| `review_timeout` | `CANOPY_REVIEW_TIMEOUT` | `50s` | Longest one review may run |
+| `report_timeout` | `CANOPY_REPORT_TIMEOUT` | `30s` | Longest reporting the outcome of a timed-out review may take |
+| `review_workers` | `CANOPY_REVIEW_WORKERS` | `4` | Reviews the server runs at once |
+| `review_queue_per_worker` | `CANOPY_REVIEW_QUEUE_PER_WORKER` | `16` | Pull requests that may wait per worker; beyond that the server answers 503. More webhooks for a pull request already waiting or under review take no more room. `review_workers` × `review_queue_per_worker` may be at most 4096 |
+| `shutdown_timeout` | `CANOPY_SHUTDOWN_TIMEOUT` | `10s` | Longest the server waits for open requests when stopping |
+| `github.app_id` | `CANOPY_GITHUB_APP_ID` | | GitHub App ID |
+| `github.private_key` | `CANOPY_GITHUB_PRIVATE_KEY` | | GitHub App private key (PEM, PKCS #1 or #8) |
+| `github.webhook_secret` | `CANOPY_GITHUB_WEBHOOK_SECRET` | | GitHub webhook signing secret |
+| `github.api_url` | `CANOPY_GITHUB_API_URL` | `https://api.github.com/` | REST API base URL, for GitHub Enterprise Server |
+| `github.request_timeout` | `CANOPY_GITHUB_REQUEST_TIMEOUT` | `30s` | Longest one REST API request may wait for a response |
 
 ```yaml
 verbose: false
@@ -201,7 +201,7 @@ The platform is deployment configuration: a repository under review has no say i
 
 ## Review Server
 
-`kitweb` is the review server, a separate binary from the CLI (`go build ./cmd/kitweb`). At startup it loads the configuration, selects the platform, and refuses to start unless that platform's section is complete and valid (GitHub: `app_id`, `private_key`, and `webhook_secret` all set, `app_id` numeric, `private_key` an RSA key), and unless `review_workers` × `review_queue_per_worker` is at most 4096. `--addr` overrides `serve_addr`, and `--config` names the configuration file.
+`canopyweb` is the review server, a separate binary from the CLI (`go build ./cmd/canopyweb`). At startup it loads the configuration, selects the platform, and refuses to start unless that platform's section is complete and valid (GitHub: `app_id`, `private_key`, and `webhook_secret` all set, `app_id` numeric, `private_key` an RSA key), and unless `review_workers` × `review_queue_per_worker` is at most 4096. `--addr` overrides `serve_addr`, and `--config` names the configuration file.
 
 | Route | Purpose |
 |---|---|

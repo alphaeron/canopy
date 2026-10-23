@@ -356,9 +356,9 @@ func TestCheckSummary(t *testing.T) {
 		},
 		{
 			name:  "an item cannot end its code span or its line",
-			o:     approval.Outcome{Summary: "1 invalid proposed rules file", Items: []string{"a`[x](y)`\nb/KIT"}},
+			o:     approval.Outcome{Summary: "1 invalid proposed rules file", Items: []string{"a`[x](y)`\nb/RULES"}},
 			limit: maxCheckSummary,
-			want:  "**1 invalid proposed rules file**\n\n- `a'[x](y)' b/KIT`\n",
+			want:  "**1 invalid proposed rules file**\n\n- `a'[x](y)' b/RULES`\n",
 		},
 		{
 			name:  "items past the limit are counted",

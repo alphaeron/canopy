@@ -176,7 +176,7 @@ func (failingResolver) Canonical(name string) string { return name }
 // so it also reports every other error (here an unresolvable target), and
 // each file still has its state.
 func TestBrokenRulesFileErrorsButReviewContinues(t *testing.T) {
-	broken := errors.New("parse rules file svc/KIT: bad yaml")
+	broken := errors.New("parse rules file svc/RULES: bad yaml")
 	ev := &Evaluator{
 		Fetch: &stubFetcher{
 			rules: rulesfile.Set{rulesfile.FileName: {{Pattern: ".*", Name: "root", Approvers: []rulesfile.ApproverTarget{{Target: "org/down", RequiredCount: 1}}}}},

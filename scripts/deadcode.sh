@@ -1,6 +1,6 @@
 #!/bin/sh
 # deadcode.sh — fails when any function is unreachable from the module's
-# commands (cmd/kit and cmd/kitweb), apart from those scripts/deadcode.allow
+# commands (cmd/canopy and cmd/canopyweb), apart from those scripts/deadcode.allow
 # lists. Invoked by `make deadcode`; the
 # deadcode tool runs at a pinned version without being added to go.mod.
 set -eu

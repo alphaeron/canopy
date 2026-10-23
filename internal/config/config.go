@@ -359,7 +359,7 @@ func configKeys(t reflect.Type, prefix string) []string {
 
 // envName is the environment variable for a dotted key: the brand prefix
 // and the key in capitals, with sections joined by underscores
-// ("github.app_id" -> "KIT_GITHUB_APP_ID").
+// ("github.app_id" -> "CANOPY_GITHUB_APP_ID").
 func envName(key string) string {
 	return brand.EnvPrefix + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
 }

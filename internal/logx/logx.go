@@ -1,4 +1,4 @@
-// Package logx holds the logging helpers shared across kit's packages. It
+// Package logx holds the logging helpers shared across canopy's packages. It
 // imports only the standard library, so any package may depend on it.
 package logx
 

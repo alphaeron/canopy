@@ -438,39 +438,39 @@ func TestExactPattern(t *testing.T) {
 }
 
 // TestValidateProposed pins the check of the rules files a change proposes,
-// shared by the server and kit review: each is read as proposed, parse
+// shared by the server and canopy review: each is read as proposed, parse
 // errors and rule violations are reported, and files that are gone or not
 // rules files are skipped.
 func TestValidateProposed(t *testing.T) {
 	pr := newStubChange()
 	pr.head = map[string]string{
-		"ok/KIT":      "- \".*\":\n  name: Ok\n  approvers:\n    - target: lead\n      required_count: 1\n",
-		"broken/KIT":  "- [not: rules\n",
-		"badre/KIT":   "- \"(\":\n  name: Bad\n",
-		"nocount/KIT": "- \".*\":\n  name: NoCount\n  approvers:\n    - target: org/team\n",
+		"ok/RULES":      "- \".*\":\n  name: Ok\n  approvers:\n    - target: lead\n      required_count: 1\n",
+		"broken/RULES":  "- [not: rules\n",
+		"badre/RULES":   "- \"(\":\n  name: Bad\n",
+		"nocount/RULES": "- \".*\":\n  name: NoCount\n  approvers:\n    - target: org/team\n",
 	}
-	// deleted/KIT is pending but absent at the head: deleted, so skipped.
+	// deleted/RULES is pending but absent at the head: deleted, so skipped.
 	// main.go is not a rules file, so it is not validated.
-	pending := []string{"ok/KIT", "broken/KIT", "badre/KIT", "nocount/KIT", "deleted/KIT", "main.go"}
+	pending := []string{"ok/RULES", "broken/RULES", "badre/RULES", "nocount/RULES", "deleted/RULES", "main.go"}
 
 	got, err := (&Engine{Source: pr}).ValidateProposed(t.Context(), pending)
 	if err != nil {
 		t.Fatalf("ValidateProposed: %v", err)
 	}
-	for _, p := range []string{"broken/KIT", "badre/KIT", "nocount/KIT"} {
+	for _, p := range []string{"broken/RULES", "badre/RULES", "nocount/RULES"} {
 		if len(got[p]) == 0 {
 			t.Errorf("%s: no violations, want some", p)
 		}
 	}
-	for _, p := range []string{"ok/KIT", "deleted/KIT", "main.go"} {
+	for _, p := range []string{"ok/RULES", "deleted/RULES", "main.go"} {
 		if len(got[p]) != 0 {
 			t.Errorf("%s: violations %v, want none", p, got[p])
 		}
 	}
 
-	tooLarge := fmt.Errorf("read big/KIT: %w", rulesfile.ErrTooLarge)
+	tooLarge := fmt.Errorf("read big/RULES: %w", rulesfile.ErrTooLarge)
 	pr.headErr = tooLarge
-	if got, err := (&Engine{Source: pr}).ValidateProposed(t.Context(), []string{"big/KIT"}); err != nil || !errors.Is(got["big/KIT"][0], rulesfile.ErrTooLarge) {
+	if got, err := (&Engine{Source: pr}).ValidateProposed(t.Context(), []string{"big/RULES"}); err != nil || !errors.Is(got["big/RULES"][0], rulesfile.ErrTooLarge) {
 		t.Errorf("ValidateProposed with an oversized file = %v, %v; want it as a violation", got, err)
 	}
 
@@ -500,13 +500,13 @@ func TestValidateProposedChecksTargetSyntax(t *testing.T) {
 	pr := newStubChange()
 	pr.resolver = strictResolver{&approval.DefaultApproverResolver{}}
 	pr.head = map[string]string{
-		"svc/KIT": "- \".*\":\n  approvers:\n    - target: bad!name\n      required_count: 1\n    - target: lead\n      required_count: 1\n",
+		"svc/RULES": "- \".*\":\n  approvers:\n    - target: bad!name\n      required_count: 1\n    - target: lead\n      required_count: 1\n",
 	}
-	got, err := (&Engine{Source: pr}).ValidateProposed(t.Context(), []string{"svc/KIT"})
+	got, err := (&Engine{Source: pr}).ValidateProposed(t.Context(), []string{"svc/RULES"})
 	if err != nil {
 		t.Fatalf("ValidateProposed: %v", err)
 	}
-	if errs := got["svc/KIT"]; len(errs) != 1 || !errors.Is(errs[0], approval.ErrInvalidTarget) {
+	if errs := got["svc/RULES"]; len(errs) != 1 || !errors.Is(errs[0], approval.ErrInvalidTarget) {
 		t.Errorf("violations = %v, want the one invalid target", errs)
 	}
 }

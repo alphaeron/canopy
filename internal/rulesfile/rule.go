@@ -75,7 +75,7 @@ func (r Rule) Key() RuleKey {
 	return RuleKey{RulesFile: r.RulesFile, Position: r.Position}
 }
 
-// Location is where the rule is declared, as "KIT[2]": its rules file and
+// Location is where the rule is declared, as "RULES[2]": its rules file and
 // its 0-based position there.
 func (r Rule) Location() string {
 	return r.RulesFile + "[" + strconv.Itoa(r.Position) + "]"

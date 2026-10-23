@@ -61,7 +61,7 @@ func TestBrokenRulesFile(t *testing.T) {
 	if _, ok := s.Rules[rulesfile.FileName]; !ok || len(s.Rules) != 1 {
 		t.Errorf("rules = %v, want only the root rules file", s.Rules)
 	}
-	// kit validate checks rules files as the review's platform does.
+	// canopy validate checks rules files as the review's platform does.
 	if s.Validator != engine.Source.Evaluator() {
 		t.Errorf("workspace validator = %v, want the engine's evaluator", s.Validator)
 	}

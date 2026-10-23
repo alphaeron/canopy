@@ -1,5 +1,5 @@
 #!/bin/sh
-# smoke-serve.sh — end-to-end smoke test for the kitweb review server.
+# smoke-serve.sh — end-to-end smoke test for the canopyweb review server.
 # Invoked by `make smoke-serve` with the pre-built binary path as its only
 # argument. It starts the server on a free local port with a throw-away
 # GitHub App configuration, checks the OpenAPI document, the docs page, and
@@ -8,7 +8,7 @@
 # No request reaches GitHub.
 set -eu
 
-BIN="${1:?usage: smoke-serve.sh <path-to-kitweb-binary>}"
+BIN="${1:?usage: smoke-serve.sh <path-to-canopyweb-binary>}"
 PORT="${SMOKE_PORT:-18080}"
 URL="http://127.0.0.1:$PORT"
 
@@ -23,19 +23,19 @@ trap cleanup EXIT
 fail() { echo "smoke-serve: FAIL: $1" >&2; [ -f "$work/log" ] && cat "$work/log" >&2; exit 1; }
 
 openssl genrsa -out "$work/key.pem" 2048 2>/dev/null || fail "generate key"
-# An empty config file keeps the user's own ~/.kit.yaml out of the test.
+# An empty config file keeps the user's own ~/.canopy.yaml out of the test.
 printf 'verbose: false\n' >"$work/config.yaml"
 
 # A partly configured platform must stop the server before it listens.
-if KIT_CONFIG="$work/config.yaml" KIT_GITHUB_APP_ID=1 "$BIN" --addr "127.0.0.1:$PORT" >"$work/log" 2>&1; then
+if CANOPY_CONFIG="$work/config.yaml" CANOPY_GITHUB_APP_ID=1 "$BIN" --addr "127.0.0.1:$PORT" >"$work/log" 2>&1; then
 	fail "server started with only github.app_id set"
 fi
 grep -q 'partly configured' "$work/log" || fail "partial configuration error not reported"
 
-KIT_CONFIG="$work/config.yaml" \
-KIT_GITHUB_APP_ID=1 \
-KIT_GITHUB_PRIVATE_KEY="$(cat "$work/key.pem")" \
-KIT_GITHUB_WEBHOOK_SECRET=smoke \
+CANOPY_CONFIG="$work/config.yaml" \
+CANOPY_GITHUB_APP_ID=1 \
+CANOPY_GITHUB_PRIVATE_KEY="$(cat "$work/key.pem")" \
+CANOPY_GITHUB_WEBHOOK_SECRET=smoke \
 	"$BIN" --addr "127.0.0.1:$PORT" >"$work/log" 2>&1 &
 pid=$!
 

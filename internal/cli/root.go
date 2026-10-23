@@ -49,7 +49,7 @@ contents before opening a pull or merge request.
 The local branch's rules files are used, uncommitted changes included, so
 the CLI previews the rules a branch proposes; the review server enforces the
 rules of a pull request's base branch instead. Every command runs against the
-local repository; the review server (kitweb, a separate binary) runs the same
+local repository; the review server (canopyweb, a separate binary) runs the same
 review against a hosted change such as a pull request.`,
 	// PersistentPreRunE runs after cobra has finished parsing every flag for
 	// the command tree, making --config available. It is the single moment

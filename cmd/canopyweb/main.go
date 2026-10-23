@@ -1,6 +1,6 @@
-// Command kitweb is the review server: it receives a hosted platform's
+// Command canopyweb is the review server: it receives a hosted platform's
 // webhooks and reviews each change, reporting the outcome back on it. It is
-// a separate binary from the kit CLI. The platform is deployment
+// a separate binary from the canopy CLI. The platform is deployment
 // configuration (see config.Config.SelectedPlatform), chosen once at
 // startup; the server itself is platform-agnostic.
 package main
@@ -32,7 +32,7 @@ var platforms = map[config.Platform]func(cfg *config.Config, repo *server.RepoCa
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("kitweb stopped", "error", err)
+		slog.Error("canopyweb stopped", "error", err)
 		os.Exit(1)
 	}
 }

@@ -1,8 +1,8 @@
-# Kit — Agent Instructions
+# Canopy — Agent Instructions
 
 ## Project
 
-- **Name:** Kit
+- **Name:** Canopy
 - **Purpose:** Modular code review tool
 - **Language:** Go; follow the version in `go.mod`
 - **Design:** Simple, idiomatic, modular, secure, testable Go code.

@@ -36,8 +36,8 @@ func TestCacheScopeBlobs(t *testing.T) {
 func TestCacheScopeTrees(t *testing.T) {
 	repo := NewRepoCache()
 	s := repo.Scope("a")
-	s.PutTree("o/r", "c1", map[string]TreeBlob{"KIT": {SHA: "b1", Size: 1}})
-	if got, ok := s.Tree("o/r", "c1"); !ok || got["KIT"].SHA != "b1" {
+	s.PutTree("o/r", "c1", map[string]TreeBlob{"RULES": {SHA: "b1", Size: 1}})
+	if got, ok := s.Tree("o/r", "c1"); !ok || got["RULES"].SHA != "b1" {
 		t.Errorf("Tree(o/r, c1) = %v, %v; want the listing as put", got, ok)
 	}
 	for _, miss := range []struct{ scope, repo, commit string }{

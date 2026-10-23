@@ -4,8 +4,8 @@
 # Lines starting with # are comments.
 
 # The platform contract suite: called only from each platform's tests.
-^github\.com/alphaeron/kit/internal/platform/platformtest\..+$
+^github\.com/alphaeron/canopy/internal/platform/platformtest\..+$
 
 # Marker methods: the TUI matches them through a type switch on the
 # homeTarget interface, which deadcode's call graph does not see.
-^github\.com/alphaeron/kit/internal/tui\.[A-Za-z]+\.forHome$
+^github\.com/alphaeron/canopy/internal/tui\.[A-Za-z]+\.forHome$

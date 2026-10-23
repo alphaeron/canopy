@@ -1,19 +1,19 @@
 #!/bin/sh
-# smoke.sh — end-to-end smoke test for the kit CLI binary. Invoked by
+# smoke.sh — end-to-end smoke test for the canopy CLI binary. Invoked by
 # `make smoke` with the pre-built binary path as its only argument. It
 # drives the entire scripted command surface against a throw-away git
 # repository, asserting the output of each command in turn. Exits nonzero
 # on the first failure, so it gates CI the same way `go test` does.
 set -eu
 
-BIN="${1:?usage: smoke.sh <path-to-kit-binary>}"
+BIN="${1:?usage: smoke.sh <path-to-canopy-binary>}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cd "$work"
 
 git init -q .
-git config user.email smoke@kit.test
+git config user.email smoke@canopy.test
 git config user.name smoke
 
 mkdir -p src/api
@@ -25,10 +25,10 @@ printf 'package main\n' > main.go
 printf 'package api\n' > src/api/h.go
 $BIN validate >/dev/null   # must not error even before the first commit
 
-# --- 2. init scaffolds a KIT file and a rule ------------------------------
+# --- 2. init scaffolds a RULES file and a rule ------------------------------
 $BIN init --pattern '.*\.go' --name 'go review' --approver "team/go" --approver "1" --json \
     | grep -q '"RequiredCount": 1' || fail "init --json"
-grep -q "name: go review" KIT || fail "init KIT content"
+grep -q "name: go review" RULES || fail "init RULES content"
 
 git add -A && git commit -qm init
 
@@ -46,27 +46,27 @@ $BIN rules edit ".*\.md" --name "docs-v2" --self-approve | grep -q "edited rule"
 $BIN rules list --json | grep -q '"name": "docs-v2"' || fail "rules edit persisted"
 
 # --- 6. rules files / match / coverage ------------------------------------
-$BIN rules files "KIT" | grep -q "^KIT$" || fail "rules files"
-$BIN rules files "main\.go" | grep -q "main.go" && fail "rules files lists only KIT files"
+$BIN rules files "RULES" | grep -q "^RULES$" || fail "rules files"
+$BIN rules files "main\.go" | grep -q "main.go" && fail "rules files lists only RULES files"
 $BIN match --json | grep -q '"path": "main.go"' || fail "match --json"
 $BIN match --by-scope --scope "go review" --json | grep -q '"files"' || fail "match --by-scope"
 $BIN coverage --json | grep -q '"universe"' || fail "coverage --json"
 $BIN review 'main\.go' --approver "team/go" --json | grep -q '"overall": "satisfied"' || fail "review --json"
 $BIN review 'main\.go' | grep -q "^Overall: missing approvers" || fail "review table"
 
-# --- 7. rules files lists every KIT file without a pattern ----------------
-$BIN rules files --json | grep -q '"KIT"' || fail "rules files --json"
+# --- 7. rules files lists every RULES file without a pattern ----------------
+$BIN rules files --json | grep -q '"RULES"' || fail "rules files --json"
 
 # --- 8. validate flags a malformed rule and exits nonzero -----------------
 # validate reads every rules file in the working tree, so the malformed one
 # fails it.
-mkdir -p src/kit-bad
-printf '.*\\(unclosed:\n  name: bad\n' > src/kit-bad/KIT
+mkdir -p src/canopy-bad
+printf '.*\\(unclosed:\n  name: bad\n' > src/canopy-bad/RULES
 git add -A && git commit -qm "add malformed rule"
 if $BIN validate >/dev/null 2>&1; then fail "validate should fail on malformed rule"; fi
-# Every command that loads KIT files fails closed on a malformed one, so drop
+# Every command that loads RULES files fails closed on a malformed one, so drop
 # it before exercising the rest of the surface.
-git rm -q src/kit-bad/KIT && git commit -qm "drop malformed rule"
+git rm -q src/canopy-bad/RULES && git commit -qm "drop malformed rule"
 
 # --- 9. rules remove: declined without confirm, applied with --force ------
 printf 'n\n' | $BIN rules remove ".*\.md" 2>&1 | grep -q "remove aborted" || fail "remove aborted"
