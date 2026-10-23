@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -139,7 +141,11 @@ func (a *appAuth) runExchange(ctx context.Context, installation int64, ex *excha
 
 // exchangeToken exchanges a fresh App JWT for an installation token.
 func (a *appAuth) exchangeToken(ctx context.Context, installation int64) (*github.InstallationToken, error) {
-	client, err := a.client(&bearer{token: func(context.Context) (string, error) { return a.jwt() }, base: a.transport})
+	auth, err := a.bearer(func(context.Context) (string, error) { return a.jwt() }, a.transport)
+	if err != nil {
+		return nil, err
+	}
+	client, err := a.client(auth)
 	if err != nil {
 		return nil, err
 	}
@@ -158,10 +164,24 @@ func (a *appAuth) exchangeToken(ctx context.Context, installation int64) (*githu
 // change are made conditional on the responses kept in cache, the
 // installation's scope (see conditionalTransport).
 func (a *appAuth) installationClient(installation int64, cache server.CacheScope) (*github.Client, error) {
-	return a.client(&bearer{
-		token: func(ctx context.Context) (string, error) { return a.token(ctx, installation) },
-		base:  &conditionalTransport{base: a.transport, cache: cache},
-	})
+	auth, err := a.bearer(
+		func(ctx context.Context) (string, error) { return a.token(ctx, installation) },
+		&conditionalTransport{base: a.transport, cache: cache},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return a.client(auth)
+}
+
+// bearer authenticates the requests to the configured API with the token
+// that token returns, sending them over base.
+func (a *appAuth) bearer(token func(context.Context) (string, error), base http.RoundTripper) (*bearer, error) {
+	u, err := url.Parse(a.baseURL)
+	if err != nil || u.Host == "" {
+		return nil, errors.New("GitHub API URL is not an absolute URL")
+	}
+	return &bearer{scheme: u.Scheme, host: u.Host, token: token, base: base}, nil
 }
 
 // client is a GitHub client on the configured API URL over transport. Its
@@ -173,15 +193,23 @@ func (a *appAuth) client(transport http.RoundTripper) (*github.Client, error) {
 	return github.NewClient(github.WithTransport(transport), github.WithURLs(&base, &base), github.WithDisableRateLimitCheck())
 }
 
-// bearer authenticates each request with the bearer token that token
-// returns for the request's context.
+// bearer authenticates each request to the API's scheme and host with the
+// bearer token that token returns for the request's context. A request
+// anywhere else, such as a redirect off the API, is sent without it: the
+// client cannot strip a header the transport adds, so the transport must
+// not add it.
 type bearer struct {
-	token func(context.Context) (string, error)
-	base  http.RoundTripper
+	scheme, host string
+	token        func(context.Context) (string, error)
+	base         http.RoundTripper
 }
 
-// RoundTrip sends a copy of req carrying the token.
+// RoundTrip sends a copy of req carrying the token, or req as it is when it
+// is not to the API.
 func (b *bearer) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !strings.EqualFold(req.URL.Scheme, b.scheme) || !strings.EqualFold(req.URL.Host, b.host) {
+		return b.base.RoundTrip(req)
+	}
 	tok, err := b.token(req.Context())
 	if err != nil {
 		if req.Body != nil {

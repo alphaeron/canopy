@@ -246,6 +246,7 @@ func newEnv(t *testing.T, feature map[string]string) *env {
 		History:         history,
 		PublicURL:       web.URL,
 		LinkKey:         []byte(strings.Repeat("l", server.MinLinkKeyBytes)),
+		LinkLifetime:    server.MinLinkLifetime,
 	}, platform)
 	if err != nil {
 		cancel()

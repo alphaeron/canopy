@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"reflect"
@@ -75,6 +76,11 @@ type Config struct {
 	// replica. Required with PublicURL. It is a secret, so it is never
 	// logged.
 	LinkKey string `mapstructure:"link_key"`
+	// LinkLifetime is how long a review page's link opens its page after
+	// the server signs it (see server.Options.LinkLifetime); defaults to
+	// 90 days. A change applies to links signed from then on: each link
+	// carries its own expiry.
+	LinkLifetime time.Duration `mapstructure:"link_lifetime"`
 	// GitHub configures the GitHub platform for the review server.
 	GitHub GitHub `mapstructure:"github"`
 	// Path is the file the configuration was read from, when one existed.
@@ -99,7 +105,8 @@ type GitHub struct {
 	WebhookSecret string `mapstructure:"webhook_secret"`
 	// APIURL is the REST API's base URL, for GitHub Enterprise Server
 	// (e.g. "https://github.example.com/api/v3/"); empty means
-	// DefaultGitHubAPIURL.
+	// DefaultGitHubAPIURL. It must be https, except on a loopback host:
+	// every request to it carries the app's credentials.
 	APIURL string `mapstructure:"api_url"`
 	// RequestTimeout bounds waiting for each REST API response's headers,
 	// so one stuck request cannot hold a review until its own timeout;
@@ -123,6 +130,7 @@ const (
 	DefaultReviewWorkers        = 4
 	DefaultReviewQueuePerWorker = 16
 	DefaultShutdownTimeout      = 10 * time.Second
+	DefaultLinkLifetime         = 90 * 24 * time.Hour
 )
 
 // MaxReviewQueue caps ReviewQueue, the pull requests that may wait for a
@@ -148,9 +156,9 @@ func (g GitHub) Enabled() bool {
 // Validate checks that the section can run the GitHub platform: app_id,
 // private_key, and webhook_secret are all set, app_id is a positive
 // integer, private_key is an RSA private key in PEM, and api_url (when set)
-// is an absolute http(s) URL. Errors name keys, never secret values. Load
-// does not call it, so the CLI never fails on server settings; the review
-// server does, at startup.
+// is an absolute https URL, or http on a loopback host. Errors name keys,
+// never secret values. Load does not call it, so the CLI never fails on
+// server settings; the review server does, at startup.
 func (g GitHub) Validate() error {
 	var errs []error
 	for key, v := range map[string]string{"app_id": g.AppID, "private_key": g.PrivateKey, "webhook_secret": g.WebhookSecret} {
@@ -169,12 +177,24 @@ func (g GitHub) Validate() error {
 		}
 	}
 	if g.APIURL != "" {
-		if u, err := url.Parse(g.APIURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			errs = append(errs, errors.New("github.api_url must be an absolute http(s) URL"))
+		u, err := url.Parse(g.APIURL)
+		secure := err == nil && (u.Scheme == "https" || u.Scheme == "http" && isLoopback(u.Hostname()))
+		if !secure || u.Host == "" {
+			errs = append(errs, errors.New("github.api_url must be an absolute https URL (http only on a loopback host)"))
 		}
 	}
 	slices.SortFunc(errs, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
 	return errors.Join(errs...)
+}
+
+// isLoopback reports whether host names this machine: "localhost" or a
+// loopback IP address.
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // AppIDNumber is AppID as the positive integer GitHub assigns.
@@ -342,6 +362,9 @@ func Load(explicitPath string) (*Config, error) {
 	}
 	if cfg.ShutdownTimeout <= 0 {
 		cfg.ShutdownTimeout = DefaultShutdownTimeout
+	}
+	if cfg.LinkLifetime <= 0 {
+		cfg.LinkLifetime = DefaultLinkLifetime
 	}
 
 	slog.SetDefault(loggerFor(cfg.Verbose, os.Stderr))

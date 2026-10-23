@@ -14,21 +14,23 @@ import (
 	"github.com/alphaeron/canopy/internal/reviewview"
 )
 
-// reviewPageInput names a review page, with its link's signature.
+// reviewPageInput names a review page, with its link's expiry and
+// signature.
 type reviewPageInput struct {
 	Owner  string `path:"owner" maxLength:"100" doc:"The repository's owner."`
 	Name   string `path:"name" maxLength:"100" doc:"The repository's name."`
 	Number int    `path:"number" minimum:"1" doc:"The pull request's number."`
 	SHA    string `path:"sha" pattern:"^([0-9a-f]{40}|[0-9a-f]{64})$" doc:"The pull request's head commit."`
+	Exp    int64  `query:"exp" required:"true" minimum:"1" doc:"When the link expires, in Unix seconds, as the pull request's status carries it."`
 	Sig    string `query:"sig" required:"true" maxLength:"64" doc:"The link's signature, as the pull request's status carries it."`
 }
 
 // ref is the page in, once its signature verifies.
 func (in *reviewPageInput) ref(l *links) (pageRef, error) {
 	ref := pageRef{repo: strings.ToLower(in.Owner + "/" + in.Name), number: in.Number, headSHA: in.SHA}
-	if !l.verify(ref.repo, ref.number, ref.headSHA, in.Sig) {
-		// Not found rather than forbidden: an unsigned request learns
-		// nothing about which reviews exist.
+	if !l.verify(ref.repo, ref.number, ref.headSHA, in.Exp, in.Sig) {
+		// Not found rather than forbidden, for an expired link too: an
+		// unsigned request learns nothing about which reviews exist.
 		return pageRef{}, huma.Error404NotFound("review page not found")
 	}
 	return ref, nil
@@ -72,7 +74,7 @@ func (s *Server) registerReviewPages(api huma.API) {
 		Summary:     "Show a pull request's review",
 		Description: "The newest review of a pull request's head commit, as an HTML page: its progress while it is queued " +
 			"or running, then its outcome and full decision path. The pull request's status links to it; a link the server " +
-			"did not sign is not found.",
+			"did not sign, or one that has expired, is not found.",
 		Tags:   []string{"reviews"},
 		Errors: []int{http.StatusNotFound, http.StatusServiceUnavailable},
 	}, func(ctx context.Context, in *reviewPageInput) (*reviewPageOutput, error) {
@@ -84,7 +86,7 @@ func (s *Server) registerReviewPages(api huma.API) {
 		if err != nil {
 			return nil, err
 		}
-		page.ProgressURL = in.SHA + "/progress?sig=" + in.Sig
+		page.ProgressURL = in.SHA + "/progress?" + linkQuery(in.Exp, in.Sig)
 		var body bytes.Buffer
 		if err := reviewview.Render(&body, page); err != nil {
 			s.log.Error("rendering a review page failed", "component", "server", "repo", ref.repo, "number", ref.number, "error", err)
@@ -104,7 +106,7 @@ func (s *Server) registerReviewPages(api huma.API) {
 		Path:        ReviewPagePath + "/progress",
 		Summary:     "Follow a pull request's review",
 		Description: "How far the newest review of a pull request's head commit has come, for its review page to poll. " +
-			"It takes the review page's signature.",
+			"It takes the review page's expiry and signature.",
 		Tags:   []string{"reviews"},
 		Errors: []int{http.StatusNotFound, http.StatusServiceUnavailable},
 	}, func(ctx context.Context, in *reviewPageInput) (*progressOutput, error) {

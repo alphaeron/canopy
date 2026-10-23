@@ -88,7 +88,7 @@ func TestLoadPlatformSectionFromEnv(t *testing.T) {
 	}
 	if !reflect.DeepEqual(configKeys(reflect.TypeFor[Config](), ""), []string{
 		"verbose", "serve_addr", "review_timeout", "report_timeout", "review_workers", "review_queue_per_worker", "shutdown_timeout", "database_url", "database_key",
-		"public_url", "link_key",
+		"public_url", "link_key", "link_lifetime",
 		"github.app_id", "github.private_key", "github.webhook_secret", "github.api_url", "github.request_timeout",
 	}) {
 		t.Errorf("configKeys = %v, want every tagged field, sections dotted", configKeys(reflect.TypeFor[Config](), ""))
@@ -263,6 +263,12 @@ func TestGitHubValidate(t *testing.T) {
 		{name: "non-numeric app id", g: GitHub{AppID: "abc", PrivateKey: key, WebhookSecret: "s"}, want: []string{"app_id must be a positive integer"}},
 		{name: "key not PEM", g: GitHub{AppID: "12", PrivateKey: "not a key", WebhookSecret: "s"}, want: []string{"private_key is not PEM"}},
 		{name: "relative API URL", g: GitHub{AppID: "12", PrivateKey: key, WebhookSecret: "s", APIURL: "/api"}, want: []string{"api_url must be an absolute"}},
+		{name: "http API URL", g: GitHub{AppID: "12", PrivateKey: key, WebhookSecret: "s", APIURL: "http://ghe.example.com/api/v3"}, want: []string{"api_url must be an absolute https URL"}},
+		{name: "other scheme API URL", g: GitHub{AppID: "12", PrivateKey: key, WebhookSecret: "s", APIURL: "ftp://ghe.example.com/"}, want: []string{"api_url must be an absolute https URL"}},
+		{name: "http on localhost", g: GitHub{AppID: "12", PrivateKey: key, WebhookSecret: "s", APIURL: "http://localhost:8080/"}},
+		{name: "http on loopback IPv4", g: GitHub{AppID: "12", PrivateKey: key, WebhookSecret: "s", APIURL: "http://127.0.0.1:8080/"}},
+		{name: "http on loopback IPv6", g: GitHub{AppID: "12", PrivateKey: key, WebhookSecret: "s", APIURL: "http://[::1]:8080/"}},
+		{name: "http on a host named like loopback", g: GitHub{AppID: "12", PrivateKey: key, WebhookSecret: "s", APIURL: "http://127.0.0.1.example.com/"}, want: []string{"api_url must be an absolute https URL"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -383,7 +389,8 @@ func TestLoadServerSettings(t *testing.T) {
 		}
 		if got.ReviewTimeout != DefaultReviewTimeout || got.ReportTimeout != DefaultReportTimeout ||
 			got.ReviewWorkers != DefaultReviewWorkers || got.ReviewQueuePerWorker != DefaultReviewQueuePerWorker ||
-			got.ShutdownTimeout != DefaultShutdownTimeout || got.GitHub.APITimeout() != DefaultGitHubRequestTimeout {
+			got.ShutdownTimeout != DefaultShutdownTimeout || got.LinkLifetime != DefaultLinkLifetime ||
+			got.GitHub.APITimeout() != DefaultGitHubRequestTimeout {
 			t.Errorf("config = %+v; want the server defaults", got)
 		}
 	})
@@ -394,6 +401,7 @@ func TestLoadServerSettings(t *testing.T) {
 			brand.EnvPrefix + "REVIEW_QUEUE_PER_WORKER": "3",
 			brand.EnvPrefix + "SHUTDOWN_TIMEOUT":        "5s",
 			brand.EnvPrefix + "REPORT_TIMEOUT":          "7s",
+			brand.EnvPrefix + "LINK_LIFETIME":           "168h",
 			brand.EnvPrefix + "GITHUB_REQUEST_TIMEOUT":  "11s",
 			brand.EnvPrefix + "GITHUB_API_URL":          "https://ghe/api/v3/",
 		})
@@ -403,6 +411,7 @@ func TestLoadServerSettings(t *testing.T) {
 		}
 		if got.ReviewTimeout != 30*time.Second || got.ReviewWorkers != 9 || got.ReviewQueuePerWorker != 3 ||
 			got.ShutdownTimeout != 5*time.Second || got.ReportTimeout != 7*time.Second ||
+			got.LinkLifetime != 7*24*time.Hour ||
 			got.GitHub.RequestTimeout != 11*time.Second ||
 			got.GitHub.APIURL != "https://ghe/api/v3/" {
 			t.Errorf("config = %+v, want the environment's server settings", got)

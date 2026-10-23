@@ -128,6 +128,7 @@ func run() error {
 		History:         history,
 		PublicURL:       cfg.PublicURL,
 		LinkKey:         []byte(cfg.LinkKey),
+		LinkLifetime:    cfg.LinkLifetime,
 	}, platform)
 	if err != nil {
 		return err

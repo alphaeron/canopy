@@ -156,3 +156,71 @@ func TestTokenWaiterOutlivesACancelledExchange(t *testing.T) {
 		t.Errorf("waiter: %v, want its own token", err)
 	}
 }
+
+// TestBearerAuthenticatesTheAPIOnly: the token goes to the API's scheme and
+// host alone, and a redirect off the API does not carry it.
+func TestBearerAuthenticatesTheAPIOnly(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen = map[string]string{} // server to the Authorization it saw
+	)
+	record := func(name string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seen[name] = r.Header.Get("Authorization")
+			mu.Unlock()
+		}
+	}
+	elsewhere := httptest.NewServer(record("elsewhere"))
+	t.Cleanup(elsewhere.Close)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/redirect", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+"/download", http.StatusFound)
+	})
+	mux.HandleFunc("/api/direct", record("api"))
+	api := httptest.NewServer(mux)
+	t.Cleanup(api.Close)
+
+	auth := &appAuth{baseURL: api.URL + "/api/"}
+	b, err := auth.bearer(func(context.Context) (string, error) { return "tok", nil }, http.DefaultTransport)
+	if err != nil {
+		t.Fatalf("bearer: %v", err)
+	}
+	client := &http.Client{Transport: b}
+	for _, path := range []string{"/api/direct", "/api/redirect"} {
+		resp, err := client.Get(api.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if seen["api"] != "Bearer tok" {
+		t.Errorf("the API saw Authorization %q, want the token", seen["api"])
+	}
+	if got, ok := seen["elsewhere"]; !ok || got != "" {
+		t.Errorf("the redirect's target saw Authorization %q (reached: %v), want none", got, ok)
+	}
+
+	// Another scheme on the API's host is not the API either.
+	other := api.URL[:len("http")] + "s" + api.URL[len("http"):] + "/api/direct"
+	req := httptest.NewRequest(http.MethodGet, other, nil)
+	var sent *http.Request
+	b.base = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		sent = r
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: r}, nil
+	})
+	if _, err := b.RoundTrip(req); err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	if got := sent.Header.Get("Authorization"); got != "" {
+		t.Errorf("a request over https to the http API carried Authorization %q, want none", got)
+	}
+}
+
+// roundTripperFunc is a function as an http.RoundTripper.
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+// RoundTrip calls f.
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

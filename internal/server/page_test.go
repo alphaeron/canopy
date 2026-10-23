@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,33 +18,39 @@ import (
 var (
 	testLinkKey = []byte(strings.Repeat("k", MinLinkKeyBytes))
 	testHead    = strings.Repeat("ab", 20)
+	testNow     = time.Unix(1_800_000_000, 0)
+	testLife    = 7 * 24 * time.Hour
 )
 
 func testLinks(t *testing.T) *links {
 	t.Helper()
-	l, err := newLinks("https://canopy.example.com/base/", testLinkKey)
+	l, err := newLinks("https://canopy.example.com/base/", testLinkKey, testLife)
 	if err != nil {
 		t.Fatalf("newLinks: %v", err)
 	}
+	l.now = func() time.Time { return testNow }
 	return l
 }
 
 func TestNewLinksValidates(t *testing.T) {
-	if l, err := newLinks("", nil); l != nil || err != nil {
+	if l, err := newLinks("", nil, 0); l != nil || err != nil {
 		t.Errorf("newLinks with neither = %v, %v; want no links and no error", l, err)
 	}
 	for _, tt := range []struct {
 		name, url string
 		key       []byte
+		lifetime  time.Duration
 	}{
-		{"short key", "https://canopy.example.com", []byte("short")},
-		{"no key", "https://canopy.example.com", nil},
-		{"no URL", "", testLinkKey},
-		{"relative URL", "canopy.example.com", testLinkKey},
-		{"query", "https://canopy.example.com/?a=b", testLinkKey},
-		{"other scheme", "ftp://canopy.example.com", testLinkKey},
+		{"short key", "https://canopy.example.com", []byte("short"), testLife},
+		{"no key", "https://canopy.example.com", nil, testLife},
+		{"no URL", "", testLinkKey, testLife},
+		{"relative URL", "canopy.example.com", testLinkKey, testLife},
+		{"query", "https://canopy.example.com/?a=b", testLinkKey, testLife},
+		{"other scheme", "ftp://canopy.example.com", testLinkKey, testLife},
+		{"no lifetime", "https://canopy.example.com", testLinkKey, 0},
+		{"short lifetime", "https://canopy.example.com", testLinkKey, MinLinkLifetime - time.Second},
 	} {
-		if _, err := newLinks(tt.url, tt.key); err == nil {
+		if _, err := newLinks(tt.url, tt.key, tt.lifetime); err == nil {
 			t.Errorf("newLinks with %s: no error", tt.name)
 		}
 	}
@@ -62,27 +69,60 @@ func TestReviewURLIsSigned(t *testing.T) {
 		t.Errorf("link = %s, want canopy.example.com%s", u, want)
 	}
 	sig := u.Query().Get("sig")
-	if !l.verify("o/r", 7, testHead, sig) {
+	exp, err := strconv.ParseInt(u.Query().Get("exp"), 10, 64)
+	if want := testNow.Add(testLife).Unix(); err != nil || exp != want {
+		t.Fatalf("link expiry = %q, want %d", u.Query().Get("exp"), want)
+	}
+	if !l.verify("o/r", 7, testHead, exp, sig) {
 		t.Error("the link's own signature does not verify")
 	}
 	for name, ok := range map[string]bool{
-		"another number": l.verify("o/r", 8, testHead, sig),
-		"another commit": l.verify("o/r", 7, strings.Repeat("cd", 20), sig),
-		"another repo":   l.verify("o/s", 7, testHead, sig),
-		"no signature":   l.verify("o/r", 7, testHead, ""),
-		"not base64":     l.verify("o/r", 7, testHead, "!!"),
+		"another number": l.verify("o/r", 8, testHead, exp, sig),
+		"another commit": l.verify("o/r", 7, strings.Repeat("cd", 20), exp, sig),
+		"another repo":   l.verify("o/s", 7, testHead, exp, sig),
+		"later expiry":   l.verify("o/r", 7, testHead, exp+1, sig),
+		"no signature":   l.verify("o/r", 7, testHead, exp, ""),
+		"not base64":     l.verify("o/r", 7, testHead, exp, "!!"),
 	} {
 		if ok {
 			t.Errorf("signature verifies for %s", name)
 		}
 	}
-	other, _ := newLinks("https://canopy.example.com", []byte(strings.Repeat("x", MinLinkKeyBytes)))
-	if other.verify("o/r", 7, testHead, sig) {
+	other, _ := newLinks("https://canopy.example.com", []byte(strings.Repeat("x", MinLinkKeyBytes)), testLife)
+	other.now = l.now
+	if other.verify("o/r", 7, testHead, exp, sig) {
 		t.Error("signature verifies under another key")
 	}
 	var none *links
 	if got := none.reviewURL(pr); got != "" {
 		t.Errorf("reviewURL without links = %q, want none", got)
+	}
+}
+
+// TestReviewURLExpires: a link opens its page until the link lifetime after
+// it was signed, and not from then on.
+func TestReviewURLExpires(t *testing.T) {
+	l := testLinks(t)
+	u, err := url.Parse(l.reviewURL(PullRequestInfo{Repo: "o/r", Number: 7, HeadSHA: testHead}))
+	if err != nil {
+		t.Fatalf("parse link: %v", err)
+	}
+	exp, _ := strconv.ParseInt(u.Query().Get("exp"), 10, 64)
+	sig := u.Query().Get("sig")
+	for _, tt := range []struct {
+		name string
+		at   time.Time
+		want bool
+	}{
+		{"when signed", testNow, true},
+		{"a second before expiry", testNow.Add(testLife - time.Second), true},
+		{"at expiry", testNow.Add(testLife), false},
+		{"after expiry", testNow.Add(testLife + time.Hour), false},
+	} {
+		l.now = func() time.Time { return tt.at }
+		if got := l.verify("o/r", 7, testHead, exp, sig); got != tt.want {
+			t.Errorf("verify %s = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }
 
@@ -98,7 +138,7 @@ func (h *fakeHistory) LatestReview(context.Context, string, int, string) (*Revie
 
 func pageOptions() Options {
 	opts := testOptions()
-	opts.PublicURL, opts.LinkKey = "https://canopy.example.com", testLinkKey
+	opts.PublicURL, opts.LinkKey, opts.LinkLifetime = "https://canopy.example.com", testLinkKey, testLife
 	return opts
 }
 
@@ -138,6 +178,8 @@ func TestReviewPageFollowsTheReview(t *testing.T) {
 	c := approvedPullRequest()
 	c.headSHA, c.block, c.release = testHead, true, make(chan struct{})
 	s := newTestServer(t, pageOptions(), &stubWebhook{name: "stub", changes: map[string]PullRequest{"pr": c}})
+	// The links the review publishes and the one checked below expire alike.
+	s.links.now = func() time.Time { return testNow }
 
 	code, body := getPage(t, s, pagePath(s, ""))
 	if code != http.StatusOK || !strings.Contains(body, "No review yet") {
@@ -154,7 +196,8 @@ func TestReviewPageFollowsTheReview(t *testing.T) {
 	if p := progress(t, s); p["state"] != "running" || p["stage"] != "change" {
 		t.Errorf("progress while reading the change = %v, want running in stage change", p)
 	}
-	if _, body := getPage(t, s, pagePath(s, "")); !strings.Contains(body, "Review running") || !strings.Contains(body, "data-live") {
+	if _, body := getPage(t, s, pagePath(s, "")); !strings.Contains(body, "Review running") || !strings.Contains(body, "data-live") ||
+		!strings.Contains(body, "/progress?exp=") {
 		t.Errorf("page while running does not follow the review:\n%s", body)
 	}
 
@@ -181,17 +224,29 @@ func TestReviewPageFollowsTheReview(t *testing.T) {
 }
 
 // TestReviewPageNeedsItsSignature: a page whose link the server did not
-// sign is not found, and without links there are no pages.
+// sign, or whose link expired, is not found, and without links there are
+// no pages.
 func TestReviewPageNeedsItsSignature(t *testing.T) {
 	s := newTestServer(t, pageOptions(), &stubWebhook{name: "stub"})
+	s.links.now = func() time.Time { return testNow }
 	base := "/reviews/o/r/1/" + testHead
 	for _, path := range []string{base, base + "?sig=", base + "?sig=AAAA", "/reviews/o/r/2/" + testHead + "?" + strings.SplitN(pagePath(s, ""), "?", 2)[1]} {
 		if code, _ := getPage(t, s, path); code == http.StatusOK {
 			t.Errorf("GET %s = 200, want it refused", path)
 		}
 	}
-	if code, _ := getPage(t, s, pagePath(s, "")); code != http.StatusOK {
+	signed := pagePath(s, "")
+	if code, _ := getPage(t, s, signed); code != http.StatusOK {
 		t.Errorf("signed page = %d, want 200", code)
+	}
+	if code, _ := getPage(t, s, base+"?sig="+url.QueryEscape(s.links.sign("o/r", 1, testHead, testNow.Unix()))); code == http.StatusOK {
+		t.Error("page without its expiry = 200, want it refused")
+	}
+	s.links.now = func() time.Time { return testNow.Add(testLife) }
+	for _, path := range []string{signed, strings.Replace(signed, "?", "/progress?", 1)} {
+		if code, _ := getPage(t, s, path); code != http.StatusNotFound {
+			t.Errorf("GET %s once expired = %d, want 404", path, code)
+		}
 	}
 
 	none := newTestServer(t, testOptions(), &stubWebhook{name: "stub"})

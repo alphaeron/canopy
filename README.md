@@ -184,11 +184,12 @@ The CLI and the review server read the same configuration, in decreasing precede
 | `database_url` | `CANOPY_DATABASE_URL` | | Review server's PostgreSQL connection string; unset runs without a database (see [Database](#database)). The server creates its tables at startup. Never logged |
 | `public_url` | `CANOPY_PUBLIC_URL` | | Review server's URL as users reach it, e.g. `https://canopy.example.com`; with `link_key`, serves review pages and links each check run to its own (see [Review pages](#review-pages)) |
 | `link_key` | `CANOPY_LINK_KEY` | | Required with `public_url`: at least 32 bytes (e.g. `openssl rand -hex 32`), the same on every replica. Signs review page links; changing it breaks every link already published. Never logged |
+| `link_lifetime` | `CANOPY_LINK_LIFETIME` | `2160h` (90 days) | How long a review page link works after the server signs it; at least `1h`. A Go duration, which has no day unit: `168h` is 7 days. A change applies to links signed from then on; to cut off links already published, change `link_key` |
 | `database_key` | `CANOPY_DATABASE_KEY` | | Required with `database_url`: at least 32 bytes (e.g. `openssl rand -hex 32`), the same on every replica, never stored in the database. Authenticates the GitHub data cached there; changing it discards that cache. Never logged |
 | `github.app_id` | `CANOPY_GITHUB_APP_ID` | | GitHub App ID |
 | `github.private_key` | `CANOPY_GITHUB_PRIVATE_KEY` | | GitHub App private key (PEM, PKCS #1 or #8) |
 | `github.webhook_secret` | `CANOPY_GITHUB_WEBHOOK_SECRET` | | GitHub webhook signing secret |
-| `github.api_url` | `CANOPY_GITHUB_API_URL` | `https://api.github.com/` | REST API base URL, for GitHub Enterprise Server |
+| `github.api_url` | `CANOPY_GITHUB_API_URL` | `https://api.github.com/` | REST API base URL, for GitHub Enterprise Server; must be `https` (`http` only on a loopback host) |
 | `github.request_timeout` | `CANOPY_GITHUB_REQUEST_TIMEOUT` | `30s` | Longest one REST API request may wait for a response |
 
 ```yaml
@@ -212,8 +213,8 @@ The platform is deployment configuration: a repository under review has no say i
 | `POST /webhooks/github` | The GitHub App's webhook; each platform chooses its own webhook path. The signature is verified before anything else; unsigned or mis-signed requests get 401. A reviewable event is acknowledged with 202 and reviewed in the background; a full queue gets 503. Only the newest review of a pull request's head commit reports (see below). |
 | `GET /openapi.json`, `GET /openapi.yaml` | The OpenAPI 3.1 document, generated from the routes |
 | `GET /swagger` | Interactive API documentation |
-| `GET /reviews/{owner}/{name}/{number}/{sha}?sig=…` | The review page of a pull request's head commit (with `public_url` and `link_key`; see [Review pages](#review-pages)) |
-| `GET /reviews/{owner}/{name}/{number}/{sha}/progress?sig=…` | How far that commit's newest review has come, as JSON, which the review page polls |
+| `GET /reviews/{owner}/{name}/{number}/{sha}?exp=…&sig=…` | The review page of a pull request's head commit (with `public_url` and `link_key`; see [Review pages](#review-pages)) |
+| `GET /reviews/{owner}/{name}/{number}/{sha}/progress?exp=…&sig=…` | How far that commit's newest review has come, as JSON, which the review page polls |
 
 On GitHub, the server runs as a GitHub App. It needs these repository permissions: *Contents* (read), *Pull requests* (read), *Checks* (read and write), and *Members* (organization, read) to expand `org/team` targets. It reviews on `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`, and `edited` when the base branch changes) and `pull_request_review` (`submitted`, `dismissed`) events, except those of a closed or merged pull request (a reopened one is reviewed again). Requests that GitHub rate-limits are retried after the delay it asks for: up to a minute for a secondary limit (`Retry-After`), and for an exhausted primary limit until it resets, within the review's deadline (at most 10 minutes). A review still rate-limited reports `rate limited by the platform; try again later`; other errors are not retried.
 
@@ -227,7 +228,7 @@ With `public_url` and `link_key` set, every review has a page, and the check run
 
 Live progress comes from the server running the review; another replica's page shows the review as running, from the database, until it finishes. Without a database a server shows only the reviews it queued or ran recently (its 32 most recently finished).
 
-A page shows a repository's paths, approvers, and review errors, so it is served only for a link the server signed with `link_key`: anyone who can see the check run can open its page, and a link for any other pull request or commit is not found. A link does not expire; treat it like the check run it came from.
+A page shows a repository's paths, approvers, and review errors, so it is served only for a link the server signed with `link_key`: anyone who can see the check run can open its page, and a link for any other pull request or commit is not found. A link expires `link_lifetime` (90 days by default) after the server signs it, and each review signs a fresh one; until then, treat it like the check run it came from.
 
 Each review also marks its check run in progress before it evaluates, so a pull request shows the review running rather than the previous result. With a database this is ordered like reports: a review never marks its pull request running after a newer review reported, and a review whose order is unknown does not mark it at all. A review cancelled because the server is stopping leaves its check in progress until the next review of the pull request.
 

@@ -69,6 +69,11 @@ type Options struct {
 	// long and the same on every replica. Changing it breaks every link
 	// published before.
 	LinkKey []byte
+	// LinkLifetime is how long a review page's link opens its page after
+	// the server signs it: at least MinLinkLifetime when links are served.
+	// A link leaked from a status, a log, or a screenshot stops working, as
+	// does one held by someone who has since lost access to the repository.
+	LinkLifetime time.Duration
 }
 
 // Bounds on recording: how long the calls a webhook or a review waits for
@@ -79,6 +84,18 @@ const (
 	maxRecordWrites     = 16
 	recordWriteTimeout  = 10 * time.Second
 	maxDeliveryIDLength = 128
+)
+
+// Bounds on each HTTP connection. A webhook's whole body is read before its
+// signature can be checked, so without readTimeout an unauthenticated
+// client sending its body slowly would hold the connection and its buffer
+// indefinitely. Every response is written as soon as it is ready (a review
+// runs after its webhook is answered), so writeTimeout is generous.
+const (
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 30 * time.Second
+	writeTimeout      = 30 * time.Second
+	idleTimeout       = 2 * time.Minute
 )
 
 // unorderedSummary is the outcome a review reports instead of passing when
@@ -118,7 +135,7 @@ func New(ctx context.Context, opts Options, webhook PRWebhook) (*Server, error) 
 	}
 	s := &Server{opts: opts, log: logx.OrDefault(opts.Log), live: newTracker(opts.History == nil)}
 	var err error
-	if s.links, err = newLinks(opts.PublicURL, opts.LinkKey); err != nil {
+	if s.links, err = newLinks(opts.PublicURL, opts.LinkKey, opts.LinkLifetime); err != nil {
 		return nil, err
 	}
 
@@ -173,7 +190,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:              s.opts.Addr,
 		Handler:           s.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 		BaseContext:       func(net.Listener) context.Context { return context.WithoutCancel(ctx) },
 	}
 	errc := make(chan error, 1)
