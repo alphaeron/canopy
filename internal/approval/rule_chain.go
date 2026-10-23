@@ -41,7 +41,7 @@ func (rc *RuleChain) Execute(
 	events *ReviewStateBuilder,
 	log *slog.Logger,
 ) *ReviewState {
-	resolver = newReviewResolver(resolver)
+	resolver = newCachedReviewResolver(resolver)
 	p := newParticipants(in, resolver.Canonical)
 	rc.prefetch(ctx, p, resolver)
 	log.Info("approve: evaluating rule chain",
@@ -136,7 +136,7 @@ func (rc *RuleChain) evaluate(
 	trace := NewReviewStateBuilder()
 	// This slice tracks the cumulative list of required approvers as we
 	// descend the tree.
-	var runningRequiredApprovers RuleTargets
+	var runningRequiredApprovers ExecutableTargets
 
 	// Process layers chronologically: from Root (Index 0) down to
 	//                                 Target Directory (Index N).
@@ -235,11 +235,12 @@ func (r *chainResult) fileState(file string, events *ReviewStateBuilder) FileSta
 // chain makes first, one after another: it resolves every rule target, then
 // looks up whether the first member each resolved target could count is
 // active. Evaluation then finds both in the review's caches (resolver, the
-// review's reviewResolver, and the platform's IsActive). Evaluation prunes
-// every rule's targets, which resolves each one and checks its members up to
-// the first eligible one, so prefetch makes no call evaluation would not.
+// review's cachedReviewResolver, and the platform's IsActive). Evaluation
+// prunes every rule's targets, which resolves each one and checks its
+// members up to the first eligible one, so prefetch makes no call
+// evaluation would not.
 func (rc *RuleChain) prefetch(ctx context.Context, p participants, resolver ApproverResolver) {
-	targets := map[RuleTarget]bool{}
+	targets := map[ExecutableTarget]bool{}
 	named := map[string]bool{}
 	seen := map[chainKey]bool{}
 	for _, layers := range rc.FileChains {
@@ -399,23 +400,35 @@ func (rc *RuleChain) evaluateFallback(
 	return states, false
 }
 
-// RuleFiles is one rule of a RuleChain with every file whose chain includes
-// it: the chain inverted from "which rules apply to this file" to "which
-// files does this rule apply to".
-type RuleFiles = rulesfile.RuleFiles
-
-// ByRule inverts the chain into one entry per distinct rule, by
-// rulesfile.RuleKey, sorted by pattern, then rules file. A pattern declared
-// twice in one rules file (a Validate violation) is reported once, under the
-// first declaration.
+// ByRule inverts the chain from "which rules apply to this file" to "which
+// files does this rule apply to": one entry per distinct rule, by
+// rulesfile.RuleKey, sorted by pattern, then rules file, each rule's
+// RulesFile set. A pattern declared more than once in one rules file is one
+// entry, under the first declaration.
 func (rc *RuleChain) ByRule() []RuleFiles {
-	byFile := make(map[string][]rulesfile.DeclaredRule, len(rc.FileChains))
+	byFile := make(map[string]rulesfile.Rules, len(rc.FileChains))
 	for file, layers := range rc.FileChains {
 		for _, layer := range layers {
 			for _, rule := range layer.Rules {
-				byFile[file] = append(byFile[file], rulesfile.DeclaredRule{RulesFile: layer.RulesFile(), Rule: rule.Rule})
+				r := rule.Rule
+				r.RulesFile = layer.RulesFile()
+				byFile[file] = append(byFile[file], r)
 			}
 		}
 	}
-	return rulesfile.GroupByRule(byFile)
+	return GroupByRule(byFile)
+}
+
+// PatternsByFile is the pattern of every rule applying to each file, in chain
+// order. A file no rule applies to is omitted.
+func (rc *RuleChain) PatternsByFile() map[string][]string {
+	out := map[string][]string{}
+	for file, layers := range rc.FileChains {
+		for _, layer := range layers {
+			for _, rule := range layer.Rules {
+				out[file] = append(out[file], rule.Pattern)
+			}
+		}
+	}
+	return out
 }

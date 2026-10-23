@@ -76,7 +76,7 @@ func (e *Engine) Files(ctx context.Context, opts Options) ([]string, error) {
 // files. Errors from the source (missing files, rule-loading failures) are
 // returned as-is.
 func (e *Engine) RuleChain(ctx context.Context, files []string) (approval.RuleChain, error) {
-	rules, err := e.rules(ctx)
+	rules, err := e.Rules(ctx)
 	if err != nil {
 		return approval.RuleChain{}, err
 	}
@@ -91,8 +91,8 @@ func (e *Engine) Requirements(ctx context.Context, chain approval.RuleChain) *ap
 	return e.Source.Evaluator().Approve(ctx, approval.ReviewInput{}, chain)
 }
 
-// rules loads the source's rules through its platform's fetcher.
-func (e *Engine) rules(ctx context.Context) (rulesfile.Set, error) {
+// Rules loads the source's rules through its platform's fetcher.
+func (e *Engine) Rules(ctx context.Context) (rulesfile.Set, error) {
 	return e.Source.Evaluator().Fetch.Execute(ctx)
 }
 
@@ -125,7 +125,7 @@ var ErrUnknownScope = errors.New("unknown scope")
 // files it drops. Errors from the source (missing files, rule-loading
 // failures) are returned as-is.
 func (e *Engine) Match(ctx context.Context, opts Options) (*Result, error) {
-	res, err := e.match(ctx, opts)
+	res, err := e.fileScopes(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -150,16 +150,16 @@ func (e *Engine) Match(ctx context.Context, opts Options) (*Result, error) {
 	return res, nil
 }
 
-// match is the shared core of Match and Coverage: the universe opts
-// selects with every file's scopes, before any scope filter or diff. It
-// first checks that opts.ScopeName (when set) is a rule some rules file
-// declares.
-func (e *Engine) match(ctx context.Context, opts Options) (*Result, error) {
+// fileScopes is every file in the universe opts selects with all of its
+// scopes, before any scope filter or diff: the shared core of Match and
+// Coverage. It first checks that opts.ScopeName (when set) is a rule some
+// rules file declares.
+func (e *Engine) fileScopes(ctx context.Context, opts Options) (*Result, error) {
 	universe, err := e.Files(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	rules, err := e.rules(ctx)
+	rules, err := e.Rules(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,9 @@ func (e *Engine) match(ctx context.Context, opts Options) (*Result, error) {
 		fm := FileMatch{Path: file}
 		for _, layer := range chain.FileChains[file] {
 			for _, rule := range layer.Rules {
-				fm.Scopes = append(fm.Scopes, newScope(rulesfile.DeclaredRule{RulesFile: layer.RulesFile(), Rule: rule.Rule}))
+				r := rule.Rule
+				r.RulesFile = layer.RulesFile()
+				fm.Rules = append(fm.Rules, r)
 			}
 		}
 		res.Files = append(res.Files, fm)
@@ -193,7 +195,7 @@ func (e *Engine) match(ctx context.Context, opts Options) (*Result, error) {
 // numbers and the match computed from every rule; as for Match, a name no
 // rules file declares is ErrUnknownScope.
 func (e *Engine) Coverage(ctx context.Context, opts Options) (*CoverageReport, *Result, error) {
-	m, err := e.match(ctx, opts)
+	m, err := e.fileScopes(ctx, opts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -202,39 +204,6 @@ func (e *Engine) Coverage(ctx context.Context, opts Options) (*CoverageReport, *
 		report = report.FilterScope(opts.ScopeName)
 	}
 	return report, m, nil
-}
-
-// CoverageOf projects a match onto coverage: the files with at least one
-// scope are covered, and each scope's share of the universe is reported in
-// GroupByScope order.
-func CoverageOf(m *Result) *CoverageReport {
-	report := &CoverageReport{Universe: len(m.Files)}
-	for _, fm := range m.Files {
-		if len(fm.Scopes) > 0 {
-			report.Covered++
-		} else {
-			report.Uncovered = append(report.Uncovered, fm.Path)
-		}
-	}
-	report.Percent = percentOf(report.Covered, report.Universe)
-	groups := m.GroupByScope()
-	report.PerScope = make([]ScopeCoverage, 0, len(groups))
-	for _, g := range groups {
-		report.PerScope = append(report.PerScope, ScopeCoverage{
-			Scope:   g.Scope,
-			Files:   len(g.Files),
-			Percent: percentOf(len(g.Files), report.Universe),
-		})
-	}
-	return report
-}
-
-// percentOf is n as a percentage of total, or 0 for an empty total.
-func percentOf(n, total int) float64 {
-	if total == 0 {
-		return 0
-	}
-	return float64(n) / float64(total) * 100.0
 }
 
 // Review runs the full approval review (fetch, sift, approve) over files on
@@ -247,3 +216,7 @@ func (e *Engine) Review(ctx context.Context, files []string, in approval.ReviewI
 	state.RepoRoot = e.repoRoot()
 	return state
 }
+
+// ExactPattern is the Options.Patterns entry selecting exactly the file at
+// path.
+func ExactPattern(path string) string { return "^" + regexp.QuoteMeta(path) + "$" }

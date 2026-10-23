@@ -28,8 +28,8 @@ Every file in the working tree is reviewed, or only changed files with
 --changed; pattern arguments (regular expressions) narrow the files further.
 --approver simulates approvals and --author the change's author, so
 self-approval rules are evaluated as they would be on a pull or merge request.
---inactive marks approvers as unavailable, which prunes their targets. A
-file no rule covers falls back to the --owner repository owners.`,
+Every approver counts as active. A file no rule covers falls back to the
+--owner repository owners.`,
 	Annotations: map[string]string{"arg": "regular expressions selecting the files to review (every file when omitted)"},
 	// A review that ran into errors is a result, not a usage mistake.
 	SilenceUsage: true,
@@ -43,12 +43,11 @@ type reviewOptions struct {
 	author    string
 	approvers []string
 	owners    []string
-	inactive  []string
 }
 
 func reviewOptionsFrom(v tui.Values) (reviewOptions, error) {
 	o := reviewOptions{patterns: v.Args, changed: v.Bool("changed"), author: v.Flag("author")}
-	for name, dst := range map[string]*[]string{"approver": &o.approvers, "owner": &o.owners, "inactive": &o.inactive} {
+	for name, dst := range map[string]*[]string{"approver": &o.approvers, "owner": &o.owners} {
 		list, err := splitList(v.Flag(name))
 		if err != nil {
 			return reviewOptions{}, fmt.Errorf("--%s: %w", name, err)
@@ -119,17 +118,12 @@ func reviewWith(ctx context.Context, engine *review.Engine, opts reviewOptions) 
 	return engine.Review(ctx, files, opts.input()), nil
 }
 
-// input is the review input the options describe: --inactive names are the
-// users the review treats as unable to approve.
+// input is the review input the options describe. The local platform has
+// no user directory, so IsActive is left nil: every user is active.
 func (o reviewOptions) input() approval.ReviewInput {
-	inactive := make(map[string]bool, len(o.inactive))
-	for _, name := range o.inactive {
-		inactive[name] = true
-	}
 	return approval.ReviewInput{
 		Author:    o.author,
 		Approvers: o.approvers,
-		IsActive:  func(name string) bool { return !inactive[name] },
 		Owners:    o.owners,
 	}
 }
@@ -156,12 +150,120 @@ func requiredLabel(fs approval.FileState) string {
 	return label
 }
 
+// reviewRoute is `review`: one row per file, most in need of attention
+// first, after a summary row for the whole review.
+func reviewRoute(v tui.Values) tui.Route {
+	return commandRoute(reviewCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		opts, err := reviewOptionsFrom(v)
+		if err != nil {
+			return nil, err
+		}
+		state, err := runReview(ctx, opts, quietLog)
+		if err != nil {
+			return nil, err
+		}
+		return reviewPage(state, opts), nil
+	})
+}
+
+func reviewPage(state *approval.ReviewState, opts reviewOptions) tui.Page {
+	files := state.SortedFiles()
+	counts := state.StatusCounts()
+	items := make([]tui.Item, 0, len(files)+1)
+	items = append(items, tui.Item{
+		Title:       "Review",
+		Description: statusLabel(state.Overall) + " · " + countOf(len(files), "file"),
+		Badge:       statusBadge(state.Overall),
+		Detail:      reviewSummaryDetail(state, opts, counts),
+	})
+	for _, fs := range files {
+		r := fileRulesRoute(fs.Path)
+		items = append(items, tui.Item{
+			Title:       fs.Path,
+			Description: statusLabel(fs.Status) + " · " + requiredLabel(fs),
+			Badge:       statusBadge(fs.Status),
+			Detail:      fileReviewDetail(fs, state),
+			Route:       &r,
+		})
+	}
+	var parts []string
+	for _, s := range []approval.Status{approval.StatusSatisfied, approval.StatusMissingApprovers, approval.StatusUnresolved, approval.StatusError} {
+		if n := counts[s]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, statusLabel(s)))
+		}
+	}
+	summary := "overall " + statusLabel(state.Overall) + " · " + countOf(len(files), "file")
+	if len(parts) > 0 {
+		summary += ": " + strings.Join(parts, ", ")
+	}
+	return tui.NewListPage("Review", items).WithSummary(summary)
+}
+
+// reviewSummaryDetail is the review as a whole: the inputs it ran with, the
+// file counts by status, and every error it collected.
+func reviewSummaryDetail(state *approval.ReviewState, opts reviewOptions, counts map[approval.Status]int) tui.Detail {
+	d := tui.Detail{Fields: []tui.Field{
+		{Label: "Overall", Value: statusLabel(state.Overall), Badge: statusBadge(state.Overall)},
+		{Label: "Files", Value: filesLabel(opts)},
+		{Label: "Author", Value: opts.author},
+		{Label: "Approvals", Value: strings.Join(opts.approvers, ", ")},
+		{Label: "Owners", Value: strings.Join(opts.owners, ", ")},
+	}}
+	var rows []tui.Row
+	for _, s := range []approval.Status{approval.StatusError, approval.StatusUnresolved, approval.StatusMissingApprovers, approval.StatusSatisfied} {
+		if n := counts[s]; n > 0 {
+			rows = append(rows, tui.Row{Text: statusLabel(s), Badge: statusBadge(s), Note: countOf(n, "file")})
+		}
+	}
+	d.Sections = append(d.Sections, tui.Section{Title: "Files by status", Rows: rows})
+	if len(state.Errors) > 0 {
+		errs := make([]tui.Row, len(state.Errors))
+		for i, e := range state.Errors {
+			errs[i] = tui.Row{Text: e, Badge: tui.BadgeFail}
+		}
+		d.Sections = append(d.Sections, tui.Section{Title: "Errors", Rows: errs})
+	}
+	d.Tabs = []tui.Tab{{Title: "Trace", Sections: []tui.Section{{Title: "Events", Rows: eventRows(state.Events, true)}}}}
+	return d
+}
+
+func filesLabel(opts reviewOptions) string {
+	label := "every file"
+	if opts.changed {
+		label = "changed files"
+	}
+	if len(opts.patterns) > 0 {
+		label += " matching " + strings.Join(opts.patterns, " or ")
+	}
+	return label
+}
+
+// fileReviewDetail is one file's evaluation: its requirement and approval
+// progress, then tabs for the chain of rule layers that produced it and the
+// events the algorithm recorded for the file.
+func fileReviewDetail(fs approval.FileState, state *approval.ReviewState) tui.Detail {
+	fallback := "no"
+	if fs.UsedFallback {
+		fallback = "yes: no rule requires approvers, so the repository owners do"
+	}
+	d := tui.Detail{
+		Fields: []tui.Field{
+			{Label: "File", Value: fs.Path},
+			{Label: "Status", Value: statusLabel(fs.Status), Badge: statusBadge(fs.Status)},
+			{Label: "Requires", Value: requiredLabel(fs)},
+			{Label: "Fallback", Value: fallback},
+		},
+		Sections: []tui.Section{{Title: "Approvers", Rows: targetRows(fs.Required, 0)}},
+		Tabs:     chainTabs(fs, state),
+	}
+	return d
+}
+
 func init() {
 	reviewCmd.RunE = runReviewCmd
 	reviewCmd.Flags().Bool("changed", false, "review only files changed in the working tree")
 	reviewCmd.Flags().String("author", "", "the change's author, whose approvals count only under self-approve rules")
 	reviewCmd.Flags().StringSlice("approver", nil, "a user or group that has approved (repeatable)")
 	reviewCmd.Flags().StringSlice("owner", nil, "a repository owner, who approves files no rule covers (repeatable)")
-	reviewCmd.Flags().StringSlice("inactive", nil, "an approver who is unavailable; their targets are pruned (repeatable)")
 	rootCmd.AddCommand(reviewCmd)
 }

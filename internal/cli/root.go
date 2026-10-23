@@ -77,7 +77,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	if mode, _ := resolveOutputMode(cmd); mode != modeTUI {
 		return cmd.Help()
 	}
-	return tui.Run(cmd.Context(), tui.Config{Routes: appRoutes(), Overview: repoOverview})
+	return tui.Run(cmd.Context(), tui.Options{Routes: appRoutes(), Overview: repoOverview})
 }
 
 // Execute adds all child commands to the root command and sets flags

@@ -75,12 +75,12 @@ func (c patternCache) compile(pattern string) (*regexp.Regexp, error) {
 type sifter struct {
 	patterns patternCache
 	repo     rulesfile.Set
-	rules    map[string][]Rule      // wrapped rules, by rules file
-	dirs     map[string][]candidate // candidate layers, by a file's directory
-	chains   map[string][]RuleLayer // shared chains, by chainKey
-	notes    map[int]string         // the sift event's note, by layer count
-	matched  []match                // the current file's matches, reused
-	key      []byte                 // the current file's chainKey, reused
+	rules    map[string][]ExecutableRule // wrapped rules, by rules file
+	dirs     map[string][]candidate      // candidate layers, by a file's directory
+	chains   map[string][]RuleLayer      // shared chains, by chainKey
+	notes    map[int]string              // the sift event's note, by layer count
+	matched  []match                     // the current file's matches, reused
+	key      []byte                      // the current file's chainKey, reused
 }
 
 // candidate is a layer whose rules file declares rules, on the path from
@@ -88,7 +88,7 @@ type sifter struct {
 type candidate struct {
 	dir       string // the layer's DirectoryPath
 	rulesFile string
-	rules     []Rule
+	rules     []ExecutableRule
 	// own is whether the layer is the directory's own, the only layer
 	// where a current_directory_only rule applies.
 	own bool
@@ -101,7 +101,7 @@ func newSifter(repo rulesfile.Set) *sifter {
 	return &sifter{
 		patterns: patternCache{},
 		repo:     repo,
-		rules:    map[string][]Rule{},
+		rules:    map[string][]ExecutableRule{},
 		dirs:     map[string][]candidate{},
 		chains:   map[string][]RuleLayer{},
 		notes:    map[int]string{},
@@ -217,11 +217,11 @@ func (s *sifter) candidates(subdir string) []candidate {
 
 // wrapped is the rules file's rules, wrapped at the sifter boundary: from
 // this point on the pipeline only sees the algorithm-level Rule type.
-func (s *sifter) wrapped(rulesFile string) []Rule {
+func (s *sifter) wrapped(rulesFile string) []ExecutableRule {
 	rules, ok := s.rules[rulesFile]
 	if !ok {
 		for _, rule := range s.repo[rulesFile] {
-			rules = append(rules, newRule(rule))
+			rules = append(rules, newExecutableRule(rule))
 		}
 		s.rules[rulesFile] = rules
 	}

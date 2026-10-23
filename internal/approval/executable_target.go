@@ -7,26 +7,27 @@ import (
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// RuleTarget pairs an approver target with the self-approval policy of the
-// rule that produced it. The policy travels with the target through the
+// ExecutableTarget pairs an approver target with the self-approval policy of
+// the rule that produced it, with the methods that execute it. The policy
+// travels with the target through the
 // combine strategies so that an author who is also a resolved member counts
 // only toward requirements whose rule allowed self-approval.
-type RuleTarget struct {
+type ExecutableTarget struct {
 	rulesfile.ApproverTarget
 	SelfApprove bool
 }
 
-// RuleTargets is a collection of rule targets. A named slice keeps the
-// rule-target-specific state management (combining, counting, eligibility)
-// with the rule-target type, so each layer of the algorithm owns its own state
-// and types independently.
-type RuleTargets []RuleTarget
+// ExecutableTargets is a collection of executable targets. A named slice
+// keeps the target-specific state management (combining, counting,
+// eligibility) with the target type, so each layer of the algorithm owns its
+// own state and types independently.
+type ExecutableTargets []ExecutableTarget
 
 // Execute evaluates this target against the review state: it resolves the
 // target to its member set, enforces the self-approval constraint, and counts
 // the eligible members that have approved. The returned state carries that
 // evaluation and the resolved members that contributed.
-func (rt *RuleTarget) Execute(ctx context.Context, p participants, resolver ApproverResolver) *ApproverTargetState {
+func (rt *ExecutableTarget) Execute(ctx context.Context, p participants, resolver ApproverResolver) *ApproverTargetState {
 	members, err := resolver.Resolve(ctx, rt.Target)
 	if err != nil {
 		return &ApproverTargetState{
@@ -80,7 +81,7 @@ func (rt *RuleTarget) Execute(ctx context.Context, p participants, resolver Appr
 // approveMembers resolves the target to its member set and returns which
 // resolved members counted toward it, applying the author / self-approval
 // exclusion.
-func (rt *RuleTarget) approveMembers(members []string, p participants) []string {
+func (rt *ExecutableTarget) approveMembers(members []string, p participants) []string {
 	var resolved []string
 	for _, member := range members {
 		if !rt.approves(member, p) {
@@ -94,7 +95,7 @@ func (rt *RuleTarget) approveMembers(members []string, p participants) []string 
 // approves reports whether a resolved member's approval counts toward this
 // target. When the producing rule forbids self-approval, the author never
 // contributes, even when they are a member of a resolved group.
-func (rt *RuleTarget) approves(member string, p participants) bool {
+func (rt *ExecutableTarget) approves(member string, p participants) bool {
 	return rt.contributes(member, p) && p.approvers[member]
 }
 
@@ -104,8 +105,8 @@ func (rt *RuleTarget) approves(member string, p participants) bool {
 // the author's approval never counts, whether the author is the target
 // itself or a member of a resolved group. Every self-approval decision in
 // the algorithm funnels through this predicate, so the requirement and its
-// implementation live on one type - the RuleTarget carrying the policy.
-func (rt *RuleTarget) contributes(member string, p participants) bool {
+// implementation live on one type - the ExecutableTarget carrying the policy.
+func (rt *ExecutableTarget) contributes(member string, p participants) bool {
 	return rt.SelfApprove || member != p.author
 }
 
@@ -113,7 +114,7 @@ func (rt *RuleTarget) contributes(member string, p participants) bool {
 // contribute toward the target: the author is ignored unless the producing
 // rule permits self-approval, and inactive members never qualify. When no
 // member is eligible the target is pruned from the rule.
-func (rt *RuleTarget) HasAnyEligibleMember(members []string, p participants) bool {
+func (rt *ExecutableTarget) HasAnyEligibleMember(members []string, p participants) bool {
 	for _, member := range members {
 		if !rt.contributes(member, p) {
 			continue
@@ -131,12 +132,12 @@ func (rt *RuleTarget) HasAnyEligibleMember(members []string, p participants) boo
 // state holder; the merging algorithm itself belongs to the CombineStrategy
 // implementation so each combining strategy is a standalone, testable
 // behavior.
-func (current *RuleTargets) Combine(
-	incoming RuleTargets,
+func (current *ExecutableTargets) Combine(
+	incoming ExecutableTargets,
 	strat CombineStrategy,
 	builder *ReviewStateBuilder,
 	file, layer, ruleName string,
-) RuleTargets {
+) ExecutableTargets {
 	builder.AddEvent("approve", file, layer, ruleName, StatusActive, "Applied "+strat.note())
 	return strat.apply(*current, incoming)
 }

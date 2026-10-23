@@ -18,10 +18,10 @@ func TestReviewStateMarshalJSON(t *testing.T) {
 		Layers: []LayerState{
 			{DirectoryPath: "", Active: true, Status: StatusSatisfied,
 				Rules:    []RuleState{{Rule: rulesfile.Rule{Pattern: `.*`, Name: "security"}, Approvers: []ApproverTargetState{sec}, Status: StatusSatisfied}},
-				Required: RuleTargets{{ApproverTarget: sec.ApproverTarget}}},
+				Required: ExecutableTargets{{ApproverTarget: sec.ApproverTarget}}},
 			{DirectoryPath: "svc", Active: true, Status: StatusMissingApprovers,
 				Rules:    []RuleState{{Rule: rulesfile.Rule{Pattern: `\.go$`}, Approvers: []ApproverTargetState{backend}, Status: StatusMissingApprovers}},
-				Required: RuleTargets{{ApproverTarget: sec.ApproverTarget}, {ApproverTarget: backend.ApproverTarget}}},
+				Required: ExecutableTargets{{ApproverTarget: sec.ApproverTarget}, {ApproverTarget: backend.ApproverTarget}}},
 		},
 		Required: []ApproverTargetState{sec, backend},
 	}

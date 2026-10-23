@@ -32,8 +32,17 @@ func openLocal(log *slog.Logger) (*gitRepo, *review.Engine, error) {
 	return repo, review.New(local.NewSource(repo, log), log), nil
 }
 
+// positionFlagFor registers --position on rules edit or rules remove: which
+// of several rules with the pattern, by its 0-based position in its rules
+// file (see ruleTarget). It is read as text (positionFlag), so the TUI's
+// options form leaves it empty to mean unset.
+func positionFlagFor(cmd *cobra.Command) {
+	cmd.Flags().String("position", "", "the rule's 0-based position in its rules file, when several rules have the pattern")
+	tuiUnset(cmd, "position", "the one rule with that pattern")
+}
+
 // rulesFileFlag registers the shared --file flag on a command that changes a
-// rules file. The value is resolved by rulesSet.resolve.
+// rules file. The value is resolved by resolveFile.
 func rulesFileFlag(cmd *cobra.Command, usage string) {
 	cmd.Flags().String("file", "", usage+" (path from the repository root, or its directory)")
 }

@@ -3,12 +3,19 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"maps"
 	"os"
+	"path"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/kit/internal/rulesedit"
+	"github.com/alphaeron/kit/internal/tui"
 )
 
 // coverageCmd computes the fraction of the file universe every rule covers,
@@ -33,7 +40,7 @@ func runCoverageCmd(cmd *cobra.Command, args []string) error {
 	if mode == modeTUI {
 		return openTUI(cmd, coverageRoute(valuesFrom(cmd, args)))
 	}
-	report, _, err := runCoverage(cmd.Context(), opts)
+	report, _, err := runCoverage(cmd.Context(), opts, nil)
 	if err != nil {
 		return err
 	}
@@ -42,9 +49,9 @@ func runCoverageCmd(cmd *cobra.Command, args []string) error {
 
 // runCoverage computes the coverage report against the local repository,
 // with the unfiltered match it was computed from. opts.ScopeName narrows
-// the per-scope breakdown in the engine.
-func runCoverage(ctx context.Context, opts review.Options) (*review.CoverageReport, *review.Result, error) {
-	engine, err := openEngine(nil)
+// the per-scope breakdown in the engine. log is as for openEngine.
+func runCoverage(ctx context.Context, opts review.Options, log *slog.Logger) (*review.CoverageReport, *review.Result, error) {
+	engine, err := openEngine(log)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -68,15 +75,11 @@ func renderCoverage(mode outputMode, report *review.CoverageReport) error {
 		return writeJSON(os.Stdout, report)
 	default:
 		fmt.Printf("Total coverage: %.2f%% of %d file(s)\n", report.Percent, report.Universe)
-		var header = []string{"Scope", "Pattern", "Rules File", "Files", "Percent"}
-		rows := make([][]string, 0, len(report.PerScope))
-		for _, sc := range report.PerScope {
-			name := sc.Scope.Name
-			if name == "" {
-				name = sc.Scope.Pattern
-			}
-			rows = append(rows, []string{name, sc.Scope.Pattern, sc.Scope.RulesFile,
-				fmt.Sprintf("%d", sc.Files), fmt.Sprintf("%.2f%%", sc.Percent)})
+		var header = []string{"Scope", "Pattern", "Rules File", "Position", "Files", "Percent"}
+		rows := make([][]string, 0, len(report.PerRule))
+		for _, rc := range report.PerRule {
+			rows = append(rows, []string{ruleTitle(rc.Rule), rc.Pattern, rc.RulesFile, strconv.Itoa(rc.Position),
+				fmt.Sprintf("%d", rc.Files), fmt.Sprintf("%.2f%%", rc.Percent)})
 		}
 		if err := writeTable(os.Stdout, header, rows); err != nil {
 			return err
@@ -86,6 +89,138 @@ func renderCoverage(mode outputMode, report *review.CoverageReport) error {
 		}
 	}
 	return nil
+}
+
+func coverageRoute(v tui.Values) tui.Route {
+	return commandRoute(coverageCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		opts := review.Options{ChangedOnly: v.Bool("changed"), ScopeName: v.Flag("scope")}
+		report, match, err := runCoverage(ctx, opts, quietLog)
+		if err != nil {
+			return nil, err
+		}
+		s, err := openWorkspace(ctx, quietLog)
+		if err != nil {
+			return nil, err
+		}
+		return coveragePage(report, match, s), nil
+	})
+}
+
+// detailFilesMax caps the file rows a detail lists inline; the drill-down
+// has them all.
+const detailFilesMax = 50
+
+// coveragePage lists each scope's coverage with the files it matched; a
+// scope with a name drills into `match --scope <name>`. The uncovered
+// files are the last row, grouped by directory, each directory linking to
+// `rules add` for its nearest rules file.
+func coveragePage(report *review.CoverageReport, match *review.Result, s *rulesedit.Workspace) tui.Page {
+	items := make([]tui.Item, 0, len(report.PerRule)+1)
+	for _, sc := range report.PerRule {
+		d := tui.Detail{
+			Fields: append(ruleFieldsDetail(sc.Rule),
+				tui.Field{Label: "Files", Value: strconv.Itoa(sc.Files)},
+				tui.Field{Label: "Coverage", Value: fmt.Sprintf("%.2f%%", sc.Percent)},
+			),
+			Sections: []tui.Section{fileLinks("Files", match.FilesOf(sc.Key()))},
+		}
+		it := tui.Item{
+			Title:       ruleTitle(sc.Rule) + " in " + sc.Location(),
+			Description: fmt.Sprintf("%d file(s), %.1f%%", sc.Files, sc.Percent),
+			Detail:      d,
+		}
+		if sc.Name != "" {
+			r := matchRoute(tui.Values{Flags: map[string]string{"scope": sc.Name}})
+			it.Route = &r
+		}
+		items = append(items, it)
+	}
+	uncovered := tui.Item{
+		Title:       "Uncovered files",
+		Description: fmt.Sprintf("%d file(s) match no rule", len(report.Uncovered)),
+		Detail:      tui.Detail{Sections: []tui.Section{uncoveredSection(report.Uncovered, s)}},
+	}
+	if len(report.Uncovered) > 0 {
+		uncovered.Badge = tui.BadgePending
+	}
+	items = append(items, uncovered)
+	return tui.NewListPage("Coverage", items).
+		WithSummary(fmt.Sprintf("Total coverage: %.2f%% of %d file(s)", report.Percent, report.Universe))
+}
+
+// fileLinks lists files as links to their rule chains, at most
+// detailFilesMax of them.
+func fileLinks(title string, files []string) tui.Section {
+	sec := tui.Section{Title: fmt.Sprintf("%s (%d)", title, len(files))}
+	for i, f := range files {
+		if i == detailFilesMax {
+			sec.Rows = append(sec.Rows, tui.Row{Text: fmt.Sprintf("+%d more", len(files)-i), Note: "enter on the row lists them all"})
+			break
+		}
+		r := fileRulesRoute(f)
+		sec.Rows = append(sec.Rows, tui.Row{Text: f, Route: &r})
+	}
+	return sec
+}
+
+// dirFiles is a directory with the files directly in it.
+type dirFiles struct {
+	// Dir is repository-relative and slash-separated; "." is the root, as
+	// rulesedit.Workspace.NearestTo takes it.
+	Dir   string
+	Files []string
+}
+
+// groupByDir groups files by the directory each is directly in, the
+// directories sorted and each keeping its files' order.
+func groupByDir(files []string) []dirFiles {
+	byDir := map[string][]string{}
+	for _, f := range files {
+		d := path.Dir(f)
+		byDir[d] = append(byDir[d], f)
+	}
+	out := make([]dirFiles, 0, len(byDir))
+	for _, d := range slices.Sorted(maps.Keys(byDir)) {
+		out = append(out, dirFiles{Dir: d, Files: byDir[d]})
+	}
+	return out
+}
+
+// uncoveredSection groups uncovered files by directory. Each directory
+// links to adding a rule for it to its nearest rules file, or to `init`
+// when the repository has none.
+func uncoveredSection(files []string, s *rulesedit.Workspace) tui.Section {
+	sec := tui.Section{Title: "By directory · enter adds a rule"}
+	for _, g := range groupByDir(files) {
+		d := g.Dir
+		nearest := s.NearestTo(d)
+		var r tui.Route
+		note := countOf(len(g.Files), "file")
+		if nearest == "" {
+			r = initRoute(tui.Values{})
+			note += " · no rules file yet"
+		} else {
+			flags := map[string]string{"file": nearest}
+			if pattern := rulesedit.DirPattern(d); pattern != "" {
+				flags["pattern"] = pattern
+			}
+			r = rulesAddRoute(tui.Values{Flags: flags})
+			note += " · nearest rules file: " + nearest
+		}
+		label := d + "/"
+		if d == "." {
+			label = "repository root"
+		}
+		sec.Rows = append(sec.Rows, tui.Row{Text: label, Note: note, Route: &r})
+		for i, f := range g.Files {
+			if i == detailFilesMax {
+				sec.Rows = append(sec.Rows, tui.Row{Indent: 1, Text: fmt.Sprintf("+%d more", len(g.Files)-i)})
+				break
+			}
+			sec.Rows = append(sec.Rows, tui.Row{Indent: 1, Text: path.Base(f)})
+		}
+	}
+	return sec
 }
 
 func init() {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -40,7 +41,7 @@ func buildContext(approvers map[string]bool, isActive func(string) bool, repoOwn
 func buildLayer(dir, name string, strategy rulesfile.RuleCombineStrategy, targets ...rulesfile.ApproverTarget) RuleLayer {
 	return RuleLayer{
 		DirectoryPath: dir,
-		Rules:         []Rule{newRule(rulesfile.Rule{Name: name, CombineStrategy: strategy, Approvers: targets})},
+		Rules:         []ExecutableRule{newExecutableRule(rulesfile.Rule{Name: name, CombineStrategy: strategy, Approvers: targets})},
 	}
 }
 
@@ -362,7 +363,7 @@ func TestRuleStateSnapshotsEffectiveCombineStrategy(t *testing.T) {
 	// (override) by the algorithm. The historical review state must report
 	// what actually ran, so that rule state snapshots the effective strategy,
 	// never the raw config value.
-	rule := newRule(rulesfile.Rule{
+	rule := newExecutableRule(rulesfile.Rule{
 		Name:            "root",
 		CombineStrategy: rulesfile.RuleCombineStrategy(0), // invalid sentinel
 		Approvers:       []rulesfile.ApproverTarget{approver("team-a", 1)},
@@ -373,7 +374,7 @@ func TestRuleStateSnapshotsEffectiveCombineStrategy(t *testing.T) {
 		t.Errorf("snapshot combine strategy = %s, want override for an invalid config value", rs.CombineStrategy)
 	}
 	// Raw config values pass through unchanged.
-	valid := newRule(rulesfile.Rule{
+	valid := newExecutableRule(rulesfile.Rule{
 		Name:            "src",
 		CombineStrategy: rulesfile.RuleCombineStrategyIntersect,
 		Approvers:       []rulesfile.ApproverTarget{approver("team-a", 1)},
@@ -390,7 +391,7 @@ func TestAuthorApprovalIgnoredWhenSelfApproveDisallowed(t *testing.T) {
 	// author must not appear in the resolved members.
 	pr := buildContext(approverSet(testAuthor), activeAllOwners(), []string{"zowner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {{DirectoryPath: "/", Rules: []Rule{newRule(rulesfile.Rule{
+		"/src/x.go": {{DirectoryPath: "/", Rules: []ExecutableRule{newExecutableRule(rulesfile.Rule{
 			Name:            "root",
 			CombineStrategy: rulesfile.RuleCombineStrategyUnion,
 			SelfApprove:     false,
@@ -419,7 +420,7 @@ func TestAuthorApprovalCountedWhenSelfApproveAllowed(t *testing.T) {
 	// approval now satisfies the target.
 	pr := buildContext(approverSet(testAuthor), activeAllOwners(), []string{"zowner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {{DirectoryPath: "/", Rules: []Rule{newRule(rulesfile.Rule{
+		"/src/x.go": {{DirectoryPath: "/", Rules: []ExecutableRule{newExecutableRule(rulesfile.Rule{
 			Name:            "root",
 			CombineStrategy: rulesfile.RuleCombineStrategyUnion,
 			SelfApprove:     true,
@@ -587,5 +588,22 @@ func TestSharedChainIsTracedPerFile(t *testing.T) {
 		if !slices.ContainsFunc(state.Errors, func(e string) bool { return strings.Contains(e, "unsatisfiable rules for "+file) }) {
 			t.Errorf("no unsatisfiable error names %s: %q", file, state.Errors)
 		}
+	}
+}
+
+// TestPatternsByFile pins the chain as rule patterns per file, in chain
+// order (the repository root first), omitting files no rule applies to.
+func TestPatternsByFile(t *testing.T) {
+	rules := rulesfile.Set{
+		rulesfile.FileName:         {{Pattern: `.*\.go$`}},
+		rulesfile.PathInDir("src"): {{Pattern: `api`}},
+	}
+	chain, err := GetFileRuleChain(t.Context(), rules, []string{"main.go", "src/api.go", "docs/readme.md"}, nil, testLogger())
+	if err != nil {
+		t.Fatalf("GetFileRuleChain: %v", err)
+	}
+	want := map[string][]string{"main.go": {`.*\.go$`}, "src/api.go": {`.*\.go$`, `api`}}
+	if got := chain.PatternsByFile(); !reflect.DeepEqual(got, want) {
+		t.Errorf("PatternsByFile = %v, want %v", got, want)
 	}
 }

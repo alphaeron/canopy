@@ -46,10 +46,10 @@ type harness struct {
 	depth int
 }
 
-func newHarness(t *testing.T, cfg Config) *harness {
+func newHarness(t *testing.T, opts Options) *harness {
 	t.Helper()
-	cfg.previewDelay = time.Nanosecond
-	h := &harness{t: t, a: newApp(context.Background(), cfg)}
+	opts.previewDelay = time.Nanosecond
+	h := &harness{t: t, a: newApp(context.Background(), opts)}
 	h.send(tea.WindowSizeMsg{Width: 120, Height: 30})
 	h.run(h.a.Init())
 	return h
@@ -121,7 +121,7 @@ func filesPage() Page {
 // on the match page, and back goes to the home page rather than quitting.
 func TestDeepLinkStartsAboveHome(t *testing.T) {
 	r := staticRoute("match", filesPage)
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
 	if got := h.crumbs(); !strings.Contains(got, brand.Command+" › match") {
 		t.Fatalf("header must show the deep-linked page, got %q", got)
 	}
@@ -142,7 +142,7 @@ func TestDeepLinkStartsAboveHome(t *testing.T) {
 // preloaded page: the route loads after Init.
 func TestStartWithoutPageLoadsInBackground(t *testing.T) {
 	r := staticRoute("coverage", filesPage)
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r})
 	if len(h.a.stack) != 2 || h.a.top().route.Command != "coverage" {
 		t.Fatalf("start route was not loaded: stack %d", len(h.a.stack))
 	}
@@ -151,7 +151,7 @@ func TestStartWithoutPageLoadsInBackground(t *testing.T) {
 // TestHomeNavigatesToRoute is the "run the TUI, then go to a command's page"
 // path: enter on a home row loads and pushes that route.
 func TestHomeNavigatesToRoute(t *testing.T) {
-	h := newHarness(t, Config{Routes: []Route{staticRoute("match", filesPage), staticRoute("coverage", filesPage)}})
+	h := newHarness(t, Options{Routes: []Route{staticRoute("match", filesPage), staticRoute("coverage", filesPage)}})
 	h.press("down", "enter")
 	if got := h.crumbs(); !strings.Contains(got, brand.Command+" › coverage") {
 		t.Fatalf("enter must open the hovered command, header %q", got)
@@ -163,7 +163,7 @@ func TestHomeNavigatesToRoute(t *testing.T) {
 
 func TestLoadErrorStaysAndReports(t *testing.T) {
 	bad := Route{Command: "bad", Load: func(context.Context, Values) (Page, error) { return nil, errors.New("boom") }}
-	h := newHarness(t, Config{Routes: []Route{bad}})
+	h := newHarness(t, Options{Routes: []Route{bad}})
 	h.press("enter")
 	if len(h.a.stack) != 1 {
 		t.Fatalf("a failed load must not push a page")
@@ -177,7 +177,7 @@ func TestLoadErrorStaysAndReports(t *testing.T) {
 // shows the hovered row and updates as the cursor moves.
 func TestDetailFollowsCursor(t *testing.T) {
 	r := staticRoute("match", filesPage)
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
 	if !strings.Contains(h.screen(), "detail-a") {
 		t.Fatalf("detail pane must show the first row:\n%s", h.screen())
 	}
@@ -191,7 +191,7 @@ func TestDetailFollowsCursor(t *testing.T) {
 // filter quit the program; ctrl+c must still quit from anywhere.
 func TestTypingInFilterDoesNotQuit(t *testing.T) {
 	r := staticRoute("match", filesPage)
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
 	h.press("/", "q", "?")
 	if h.quit {
 		t.Fatal("q typed into the filter quit the program")
@@ -223,7 +223,7 @@ func TestTypingInFilterDoesNotQuit(t *testing.T) {
 }
 
 func TestQuitKey(t *testing.T) {
-	h := newHarness(t, Config{Routes: []Route{staticRoute("match", filesPage)}})
+	h := newHarness(t, Options{Routes: []Route{staticRoute("match", filesPage)}})
 	h.press("q")
 	if !h.quit {
 		t.Error("q must quit when not typing")
@@ -245,7 +245,7 @@ func TestActionConfirmRunsAndReloads(t *testing.T) {
 			},
 		}), nil
 	}}
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r})
 	h.press("x")
 	if !strings.Contains(h.screen(), "Remove *.go? [y/N]") {
 		t.Fatalf("action must prompt first:\n%s", h.screen())
@@ -267,7 +267,7 @@ func TestActionConfirmRunsAndReloads(t *testing.T) {
 }
 
 func TestPaletteNavigates(t *testing.T) {
-	h := newHarness(t, Config{Routes: []Route{staticRoute("match", filesPage), staticRoute("coverage", filesPage)}})
+	h := newHarness(t, Options{Routes: []Route{staticRoute("match", filesPage), staticRoute("coverage", filesPage)}})
 	h.press("ctrl+p")
 	screen := h.screen()
 	if h.a.palette == nil || !strings.Contains(screen, "Go to") {
@@ -304,7 +304,7 @@ func TestTreePageDrillsAndToggles(t *testing.T) {
 		}})
 	}
 	r := staticRoute("rules get", tree)
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r, StartPage: tree()})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r, StartPage: tree()})
 	if !strings.Contains(h.screen(), "group-detail") {
 		t.Fatalf("the cursor must start on the first group and show its detail:\n%s", h.screen())
 	}
@@ -322,7 +322,7 @@ func TestTreePageDrillsAndToggles(t *testing.T) {
 }
 
 func TestHelpToggleResizesBody(t *testing.T) {
-	h := newHarness(t, Config{Routes: []Route{staticRoute("match", filesPage)}})
+	h := newHarness(t, Options{Routes: []Route{staticRoute("match", filesPage)}})
 	_, before := h.a.bodySize()
 	h.press("?")
 	_, after := h.a.bodySize()
@@ -363,7 +363,7 @@ func TestMouseSelectsAndOpensRows(t *testing.T) {
 		})
 	}
 	start := staticRoute("commands", commands)
-	h := newHarness(t, Config{Routes: []Route{match, coverage}, Start: &start, StartPage: commands()})
+	h := newHarness(t, Options{Routes: []Route{match, coverage}, Start: &start, StartPage: commands()})
 	h.send(click(listX, firstRowY+rowStride))
 	if len(h.a.stack) != 2 || !strings.Contains(h.screen(), brand.Command+" coverage") {
 		t.Fatalf("a click must select the second row without opening it:\n%s", h.screen())
@@ -386,7 +386,7 @@ func TestMouseSelectsAndOpensRows(t *testing.T) {
 
 func TestMouseWheel(t *testing.T) {
 	r := staticRoute("match", filesPage)
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
 	h.send(wheel(listX, 10, tea.MouseWheelDown))
 	if !strings.Contains(h.screen(), "detail-b") {
 		t.Fatalf("the wheel over the list must move the selection:\n%s", h.screen())
@@ -415,7 +415,7 @@ func TestMouseTreeClick(t *testing.T) {
 		}})
 	}
 	r := staticRoute("rules get", tree)
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r, StartPage: tree()})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r, StartPage: tree()})
 	// Rows: header, top border, then root, group, a.go, b.go.
 	h.send(click(listX, 4))
 	if !strings.Contains(h.screen(), "leaf-a") {
@@ -432,7 +432,7 @@ func TestMouseTreeClick(t *testing.T) {
 // (no blink timer) placed at the input: the list filter and the palette.
 func TestTerminalCursor(t *testing.T) {
 	r := staticRoute("match", filesPage)
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r, StartPage: filesPage()})
 	if h.a.View().Cursor != nil {
 		t.Fatal("no cursor while nothing takes text")
 	}

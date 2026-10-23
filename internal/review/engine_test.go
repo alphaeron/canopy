@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"regexp"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/approval"
@@ -96,16 +97,16 @@ func TestMatchReturnsAllFilesInUniverse(t *testing.T) {
 	for _, fm := range res.Files {
 		switch fm.Path {
 		case "main.go":
-			if len(fm.Scopes) != 1 || fm.Scopes[0].Name != "top-level go rules" {
-				t.Errorf("main.go scopes = %+v, want one 'top-level go rules'", fm.Scopes)
+			if len(fm.Rules) != 1 || fm.Rules[0].Name != "top-level go rules" {
+				t.Errorf("main.go scopes = %+v, want one 'top-level go rules'", fm.Rules)
 			}
 		case "src/api.go":
-			if len(fm.Scopes) != 1 || fm.Scopes[0].Name != "src go rules" {
-				t.Errorf("src/api.go scopes = %+v, want one 'src go rules' (parent rule broken by IgnoreParentDirs)", fm.Scopes)
+			if len(fm.Rules) != 1 || fm.Rules[0].Name != "src go rules" {
+				t.Errorf("src/api.go scopes = %+v, want one 'src go rules' (parent rule broken by IgnoreParentDirs)", fm.Rules)
 			}
 		case "docs/readme.md":
-			if len(fm.Scopes) != 0 {
-				t.Errorf("docs/readme.md scopes = %+v, want none (no rule matches)", fm.Scopes)
+			if len(fm.Rules) != 0 {
+				t.Errorf("docs/readme.md scopes = %+v, want none (no rule matches)", fm.Rules)
 			}
 		}
 	}
@@ -160,8 +161,8 @@ func TestMatchScopeNameFilter(t *testing.T) {
 			got := []string{}
 			for _, fm := range res.Files {
 				got = append(got, fm.Path)
-				if len(fm.Scopes) != 1 || fm.Scopes[0].Name != tc.scope {
-					t.Errorf("%s scopes = %+v, want only %q", fm.Path, fm.Scopes, tc.scope)
+				if len(fm.Rules) != 1 || fm.Rules[0].Name != tc.scope {
+					t.Errorf("%s scopes = %+v, want only %q", fm.Path, fm.Rules, tc.scope)
 				}
 			}
 			if !reflect.DeepEqual(got, tc.wantFiles) {
@@ -185,8 +186,8 @@ func TestCoverageScopeName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Coverage scoped: %v", err)
 	}
-	if len(got.PerScope) != 1 || got.PerScope[0].Scope.Name != "src go rules" {
-		t.Errorf("breakdown = %+v, want only the requested scope", got.PerScope)
+	if len(got.PerRule) != 1 || got.PerRule[0].Name != "src go rules" {
+		t.Errorf("breakdown = %+v, want only the requested scope", got.PerRule)
 	}
 	if got.Universe != full.Universe || got.Covered != full.Covered || !reflect.DeepEqual(got.Uncovered, full.Uncovered) {
 		t.Errorf("overall numbers changed: got %+v, full %+v", got, full)
@@ -278,8 +279,8 @@ func TestCoverageUnmatchedFilesAndUnmatchedSet(t *testing.T) {
 	if len(report.Uncovered) != 1 || report.Uncovered[0] != "docs/readme.md" {
 		t.Errorf("Coverage: unmatched=%+v, want [docs/readme.md]", report.Uncovered)
 	}
-	if len(report.PerScope) != 2 {
-		t.Errorf("Coverage: PerScope length=%d, want 2 (one per distinct scope)", len(report.PerScope))
+	if len(report.PerRule) != 2 {
+		t.Errorf("Coverage: PerRule length=%d, want 2 (one per distinct scope)", len(report.PerRule))
 	}
 }
 
@@ -323,6 +324,17 @@ func TestFilesNarrowsByPatterns(t *testing.T) {
 	}
 }
 
+// TestReviewEvaluatesFiles checks that Review runs the full review over the
+// files given: only those files are in the state, and a file whose rule an
+// approver satisfies is satisfied.
+func TestReviewEvaluatesFiles(t *testing.T) {
+	e := New(&stubSource{rules: fixtureRules}, slog.New(slog.DiscardHandler))
+	state := e.Review(t.Context(), []string{"main.go"}, approval.ReviewInput{Approvers: []string{"team-a"}})
+	if len(state.Files) != 1 || state.Files["main.go"].Status != approval.StatusSatisfied || state.Overall != approval.StatusSatisfied {
+		t.Errorf("Review = %+v, want main.go alone, satisfied", state)
+	}
+}
+
 func TestRequirementsReportsRequiredTargetsAndFallback(t *testing.T) {
 	src := &stubSource{rules: fixtureRules}
 	e := New(src, slog.New(slog.DiscardHandler))
@@ -346,7 +358,7 @@ func TestCoverageKeepsTheFullMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.PerScope) != 1 || report.Covered != 2 {
+	if len(report.PerRule) != 1 || report.Covered != 2 {
 		t.Errorf("report = %+v, want one scope in the breakdown and 2 covered files", report)
 	}
 	if len(match.Files) != 3 {
@@ -384,5 +396,21 @@ func TestRepoRootOnlyFromRootedSources(t *testing.T) {
 				t.Errorf("Review RepoRoot = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestExactPattern pins that drilling from a file into `rules get` targets
+// that file only, even when the path contains regex metacharacters.
+func TestExactPattern(t *testing.T) {
+	re := regexp.MustCompile(ExactPattern("pkg/a.go"))
+	for path, want := range map[string]bool{
+		"pkg/a.go":     true,
+		"pkg/aXgo":     false,
+		"pkg/a.go.bak": false,
+		"x/pkg/a.go":   false,
+	} {
+		if got := re.MatchString(path); got != want {
+			t.Errorf("match %q = %v, want %v", path, got, want)
+		}
 	}
 }

@@ -22,11 +22,11 @@ func repoOverview(ctx context.Context) (tui.Detail, error) {
 	if err != nil {
 		return tui.Detail{}, err
 	}
-	s, err := loadRulesSet(ctx, repo, engine)
+	s, err := loadWorkspace(ctx, repo, engine)
 	if err != nil {
 		return tui.Detail{}, err
 	}
-	d := tui.Detail{Fields: []tui.Field{{Label: "Repository", Value: s.root}}}
+	d := tui.Detail{Fields: []tui.Field{{Label: "Repository", Value: s.Root}}}
 	failed := func(label string, err error) tui.Field {
 		return tui.Field{Label: label, Value: err.Error(), Badge: tui.BadgeFail}
 	}
@@ -40,8 +40,8 @@ func repoOverview(ctx context.Context) (tui.Detail, error) {
 		d.Fields = append(d.Fields, failed("HEAD", err))
 	}
 
-	d.Fields = append(d.Fields, tui.Field{Label: "rules files", Value: countOf(len(s.rules), "rules file") + " · " + countOf(len(s.entries("")), "rule")})
-	if n := violationCount(s.rules.Validate()); n > 0 {
+	d.Fields = append(d.Fields, tui.Field{Label: "rules files", Value: joinNotes(countOf(len(s.Rules), "rules file")+" · "+countOf(len(s.Entries("")), "rule"), brokenNote(s))})
+	if n := violationCount(s.Validate("")); n > 0 {
 		d.Fields = append(d.Fields, tui.Field{Label: "Validation", Value: countOf(n, "violation"), Badge: tui.BadgeFail})
 	} else {
 		d.Fields = append(d.Fields, tui.Field{Label: "Validation", Value: "valid", Badge: tui.BadgeOK})

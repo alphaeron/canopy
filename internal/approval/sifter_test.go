@@ -42,7 +42,7 @@ func TestGetFileRuleChainLayersAndByRule(t *testing.T) {
 	}
 	var got []entry
 	for _, rf := range chain.ByRule() {
-		got = append(got, entry{rf.RulesFile, rf.Rule.Name, rf.Files})
+		got = append(got, entry{rf.RulesFile, rf.Name, rf.Files})
 	}
 	want := []entry{
 		{rulesfile.FileName, "all", []string{"README.md", "src/api/v1.go", "src/main.go"}},
@@ -54,27 +54,19 @@ func TestGetFileRuleChainLayersAndByRule(t *testing.T) {
 	}
 }
 
-func TestEffectiveCombineStrategyDefaultsToOverride(t *testing.T) {
-	if got := EffectiveCombineStrategy(rulesfile.RuleCombineStrategy(0)); got != rulesfile.RuleCombineStrategyOverride {
-		t.Errorf("omitted strategy = %v, want override", got)
-	}
-	if got := EffectiveCombineStrategy(rulesfile.RuleCombineStrategyUnion); got != rulesfile.RuleCombineStrategyUnion {
-		t.Errorf("union = %v, want union", got)
-	}
-}
-
-// TestByRuleMatchesScopeIdentity pins that ByRule groups rules by
-// rulesfile.RuleKey, the same identity match scopes use: a pattern declared
-// twice in one rules file is one rule, whatever its names.
-func TestByRuleMatchesScopeIdentity(t *testing.T) {
-	rules := rulesfile.Set{rulesfile.FileName: {{Pattern: `.*`, Name: "first"}, {Pattern: `.*`, Name: "second"}}}
+// TestByRuleKeepsRepeatedPatterns pins that ByRule groups rules by
+// rulesfile.RuleKey, their location, the same identity match results use: a
+// pattern declared twice in one rules file is two rules, in declaration
+// order. (Positions are set as ParseRules sets them.)
+func TestByRuleKeepsRepeatedPatterns(t *testing.T) {
+	rules := rulesfile.Set{rulesfile.FileName: {{Pattern: `.*`, Name: "first"}, {Pattern: `.*`, Name: "second", Position: 1}}}
 	chain, err := GetFileRuleChain(t.Context(), rules, []string{"a.go"}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("GetFileRuleChain: %v", err)
 	}
 	got := chain.ByRule()
-	if len(got) != 1 || got[0].Rule.Name != "first" || !reflect.DeepEqual(got[0].Files, []string{"a.go"}) {
-		t.Errorf("ByRule() = %+v, want one entry for the first declaration", got)
+	if len(got) != 2 || got[0].Name != "first" || got[1].Name != "second" || got[1].Location() != rulesfile.FileName+"[1]" {
+		t.Errorf("ByRule() = %+v, want both declarations, in order", got)
 	}
 }
 

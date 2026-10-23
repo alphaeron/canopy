@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -87,6 +88,13 @@ func TestTreeFetcherKeepsGoodFilesWhenOneFails(t *testing.T) {
 	}
 	if got := rules.Paths(); !reflect.DeepEqual(got, []string{rulesfile.FileName}) {
 		t.Errorf("rules files = %v, want the root rules file kept", got)
+	}
+	fe, ok := RulesFileErrors(err)[rulesfile.PathInDir("bad")]
+	if !ok || fe.Op != "parse" {
+		t.Fatalf("FileErrors = %v, want the bad rules file's parse error", RulesFileErrors(err))
+	}
+	if !strings.HasPrefix(err.Error(), "parse rules file "+rulesfile.PathInDir("bad")+": ") {
+		t.Errorf("err = %q, want the review's message unchanged", err)
 	}
 }
 

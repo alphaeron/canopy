@@ -8,30 +8,31 @@ import (
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// Rule is the review algorithm's view of a single configured rule. It wraps
-// the rulesfile rule and owns the rule level of the pipeline: producing the
+// ExecutableRule is the review algorithm's view of a single configured rule:
+// a rulesfile.Rule with the methods that execute it. It owns the rule level
+// of the pipeline: producing the
 // rule's approver targets, pruning the targets that can never contribute,
 // and executing the rule against the review state to build its RuleState.
 // As with every other layer of the pipeline (chain, layer, target) the
 // single entry point is Execute and the only state it returns is this
 // level's state: RuleState, derived entirely from its target states.
-type Rule struct {
+type ExecutableRule struct {
 	rulesfile.Rule
 }
 
-// newRule adapts a configured rules-file rule into the algorithm's Rule level,
-// the boundary where configuration becomes behavior.
-func newRule(rule rulesfile.Rule) Rule {
-	return Rule{Rule: rule}
+// newExecutableRule adapts a configured rules-file rule into the algorithm's
+// rule level, the boundary where configuration becomes behavior.
+func newExecutableRule(rule rulesfile.Rule) ExecutableRule {
+	return ExecutableRule{Rule: rule}
 }
 
 // Targets returns the rule's approver targets, each carrying the rule's
 // self-approval policy so the policy travels with the target through every
 // combine strategy and into every state the targets produce.
-func (r *Rule) Targets() RuleTargets {
-	targets := make(RuleTargets, 0, len(r.Approvers))
+func (r *ExecutableRule) Targets() ExecutableTargets {
+	targets := make(ExecutableTargets, 0, len(r.Approvers))
 	for _, approver := range r.Approvers {
-		targets = append(targets, RuleTarget{
+		targets = append(targets, ExecutableTarget{
 			ApproverTarget: approver,
 			SelfApprove:    r.SelfApprove,
 		})
@@ -46,8 +47,8 @@ func (r *Rule) Targets() RuleTargets {
 // entirely (falling back to earlier rules or the parent directory). A target
 // the platform failed to resolve for any other reason is kept, so the
 // failure fails the review instead of silently weakening the requirement.
-func (r *Rule) Prune(ctx context.Context, p participants, resolver ApproverResolver) RuleTargets {
-	var kept RuleTargets
+func (r *ExecutableRule) Prune(ctx context.Context, p participants, resolver ApproverResolver) ExecutableTargets {
+	var kept ExecutableTargets
 	for _, target := range r.Targets() {
 		members, err := resolver.Resolve(ctx, target.Target)
 		if errors.Is(err, ErrUnknownTarget) {
@@ -66,7 +67,7 @@ func (r *Rule) Prune(ctx context.Context, p participants, resolver ApproverResol
 // against its required count, and the rule-level status derived from those
 // target states. The rule consumes only target-level execution and the
 // review state, nothing above the rule level.
-func (r *Rule) Execute(
+func (r *ExecutableRule) Execute(
 	ctx context.Context,
 	p participants,
 	resolver ApproverResolver,
@@ -105,7 +106,7 @@ func (r *Rule) Execute(
 	// rewritten to the default (override) behavior so the state always
 	// reports what actually ran.
 	appliedRule := r.Rule
-	appliedRule.CombineStrategy = EffectiveCombineStrategy(appliedRule.CombineStrategy)
+	appliedRule.CombineStrategy = appliedRule.CombineStrategy.Effective()
 
 	return RuleState{
 		Rule:       appliedRule,

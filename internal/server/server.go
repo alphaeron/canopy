@@ -23,92 +23,10 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/brand"
 	"github.com/alphaeron/kit/internal/logx"
 	"github.com/alphaeron/kit/internal/review"
 )
-
-// PRWebhook is a hosted platform's pull request webhook: the server
-// receives the platform's webhook deliveries through it and gets from each
-// the pull request to review. A deployment serves one platform. A new
-// platform implements PRWebhook (and PullRequest), and the server registers
-// its webhook route without any other change. Everything particular to a
-// platform's webhook (where it is served, how big and in what format its
-// bodies are, how a request is authenticated, which events matter) is the
-// platform's: the server only routes, bounds, verifies through the
-// platform, and queues.
-type PRWebhook interface {
-	// Name identifies the platform in logs and the OpenAPI document.
-	Name() string
-	// WebhookPath is the path the platform's webhook is served at with
-	// POST. It must start with "/" and differ from the server's own paths.
-	WebhookPath() string
-	// WebhookMaxBytes bounds a webhook request's body: the platform's own
-	// payload limit. It must be positive.
-	WebhookMaxBytes() int64
-	// WebhookContentTypes are the media types the platform's webhook
-	// bodies arrive in, as the OpenAPI document lists them. At least one
-	// is required.
-	WebhookContentTypes() []string
-	// WebhookDescription describes the platform's webhook for the OpenAPI
-	// document (Markdown): how a request is authenticated, the headers it
-	// carries, and which events start a review.
-	WebhookDescription() string
-	// VerifyWebhook authenticates a webhook request and returns its event
-	// type and body. Any error rejects the request; nothing in it is
-	// trusted before this returns.
-	VerifyWebhook(r *http.Request) (event string, body []byte, err error)
-	// PullRequest turns a verified webhook into the pull request to
-	// review, or reports false when the event does not start a review. It
-	// must not call the platform's API: the pull request does that when
-	// reviewed.
-	PullRequest(event string, body []byte) (PullRequest, bool, error)
-}
-
-// PullRequest is a pull request (or merge request) on a hosted platform,
-// as the server reviews it: its files and rules (review.Source, whose
-// Revision is the base commit), who wrote and approved it, its files as it
-// proposes them, and where its outcome is reported.
-//
-// A review reads the changed files, the review input, and the rules
-// concurrently, so its methods must be safe for concurrent use. It starts
-// its evaluator's fetch early and the review fetches again, so the fetch
-// should share one result per pull request rather than read the rules twice.
-type PullRequest interface {
-	review.Source
-
-	// ReviewInput reads the pull request's author, its approvers (each
-	// reviewer's latest decisive review), which users are active, and the
-	// repository owners who review files no rule covers. Names need not be
-	// canonical: the review canonicalizes them with the platform's
-	// resolver.
-	ReviewInput(ctx context.Context) (approval.ReviewInput, error)
-
-	// ReadHead reads a file as the pull request proposes it, so rules files
-	// it changes can be validated before they take effect. A path its head
-	// does not have wraps fs.ErrNotExist, and a file over rulesfile.MaxSize
-	// wraps rulesfile.ErrTooLarge.
-	ReadHead(ctx context.Context, path string) ([]byte, error)
-
-	// Warnings lists the conditions met while reading the pull request
-	// that do not stop its review but are worth reporting with its
-	// outcome, such as a pull request too large to list its files the
-	// usual way. It is called once the review's reads are done.
-	Warnings() []string
-
-	// Key identifies where Report publishes (GitHub: the repository and
-	// head commit). Reviews with the same key run one at a time and only
-	// the newest reports, so a review that finishes late never replaces a
-	// newer one. It must not call the platform's API.
-	Key() string
-
-	// Report publishes the review's outcome as the pull request's status,
-	// replacing the earlier one. The platform maps each verdict to its own
-	// status states and carries the outcome's Description as the status's
-	// description.
-	Report(ctx context.Context, o review.Outcome) error
-}
 
 // Options configure a Server.
 type Options struct {
@@ -332,7 +250,7 @@ func (s *Server) accept(ctx context.Context, p PRWebhook) (*webhookOutput, error
 // is stopping does not.
 func (s *Server) review(ctx context.Context, j job, current func() bool) {
 	log := s.log.With("component", "server", "platform", j.platform, "key", j.pr.Key())
-	outcome := evaluate(ctx, j.pr, log)
+	outcome := review.Evaluate(ctx, j.pr, log)
 
 	if !current() {
 		log.Info("review superseded by a newer one")

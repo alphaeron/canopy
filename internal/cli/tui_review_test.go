@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,13 +14,13 @@ import (
 
 func TestReviewOptionsFrom(t *testing.T) {
 	v := tui.Values{Args: []string{`\.go$`}, Flags: map[string]string{
-		"changed": "true", "author": "alice", "approver": "bob,org/team", "owner": "root", "inactive": "carol",
+		"changed": "true", "author": "alice", "approver": "bob,org/team", "owner": "root",
 	}}
 	got, err := reviewOptionsFrom(v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := reviewOptions{patterns: []string{`\.go$`}, changed: true, author: "alice", approvers: []string{"bob", "org/team"}, owners: []string{"root"}, inactive: []string{"carol"}}
+	want := reviewOptions{patterns: []string{`\.go$`}, changed: true, author: "alice", approvers: []string{"bob", "org/team"}, owners: []string{"root"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("reviewOptionsFrom = %+v, want %+v", got, want)
 	}
@@ -39,10 +40,10 @@ func twoLayerFile() approval.FileState {
 		Layers: []approval.LayerState{
 			{DirectoryPath: "", Active: true, Status: approval.StatusSatisfied,
 				Rules:    []approval.RuleState{{Rule: rulesfile.Rule{Pattern: `.*`, Name: "security", CombineStrategy: rulesfile.RuleCombineStrategyUnion}, Approvers: []approval.ApproverTargetState{sec}, Status: approval.StatusSatisfied}},
-				Required: approval.RuleTargets{{ApproverTarget: sec.ApproverTarget}}},
+				Required: approval.ExecutableTargets{{ApproverTarget: sec.ApproverTarget}}},
 			{DirectoryPath: "svc", Active: true, Status: approval.StatusMissingApprovers,
 				Rules:    []approval.RuleState{{Rule: rulesfile.Rule{Pattern: `\.go$`, CombineStrategy: rulesfile.RuleCombineStrategyUnion}, Approvers: []approval.ApproverTargetState{backend}, Status: approval.StatusMissingApprovers}},
-				Required: approval.RuleTargets{{ApproverTarget: sec.ApproverTarget}, {ApproverTarget: backend.ApproverTarget}}},
+				Required: approval.ExecutableTargets{{ApproverTarget: sec.ApproverTarget}, {ApproverTarget: backend.ApproverTarget}}},
 		},
 		Required: []approval.ApproverTargetState{sec, backend},
 	}
@@ -57,7 +58,7 @@ func TestFileReviewDetail(t *testing.T) {
 		{Phase: "approve", Path: "svc/a.go", Layer: "svc", Note: "Applied union"},
 		{Phase: "approve", Path: "other.go", Note: "not this file"},
 	}
-	d := fileReviewDetail(twoLayerFile(), events)
+	d := fileReviewDetail(twoLayerFile(), &approval.ReviewState{Events: events})
 	if got := requiredLabel(twoLayerFile()); got != "org/sec 1/1, org/backend 0/2" {
 		t.Errorf("requiredLabel = %q", got)
 	}
@@ -117,9 +118,9 @@ func TestStatusBadgeAndOrder(t *testing.T) {
 // that rule's fields and an edit link; others are the file's.
 func TestViolationsDetail(t *testing.T) {
 	rules := rulesfile.Rules{{Pattern: `(`, Name: "broken"}, {Pattern: `.*`}}
-	errs := []string{`invalid pattern "(": missing )`, `something about the whole file`}
+	errs := append(rules.Validate(), errors.New("something about the whole file"))
 	d := violationsDetail(rulesfile.FileName, rules, errs)
-	if len(d.Sections) != 2 || d.Sections[0].Title != "Rule (" || d.Sections[1].Title != "File" {
+	if len(d.Sections) != 2 || d.Sections[0].Title != "Rule [0] (" || d.Sections[1].Title != "File" {
 		t.Fatalf("sections = %+v", d.Sections)
 	}
 	rows := d.Sections[0].Rows
@@ -135,10 +136,18 @@ func TestViolationsDetail(t *testing.T) {
 	}
 }
 
+func TestGroupByDir(t *testing.T) {
+	got := groupByDir([]string{"svc/b.go", "README", "svc/a.go", "svc/x/c.go"})
+	want := []dirFiles{{Dir: ".", Files: []string{"README"}}, {Dir: "svc", Files: []string{"svc/b.go", "svc/a.go"}}, {Dir: "svc/x", Files: []string{"svc/x/c.go"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("groupByDir = %+v, want %+v", got, want)
+	}
+}
+
 // TestUncoveredSection groups uncovered files by directory, each linking to
 // a rule for its nearest rules file.
 func TestUncoveredSection(t *testing.T) {
-	s := newTestRulesSet(t, map[string]rulesfile.Rules{rulesfile.FileName: {}, rulesfile.PathInDir("svc"): {}})
+	s := newTestWorkspace(t, map[string]rulesfile.Rules{rulesfile.FileName: {}, rulesfile.PathInDir("svc"): {}})
 	sec := uncoveredSection([]string{"README.md", "svc/deep/x.txt", "svc/y.txt", "svc/deep/z.txt"}, s)
 	var dirs []tui.Row
 	for _, r := range sec.Rows {
@@ -156,7 +165,7 @@ func TestUncoveredSection(t *testing.T) {
 	if !strings.Contains(dirs[2].Note, "2 files") {
 		t.Errorf("note = %q", dirs[2].Note)
 	}
-	if s.nearestTo("other/dir") != rulesfile.FileName || newTestRulesSet(t, map[string]rulesfile.Rules{rulesfile.PathInDir("svc"): {}}).nearestTo(".") != "" {
+	if s.NearestTo("other/dir") != rulesfile.FileName || newTestWorkspace(t, map[string]rulesfile.Rules{rulesfile.PathInDir("svc"): {}}).NearestTo(".") != "" {
 		t.Error("nearestTo must walk up to the root and report none past it")
 	}
 }
@@ -164,19 +173,19 @@ func TestUncoveredSection(t *testing.T) {
 // TestRuleMatchesOverlaps: a rule's overlaps are the other rules matching
 // its files, most shared first.
 func TestRuleMatchesOverlaps(t *testing.T) {
-	root := review.Scope{Pattern: ".*", RulesFile: rulesfile.FileName, Name: "all"}
-	goRule := review.Scope{Pattern: `\.go$`, RulesFile: rulesfile.PathInDir("svc"), Name: "go"}
-	docs := review.Scope{Pattern: `\.md$`, RulesFile: rulesfile.FileName}
+	root := rulesfile.Rule{Pattern: ".*", RulesFile: rulesfile.FileName, Name: "all"}
+	goRule := rulesfile.Rule{Pattern: `\.go$`, RulesFile: rulesfile.PathInDir("svc"), Name: "go"}
+	docs := rulesfile.Rule{Pattern: `\.md$`, RulesFile: rulesfile.FileName, Position: 1}
 	m := newRuleMatches(&review.Result{Files: []review.FileMatch{
-		{Path: "svc/a.go", Scopes: []review.Scope{root, goRule}},
-		{Path: "svc/b.go", Scopes: []review.Scope{root, goRule}},
-		{Path: "README.md", Scopes: []review.Scope{root, docs}},
+		{Path: "svc/a.go", Rules: rulesfile.Rules{root, goRule}},
+		{Path: "svc/b.go", Rules: rulesfile.Rules{root, goRule}},
+		{Path: "README.md", Rules: rulesfile.Rules{root, docs}},
 	}}, nil)
-	rows := m.overlaps(rulesfile.FileName, ".*")
+	rows := m.overlaps(root.Key())
 	if len(rows) != 2 || !strings.HasPrefix(rows[0].Text, "go:") || rows[0].Note != "2 shared files" || rows[1].Note != "1 shared file" {
 		t.Fatalf("overlaps = %+v", rows)
 	}
-	it := ruleItem(rulesfile.DeclaredRule{RulesFile: rulesfile.PathInDir("svc"), Rule: rulesfile.Rule{Pattern: `\.go$`}}, m)
+	it := ruleItem(rulesfile.Rule{RulesFile: rulesfile.PathInDir("svc"), Pattern: `\.go$`}, m)
 	if !strings.Contains(it.Description, "2 files") || len(it.Detail.Tabs) != 1 || len(it.Detail.Tabs[0].Sections[0].Rows) != 2 {
 		t.Errorf("rule item = %+v", it)
 	}

@@ -1,22 +1,22 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/alphaeron/kit/internal/rulesedit"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// rulesEditCmd edits one rule by its pattern, replacing the rule's name,
-// strategy, flags, and approver list. The pattern is positional and
-// immutable, since it is the rule's key within its rules file. Without --file
-// the rules file is the one declaring the pattern; when several do, a
-// terminal gets a picker and a script must pass --file (see
-// rulesSet.ruleTarget).
+// rulesEditCmd edits one rule, found by its pattern, replacing the rule's
+// name, strategy, flags, and approver list; the pattern itself is kept.
+// When several rules have the pattern, --file and --position choose one; a
+// terminal gets a picker and a script must pass them (see ruleTarget).
 var rulesEditCmd = &cobra.Command{
 	Use:         "edit <pattern>",
 	Short:       "Edit a rule in a rules file",
@@ -26,12 +26,14 @@ var rulesEditCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pattern := args[0]
 		mode, _ := resolveOutputMode(cmd)
-		s, err := openRulesSet(cmd.Context())
+		s, err := openWorkspace(cmd.Context(), nil)
 		if err != nil {
 			return err
 		}
-		fileFlag, _ := cmd.Flags().GetString("file")
-		target, err := s.ruleTarget(fileFlag, pattern, mode == modeTUI)
+		if err := warnBroken(os.Stderr, s); err != nil {
+			return err
+		}
+		target, err := ruleTarget(s, valuesFrom(cmd, args), pattern, mode == modeTUI)
 		if errors.Is(err, tui.ErrAborted) {
 			fmt.Fprintln(os.Stderr, "edit aborted")
 			return nil
@@ -39,12 +41,8 @@ var rulesEditCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		rule, err := s.rule(target, pattern)
-		if err != nil {
-			return err
-		}
 
-		fields := fieldsFromRule(rule)
+		fields := editSeed(target)
 		if mode == modeTUI {
 			if fields, err = runRuleForm(fields, nil); err != nil {
 				return fmt.Errorf("run form: %w", err)
@@ -52,30 +50,62 @@ var rulesEditCmd = &cobra.Command{
 		}
 		// Flags given on the command line win over the form; the others
 		// leave the rule's values standing.
-		if fields, err = ruleFieldsFrom(fields, valuesFrom(cmd, args)); err != nil {
+		if fields, err = applyRuleFlags(fields, valuesFrom(cmd, args)); err != nil {
 			return err
 		}
 
-		newRule, err := buildRuleFromFields(fields)
+		newRule, err := s.Edit(target, fields)
 		if err != nil {
-			return err
-		}
-		newRule.Pattern = pattern
-		if _, err := s.mutate(target, func(k *rulesfile.File) error {
-			return k.Edit(pattern, func(r *rulesfile.Rule) { *r = newRule })
-		}); err != nil {
 			return err
 		}
 		if mode == modeJSON {
 			return writeJSON(cmd.OutOrStdout(), newRule)
 		}
-		fmt.Printf("edited rule %q in %s\n", pattern, target)
+		fmt.Printf("edited rule %q at %s\n", pattern, target.Location())
 		return nil
 	},
 }
 
+// editRule replaces target with f, keeping target's pattern, as `rules
+// edit` does.
+func editRule(s *rulesedit.Workspace, target, f rulesfile.Rule) (string, error) {
+	if _, err := s.Edit(target, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("edited rule %q at %s", target.Pattern, target.Location()), nil
+}
+
+// rulesEditRoute is `rules edit <pattern>`: flags left unset keep the
+// rule's values. A pattern matching several rules opens a picker of them.
+func rulesEditRoute(v tui.Values) tui.Route {
+	return ruleRoute(rulesEditCmd, v, rulesEditRoute, func(ctx context.Context, v tui.Values) (string, error) {
+		s, err := openWorkspace(ctx, quietLog)
+		if err != nil {
+			return "", err
+		}
+		return editFromValues(s, v)
+	})
+}
+
+func editFromValues(s *rulesedit.Workspace, v tui.Values) (string, error) {
+	pattern, err := patternArg(v)
+	if err != nil {
+		return "", err
+	}
+	target, err := ruleTarget(s, v, pattern, false)
+	if err != nil {
+		return "", err
+	}
+	fields, err := applyRuleFlags(editSeed(target), v)
+	if err != nil {
+		return "", err
+	}
+	return editRule(s, target, fields)
+}
+
 func init() {
 	rulesFileFlag(rulesEditCmd, "the rules file holding the rule (default: the one rules file with that pattern)")
+	positionFlagFor(rulesEditCmd)
 	rulesEditCmd.Flags().String("name", "", "the rule's display name")
 	rulesEditCmd.Flags().String("strategy", "", "combine strategy: union, override, or intersect")
 	rulesEditCmd.Flags().Bool("ignore-parent", false, "ignore_parent_dirs: discard parent directories' rules")

@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/kit/internal/rulesedit"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
@@ -72,11 +72,11 @@ func isCompletion(c *cobra.Command) bool {
 
 // rulesSummary is the home page's live line for `rules`.
 func rulesSummary(ctx context.Context) (string, error) {
-	s, err := openRulesSet(ctx)
+	s, err := openWorkspace(ctx, quietLog)
 	if err != nil {
 		return "", err
 	}
-	return countOf(len(s.entries("")), "rule") + " in " + countOf(len(s.rules), "rules file"), nil
+	return joinNotes(countOf(len(s.Entries("")), "rule")+" in "+countOf(len(s.Rules), "rules file"), brokenNote(s)), nil
 }
 
 // visibleCommands are c's subcommands that `--help` lists.
@@ -102,120 +102,19 @@ func runRoute(cmd *cobra.Command, v tui.Values, run func(context.Context, tui.Va
 	return r
 }
 
-// initRoute is `init [path]`.
-func initRoute(v tui.Values) tui.Route {
-	return runRoute(initCmd, v, func(_ context.Context, v tui.Values) (string, error) { return initFromValues(v) })
-}
-
-func initFromValues(v tui.Values) (string, error) {
-	var arg string
-	if len(v.Args) > 0 {
-		arg = v.Args[0]
-	}
-	fields, err := ruleFieldsFrom(ruleFields{Strategy: "union"}, v)
-	if err != nil {
-		return "", err
-	}
-	path := initPath(arg)
-	k, err := writeRulesFile(path, v.Bool("force"), fields)
-	if err != nil {
-		return "", err
-	}
-	return initMessage(path, k), nil
-}
-
-// rulesAddRoute is `rules add`. The options form is the interactive
-// form, so --pattern is required in it; --file defaults to the
-// repository-root rules file, as in a scripted run.
-func rulesAddRoute(v tui.Values) tui.Route {
-	r := runRoute(rulesAddCmd, v, func(ctx context.Context, v tui.Values) (string, error) {
-		s, err := openRulesSet(ctx)
-		if err != nil {
-			return "", err
+// ruleRoute is the route of rules edit or rules remove: runRoute, except
+// that a pattern matching several rules opens ruleChoicesPage, whose rows
+// open self for one rule, rather than failing.
+func ruleRoute(cmd *cobra.Command, v tui.Values, self func(tui.Values) tui.Route, run func(context.Context, tui.Values) (string, error)) tui.Route {
+	r := runRoute(cmd, v, run)
+	r.Run = func(ctx context.Context, v tui.Values) (tui.Outcome, error) {
+		info, err := run(ctx, v)
+		if ambiguous, ok := errors.AsType[*rulesedit.AmbiguousRuleError](err); ok {
+			return tui.Outcome{Page: ruleChoicesPage(ambiguous, v, self)}, nil
 		}
-		return addFromValues(s, v)
-	})
-	return withParam(r, func(p *tui.Param) bool { return p.Name == "pattern" }, func(p *tui.Param) { p.Required = true })
-}
-
-func addFromValues(s *rulesSet, v tui.Values) (string, error) {
-	file := v.Flag("file")
-	if file == "" {
-		file = rulesfile.FileName
+		return tui.Outcome{Info: info, Reload: true}, err
 	}
-	target, err := s.resolve(file)
-	if err != nil {
-		return "", err
-	}
-	fields, err := ruleFieldsFrom(ruleFields{Strategy: "union"}, v)
-	if err != nil {
-		return "", err
-	}
-	return addRule(s, target, fields)
-}
-
-// rulesEditRoute is `rules edit <pattern>`: flags left unset keep the
-// rule's values. A pattern declared by several rules files needs --file, as
-// in a scripted run.
-func rulesEditRoute(v tui.Values) tui.Route {
-	return withPatternChoices(runRoute(rulesEditCmd, v, func(ctx context.Context, v tui.Values) (string, error) {
-		s, err := openRulesSet(ctx)
-		if err != nil {
-			return "", err
-		}
-		return editFromValues(s, v)
-	}))
-}
-
-func editFromValues(s *rulesSet, v tui.Values) (string, error) {
-	pattern, err := patternArg(v)
-	if err != nil {
-		return "", err
-	}
-	target, err := s.ruleTarget(v.Flag("file"), pattern, false)
-	if err != nil {
-		return "", err
-	}
-	rule, err := s.rule(target, pattern)
-	if err != nil {
-		return "", err
-	}
-	fields, err := ruleFieldsFrom(fieldsFromRule(rule), v)
-	if err != nil {
-		return "", err
-	}
-	return editRule(s, target, pattern, fields)
-}
-
-// rulesRemoveRoute is `rules remove <pattern>`, which asks before
-// removing unless --force is set.
-func rulesRemoveRoute(v tui.Values) tui.Route {
-	r := withPatternChoices(runRoute(rulesRemoveCmd, v, func(ctx context.Context, v tui.Values) (string, error) {
-		s, err := openRulesSet(ctx)
-		if err != nil {
-			return "", err
-		}
-		return removeFromValues(s, v)
-	}))
-	r.Confirm = func(v tui.Values) string {
-		if v.Bool("force") {
-			return ""
-		}
-		return fmt.Sprintf("Remove rule %q?", strings.Join(v.Args, " "))
-	}
-	return r
-}
-
-func removeFromValues(s *rulesSet, v tui.Values) (string, error) {
-	pattern, err := patternArg(v)
-	if err != nil {
-		return "", err
-	}
-	target, err := s.ruleTarget(v.Flag("file"), pattern, false)
-	if err != nil {
-		return "", err
-	}
-	return removeRule(s, target, pattern)
+	return withPatternChoices(r)
 }
 
 // patternArg is the <pattern> argument of rules edit and rules remove.
@@ -231,11 +130,11 @@ func withPatternChoices(r tui.Route) tui.Route {
 	return withParam(r, func(p *tui.Param) bool { return p.Arg }, func(p *tui.Param) {
 		p.Kind = tui.ParamChoice
 		p.Choices = func(ctx context.Context) ([]string, error) {
-			s, err := openRulesSet(ctx)
+			s, err := openWorkspace(ctx, quietLog)
 			if err != nil {
 				return nil, err
 			}
-			return s.patterns(), nil
+			return s.Patterns(), nil
 		}
 	})
 }

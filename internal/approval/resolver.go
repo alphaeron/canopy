@@ -3,7 +3,6 @@ package approval
 import (
 	"context"
 	"errors"
-	"sync"
 )
 
 // ErrUnknownTarget reports an approver target the platform has no user or
@@ -44,51 +43,4 @@ type TargetValidator interface {
 	// ValidateTarget returns an error wrapping ErrInvalidTarget when target
 	// is malformed for the platform.
 	ValidateTarget(target string) error
-}
-
-// reviewResolver wraps a platform resolver for one review: each target is
-// resolved once, and every member is returned in canonical form. Concurrent
-// first resolutions of one target share a single platform call, while
-// different targets resolve concurrently.
-type reviewResolver struct {
-	ApproverResolver
-
-	mu       sync.Mutex
-	resolved map[string]func() ([]string, error)
-}
-
-// newReviewResolver wraps r for one review. A resolver that is already
-// wrapped is returned as is.
-func newReviewResolver(r ApproverResolver) *reviewResolver {
-	if rr, ok := r.(*reviewResolver); ok {
-		return rr
-	}
-	return &reviewResolver{ApproverResolver: r, resolved: map[string]func() ([]string, error){}}
-}
-
-// Resolve resolves target through the platform on first use, and returns
-// the same members or error for the rest of the review. The first call's
-// ctx is the one the platform call runs under.
-func (r *reviewResolver) Resolve(ctx context.Context, target string) ([]string, error) {
-	r.mu.Lock()
-	resolve, ok := r.resolved[target]
-	if !ok {
-		resolve = sync.OnceValues(func() ([]string, error) { return r.resolve(ctx, target) })
-		r.resolved[target] = resolve
-	}
-	r.mu.Unlock()
-	return resolve()
-}
-
-// resolve resolves target through the platform, canonicalizing its members.
-func (r *reviewResolver) resolve(ctx context.Context, target string) ([]string, error) {
-	raw, err := r.ApproverResolver.Resolve(ctx, target)
-	if err != nil {
-		return nil, err
-	}
-	members := make([]string, len(raw))
-	for i, m := range raw {
-		members[i] = r.Canonical(m)
-	}
-	return members, nil
 }

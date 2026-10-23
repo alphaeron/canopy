@@ -11,7 +11,7 @@ import (
 // RuleLayer captures the exact directory context where a set of rules matched.
 type RuleLayer struct {
 	DirectoryPath string // e.g., "src/api"; "" for the repository root
-	Rules         []Rule
+	Rules         []ExecutableRule
 }
 
 // RulesFile is the repository path of the rules file that declared the
@@ -22,7 +22,7 @@ func (rl *RuleLayer) RulesFile() string {
 
 // Execute evaluates the rules in this layer in order and returns the layer's
 // complete state: the per-rule RuleState breakdown, the per-rule self-approval
-// policy, and the combined RuleTargets footprint that results from applying
+// policy, and the combined ExecutableTargets footprint that results from applying
 // every rule's combination strategy to the incoming footprint. The rule chain
 // consumes only this LayerState: it reads Required to feed the next layer
 // and never reaches into the rule or target levels itself.
@@ -32,7 +32,7 @@ func (rl *RuleLayer) RulesFile() string {
 // counted once per target occurrence.
 func (rl *RuleLayer) Execute(
 	ctx context.Context,
-	incoming RuleTargets,
+	incoming ExecutableTargets,
 	p participants,
 	builder *ReviewStateBuilder,
 	resolver ApproverResolver,

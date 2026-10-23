@@ -2,8 +2,8 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -91,31 +91,15 @@ func TestApproversLabel(t *testing.T) {
 	}
 }
 
-// TestExactPath pins that drilling from a file into `rules get` targets
-// that file only, even when the path contains regex metacharacters.
-func TestExactPath(t *testing.T) {
-	re := regexp.MustCompile(exactPath("pkg/a.go"))
-	for path, want := range map[string]bool{
-		"pkg/a.go":     true,
-		"pkg/aXgo":     false,
-		"pkg/a.go.bak": false,
-		"x/pkg/a.go":   false,
-	} {
-		if got := re.MatchString(path); got != want {
-			t.Errorf("match %q = %v, want %v", path, got, want)
-		}
-	}
-}
-
 // TestProvenance checks the per-file drill-down: one section per layer of
 // the file's chain, naming the declaring rules file and each rule in it.
 func TestProvenance(t *testing.T) {
 	layers := []approval.RuleLayer{
-		{DirectoryPath: "svc", Rules: []approval.Rule{{Rule: rulesfile.Rule{
+		{DirectoryPath: "svc", Rules: []approval.ExecutableRule{{Rule: rulesfile.Rule{
 			Pattern: `.*\.go`, Name: "backend",
 			Approvers: rulesfile.ApproverTargets{{Target: "org/backend", RequiredCount: 2}},
 		}}}},
-		{Rules: []approval.Rule{{Rule: rulesfile.Rule{Pattern: `.*`}}}},
+		{Rules: []approval.ExecutableRule{{Rule: rulesfile.Rule{Pattern: `.*`}}}},
 	}
 	d := provenance("svc/a.go", layers)
 	if len(d.Sections) != 2 {
@@ -132,55 +116,22 @@ func TestProvenance(t *testing.T) {
 	}
 }
 
-// TestFieldsFromRuleRoundTrip guards the edit seed (form and `rules edit`):
-// a rule turned into fields and back is unchanged, including the pattern
-// the form requires. An omitted strategy, which the approval package evaluates as
-// override, comes back as an explicit override rather than an error.
-func TestFieldsFromRuleRoundTrip(t *testing.T) {
-	base := rulesfile.Rule{
-		Pattern: `.*\.go`, Name: "core", SelfApprove: true, CurrentDirectoryOnly: true,
-		Approvers: rulesfile.ApproverTargets{{Target: "org/core", RequiredCount: 2}},
-	}
-	tests := []struct {
-		name     string
-		strategy rulesfile.RuleCombineStrategy
-		want     rulesfile.RuleCombineStrategy
-	}{
-		{name: "union", strategy: rulesfile.RuleCombineStrategyUnion, want: rulesfile.RuleCombineStrategyUnion},
-		{name: "intersect", strategy: rulesfile.RuleCombineStrategyIntersect, want: rulesfile.RuleCombineStrategyIntersect},
-		{name: "omitted", want: rulesfile.RuleCombineStrategyOverride},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			rule := base
-			rule.CombineStrategy = tc.strategy
-			got, err := buildRuleFromFields(fieldsFromRule(rule))
-			if err != nil {
-				t.Fatalf("build: %v", err)
-			}
-			want := base
-			want.CombineStrategy = tc.want
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("round trip:\n got %+v\nwant %+v", got, want)
-			}
-		})
-	}
-}
-
 // TestRuleActions exercises the TUI's add, edit, and remove against real
-// rules files, through the same rulesSet.mutate the CLI commands use. Each row
+// rules files, through the same rulesedit.Workspace the CLI commands use. Each row
 // carries its own rules file, so two files declaring the same pattern stay
 // distinct.
 func TestRuleActions(t *testing.T) {
-	s := newTestRulesSet(t, map[string]rulesfile.Rules{
+	s := newTestWorkspace(t, map[string]rulesfile.Rules{
 		rulesfile.FileName:         {{Pattern: `.*\.go`, Name: "security"}},
 		rulesfile.PathInDir("svc"): {},
 	})
 
-	if _, err := addRule(s, rulesfile.PathInDir("svc"), ruleFields{Pattern: `.*\.go`, Name: "core", Strategy: "union"}); err != nil {
+	if _, err := addRule(s, rulesfile.PathInDir("svc"), rulesfile.Rule{Pattern: `.*\.go`, Name: "core", CombineStrategy: rulesfile.RuleCombineStrategyUnion}); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if _, err := editRule(s, rulesfile.PathInDir("svc"), `.*\.go`, ruleFields{Pattern: "ignored", Name: "renamed", Strategy: "union"}); err != nil {
+	reloadRules(t, s)
+	target := s.Entries(rulesfile.PathInDir("svc"))[0]
+	if _, err := editRule(s, target, rulesfile.Rule{Pattern: "ignored", Name: "renamed", CombineStrategy: rulesfile.RuleCombineStrategyUnion}); err != nil {
 		t.Fatalf("edit: %v", err)
 	}
 	if got := loadRules(t, s, rulesfile.PathInDir("svc")); len(got) != 1 || got[0].Pattern != `.*\.go` || got[0].Name != "renamed" {
@@ -194,7 +145,8 @@ func TestRuleActions(t *testing.T) {
 	if _, err := remove.Run(context.Background(), tui.Item{Title: "bogus", Value: "not a rule"}); err == nil {
 		t.Error("remove must reject a row that does not hold a rule")
 	}
-	out, err := remove.Run(context.Background(), tui.Item{Value: rulesfile.DeclaredRule{RulesFile: rulesfile.PathInDir("svc"), Rule: rulesfile.Rule{Pattern: `.*\.go`}}})
+	reloadRules(t, s)
+	out, err := remove.Run(context.Background(), tui.Item{Value: s.Entries(rulesfile.PathInDir("svc"))[0]})
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -210,23 +162,26 @@ func TestRuleActions(t *testing.T) {
 }
 
 func TestRulesListOutput(t *testing.T) {
-	entries := []rulesfile.DeclaredRule{
-		{RulesFile: rulesfile.FileName, Rule: rulesfile.Rule{Pattern: `.*\.go`, Name: "security", CombineStrategy: rulesfile.RuleCombineStrategyUnion,
-			Approvers: rulesfile.ApproverTargets{{Target: "org/sec", RequiredCount: 1}}}},
-		{RulesFile: rulesfile.PathInDir("svc"), Rule: rulesfile.Rule{Pattern: `.*`}},
+	entries := rulesfile.Rules{
+		{RulesFile: rulesfile.FileName, Pattern: `.*\.go`, Name: "security", CombineStrategy: rulesfile.RuleCombineStrategyUnion,
+			Approvers: rulesfile.ApproverTargets{{Target: "org/sec", RequiredCount: 1}}},
+		{RulesFile: rulesfile.PathInDir("svc"), Pattern: `.*`},
 	}
 	js := rulesJSON(entries)
-	if js[0].RulesFile != rulesfile.FileName || js[0].CombineStrategy != "union" || js[0].Approvers[0] != (approverJSON{"org/sec", 1}) {
+	if js[0].CombineStrategy != rulesfile.RuleCombineStrategyUnion || js[0].Approvers[0] != (rulesfile.ApproverTarget{Target: "org/sec", RequiredCount: 1}) {
 		t.Errorf("first JSON rule = %+v", js[0])
 	}
-	if js[1].CombineStrategy != "" || js[1].Approvers == nil {
+	if out, err := json.Marshal(js); err != nil || !strings.Contains(string(out), `"rules_file":"`+rulesfile.FileName+`","position":0,"pattern":".*\\.go"`) {
+		t.Errorf("rules JSON = %s, %v; want each rule's location and fields", out, err)
+	}
+	if js[1].CombineStrategy != 0 || js[1].Approvers == nil {
 		t.Errorf("an omitted strategy is omitted and approvers is never null: %+v", js[1])
 	}
 	if got := rulesJSON(nil); got == nil || len(got) != 0 {
 		t.Errorf("no rules must encode as [], got %#v", got)
 	}
 	rows := ruleRows(entries)
-	if want := []string{rulesfile.PathInDir("svc"), ".*", "", "(default)", ""}; !reflect.DeepEqual(rows[1], want) {
+	if want := []string{rulesfile.PathInDir("svc"), "0", ".*", "", "(default)", ""}; !reflect.DeepEqual(rows[1], want) {
 		t.Errorf("row = %q, want %q", rows[1], want)
 	}
 

@@ -41,6 +41,41 @@ func (rcs RuleCombineStrategy) String() string {
 	return "unknown"
 }
 
+// IsValid reports whether rcs is one of the strategies a rules file can
+// name; an omitted or unknown one is not.
+func (rcs RuleCombineStrategy) IsValid() bool {
+	_, ok := ruleCombineStrategyNames[rcs]
+	return ok
+}
+
+// Effective is the strategy the approval algorithm applies for rcs: a valid
+// strategy as is, and an omitted or unknown one as override.
+func (rcs RuleCombineStrategy) Effective() RuleCombineStrategy {
+	if rcs.IsValid() {
+		return rcs
+	}
+	return RuleCombineStrategyOverride
+}
+
+// RuleCombineStrategies lists every valid strategy, in declaration order.
+func RuleCombineStrategies() []RuleCombineStrategy {
+	out := make([]RuleCombineStrategy, 0, len(ruleCombineStrategyNames))
+	for s := RuleCombineStrategyUnion; s < ruleCombineStrategyDone; s++ {
+		out = append(out, s)
+	}
+	return out
+}
+
+// RuleCombineStrategyNames lists every valid strategy's name, in
+// declaration order.
+func RuleCombineStrategyNames() []string {
+	names := make([]string, 0, len(ruleCombineStrategyNames))
+	for _, s := range RuleCombineStrategies() {
+		names = append(names, s.String())
+	}
+	return names
+}
+
 // ParseRuleCombineStrategy parses a strategy name case-insensitively.
 func ParseRuleCombineStrategy(text string) (RuleCombineStrategy, error) {
 	i, ok := ruleCombineStrategyNameToValue[strings.ToLower(text)]

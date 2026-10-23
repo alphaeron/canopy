@@ -1,12 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"strconv"
 
 	"github.com/spf13/cobra"
 
+	"github.com/alphaeron/kit/internal/rulesedit"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
@@ -21,26 +22,29 @@ var rulesAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a rule to a rules file",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s, err := openRulesSet(cmd.Context())
+		s, err := openWorkspace(cmd.Context(), nil)
 		if err != nil {
 			return err
 		}
+		if err := warnBroken(os.Stderr, s); err != nil {
+			return err
+		}
 		fileFlag, _ := cmd.Flags().GetString("file")
-		target, err := s.resolve(fileFlag)
+		target, err := resolveFile(s, fileFlag)
 		if err != nil {
 			return err
 		}
 		mode, _ := resolveOutputMode(cmd)
 
-		var fields ruleFields
+		var fields rulesfile.Rule
 		if mode == modeTUI && !cmd.Flags().Changed("pattern") {
-			seed := ruleFields{Strategy: "union"}
+			seed := newRuleSeed()
 			var choices []string
 			if target == "" {
-				if choices = s.rules.Paths(); len(choices) == 0 {
-					return errNoRulesFiles
+				if choices = s.Rules.Paths(); len(choices) == 0 {
+					return rulesedit.ErrNoRulesFiles
 				}
-				seed.RulesFile = s.nearest()
+				seed.RulesFile = nearestRulesFile(s)
 			}
 			fields, err = runRuleForm(seed, choices)
 			if err != nil {
@@ -56,59 +60,36 @@ var rulesAddCmd = &cobra.Command{
 				target = fields.RulesFile
 			}
 		} else {
-			fields, err = ruleFieldsFrom(ruleFields{Strategy: "union"}, valuesFrom(cmd, args))
+			fields, err = applyRuleFlags(newRuleSeed(), valuesFrom(cmd, args))
 			if err != nil {
 				return err
 			}
 			if target == "" {
-				if target, err = s.resolve(rulesfile.FileName); err != nil {
+				if target, err = resolveFile(s, rulesfile.FileName); err != nil {
 					return err
 				}
 			}
 		}
 
-		rule, err := buildRuleFromFields(fields)
-		if err != nil {
-			return err
-		}
-		k, err := s.mutate(target, func(k *rulesfile.File) error { return k.Add(rule) })
+		rules, err := s.Add(target, fields)
 		if err != nil {
 			return err
 		}
 		if mode == modeJSON {
-			return writeJSON(os.Stdout, k.Rules)
+			return writeJSON(os.Stdout, rules)
 		}
-		fmt.Printf("added rule %q to %s\n", rule.Pattern, target)
+		fmt.Printf("added rule %q to %s\n", fields.Pattern, target)
 		return nil
 	},
-}
-
-// approverText converts the --approver flag pairs ("target required_count",
-// repeatable) into the form text used to build the rule's approver targets.
-// An odd pair count or a non-integer count is an error, so a malformed
-// scripted invocation never reaches the file writer.
-func approverText(pairs []string) (string, error) {
-	if len(pairs)%2 != 0 {
-		return "", fmt.Errorf("--approver takes 'target required_count' pairs; got %d value(s)", len(pairs))
-	}
-	targets := make([]rulesfile.ApproverTarget, 0, len(pairs)/2)
-	for i := 0; i+1 < len(pairs); i += 2 {
-		count, err := strconv.Atoi(pairs[i+1])
-		if err != nil {
-			return "", fmt.Errorf("--approver %q: %w", pairs[i+1], err)
-		}
-		targets = append(targets, rulesfile.ApproverTarget{Target: pairs[i], RequiredCount: count})
-	}
-	return rulesfile.ApproversToText(targets), nil
 }
 
 // ruleFieldsFrom applies the rule flags set in v over seed: a flag given on
 // the command line (see valuesFrom) or in the TUI's options form always
 // wins, while an unset one leaves seed's value standing, so a single-field
 // rules edit does not zero out the other fields. init and add seed the
-// flags' defaults. Approver pairs are validated here, so a malformed value
-// fails with the precise pair error before any file is written.
-func ruleFieldsFrom(seed ruleFields, v tui.Values) (ruleFields, error) {
+// flags' defaults. The strategy and approver pairs are parsed here, so a
+// malformed value fails with a precise error before any file is written.
+func applyRuleFlags(seed rulesfile.Rule, v tui.Values) (rulesfile.Rule, error) {
 	f := seed
 	if s, ok := v.Flags["pattern"]; ok {
 		f.Pattern = s
@@ -117,11 +98,15 @@ func ruleFieldsFrom(seed ruleFields, v tui.Values) (ruleFields, error) {
 		f.Name = s
 	}
 	if s, ok := v.Flags["strategy"]; ok {
-		f.Strategy = s
+		strategy, err := rulesfile.ParseRuleCombineStrategy(s)
+		if err != nil {
+			return f, fmt.Errorf("--strategy: %w", err)
+		}
+		f.CombineStrategy = strategy
 	}
 	for name, field := range map[string]*bool{
-		"ignore-parent":    &f.Ignore,
-		"current-dir-only": &f.CurrentDirOnly,
+		"ignore-parent":    &f.IgnoreParentDirs,
+		"current-dir-only": &f.CurrentDirectoryOnly,
 		"self-approve":     &f.SelfApprove,
 	} {
 		if _, ok := v.Flags[name]; ok {
@@ -133,38 +118,50 @@ func ruleFieldsFrom(seed ruleFields, v tui.Values) (ruleFields, error) {
 		if err != nil {
 			return f, fmt.Errorf("--approver %q: %w", s, err)
 		}
-		if f.ApproverText, err = approverText(pairs); err != nil {
-			return f, err
+		targets, err := rulesedit.ParseApproverPairs(pairs)
+		if err != nil {
+			return f, fmt.Errorf("--approver: %w", err)
 		}
+		f.Approvers = targets
 	}
 	return f, nil
 }
 
-// buildRuleFromFields converts a submitted rule-field set into the rules file
-// rule it appends or replaces. Strategy name and approver text are both
-// validated before the rule is returned, so a form submit with an unparseable
-// approver line is an error rather than a rule silently losing its approvers.
-func buildRuleFromFields(f ruleFields) (rulesfile.Rule, error) {
-	var rule rulesfile.Rule
-	strategy := f.Strategy
-	if strategy == "" {
-		strategy = "union"
+func addRule(s *rulesedit.Workspace, rulesFile string, f rulesfile.Rule) (string, error) {
+	if _, err := s.Add(rulesFile, f); err != nil {
+		return "", err
 	}
-	var err error
-	rule.CombineStrategy, err = rulesfile.ParseRuleCombineStrategy(strategy)
+	return fmt.Sprintf("added rule %q to %s", f.Pattern, rulesFile), nil
+}
+
+// rulesAddRoute is `rules add`. The options form is the interactive
+// form, so --pattern is required in it; --file defaults to the
+// repository-root rules file, as in a scripted run.
+func rulesAddRoute(v tui.Values) tui.Route {
+	r := runRoute(rulesAddCmd, v, func(ctx context.Context, v tui.Values) (string, error) {
+		s, err := openWorkspace(ctx, quietLog)
+		if err != nil {
+			return "", err
+		}
+		return addFromValues(s, v)
+	})
+	return withParam(r, func(p *tui.Param) bool { return p.Name == "pattern" }, func(p *tui.Param) { p.Required = true })
+}
+
+func addFromValues(s *rulesedit.Workspace, v tui.Values) (string, error) {
+	file := v.Flag("file")
+	if file == "" {
+		file = rulesfile.FileName
+	}
+	target, err := resolveFile(s, file)
 	if err != nil {
-		return rule, err
+		return "", err
 	}
-	rule.Approvers, err = rulesfile.ParseApprovers(f.ApproverText)
+	fields, err := applyRuleFlags(newRuleSeed(), v)
 	if err != nil {
-		return rule, err
+		return "", err
 	}
-	rule.Pattern = f.Pattern
-	rule.Name = f.Name
-	rule.IgnoreParentDirs = f.Ignore
-	rule.CurrentDirectoryOnly = f.CurrentDirOnly
-	rule.SelfApprove = f.SelfApprove
-	return rule, nil
+	return addRule(s, target, fields)
 }
 
 func init() {

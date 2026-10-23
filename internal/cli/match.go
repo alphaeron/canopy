@@ -3,12 +3,18 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/kit/internal/tui"
 )
 
 // matchCmd runs the match engine's match phase over the selected file
@@ -40,19 +46,20 @@ func runMatchCmd(cmd *cobra.Command, args []string) error {
 	if mode == modeTUI {
 		return openTUI(cmd, matchRoute(valuesFrom(cmd, args)))
 	}
-	result, err := runMatch(cmd.Context(), opts)
+	result, err := runMatch(cmd.Context(), opts, nil)
 	if err != nil {
 		return err
 	}
 	if byScope {
-		return renderMatchByScope(mode, result.GroupByScope())
+		return renderMatchByScope(mode, result.GroupByRule())
 	}
 	return renderMatchByFile(mode, result, includeDiff)
 }
 
-// runMatch runs the engine's match phase against the local repository.
-func runMatch(ctx context.Context, opts review.Options) (*review.Result, error) {
-	engine, err := openEngine(nil)
+// runMatch runs the engine's match phase against the local repository. log
+// is as for openEngine.
+func runMatch(ctx context.Context, opts review.Options, log *slog.Logger) (*review.Result, error) {
+	engine, err := openEngine(log)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +85,7 @@ func renderMatchByFile(mode outputMode, result *review.Result, includeDiff bool)
 		var header = []string{"File", "Scope"}
 		rows := make([][]string, 0, len(result.Files))
 		for _, fm := range result.Files {
-			rows = append(rows, []string{fm.Path, scopeTitles(fm.Scopes)})
+			rows = append(rows, []string{fm.Path, ruleTitles(fm.Rules)})
 		}
 		if err := writeTable(os.Stdout, header, rows); err != nil {
 			return err
@@ -97,16 +104,16 @@ func renderMatchByFile(mode outputMode, result *review.Result, includeDiff bool)
 
 // renderMatchByScope renders one row per scope, then the files it matched.
 // The TUI form is matchByScopePage.
-func renderMatchByScope(mode outputMode, groups []review.ScopeGroup) error {
+func renderMatchByScope(mode outputMode, groups []approval.RuleFiles) error {
 	switch mode {
 	case modeJSON:
 		return writeJSON(os.Stdout, groups)
 	default:
-		var header = []string{"Scope", "Pattern", "Rules File", "Files"}
+		var header = []string{"Scope", "Pattern", "Rules File", "Position", "Files"}
 		rows := make([][]string, 0, len(groups))
 		for _, g := range groups {
 			files := strings.Join(g.Files, "\n")
-			rows = append(rows, []string{g.Scope.Name, g.Scope.Pattern, g.Scope.RulesFile, files})
+			rows = append(rows, []string{g.Name, g.Pattern, g.RulesFile, strconv.Itoa(g.Position), files})
 		}
 		if err := writeTable(os.Stdout, header, rows); err != nil {
 			return err
@@ -115,14 +122,14 @@ func renderMatchByScope(mode outputMode, groups []review.ScopeGroup) error {
 	return nil
 }
 
-// scopeTitles returns the scope names for a file's scope set, or "none" if
-// no scope matched.
-func scopeTitles(scopes []review.Scope) string {
-	if len(scopes) == 0 {
+// ruleTitles returns the names of the rules matching a file, or "none" if
+// no rule matched.
+func ruleTitles(rules rulesfile.Rules) string {
+	if len(rules) == 0 {
 		return "none"
 	}
 	var out []string
-	for _, s := range scopes {
+	for _, s := range rules {
 		if s.Name != "" {
 			out = append(out, s.Name)
 		}
@@ -131,6 +138,72 @@ func scopeTitles(scopes []review.Scope) string {
 		return "none"
 	}
 	return strings.Join(out, " ")
+}
+
+// matchRoute shows the match result per file, or per scope with --by-scope.
+// Each file is also evaluated for who must approve it.
+func matchRoute(v tui.Values) tui.Route {
+	return commandRoute(matchCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		result, err := runMatch(ctx, review.Options{
+			ChangedOnly: v.Bool("changed"),
+			IncludeDiff: v.Bool("diff"),
+			ScopeName:   v.Flag("scope"),
+		}, quietLog)
+		if err != nil {
+			return nil, err
+		}
+		own := ownershipOf(ctx, result.Paths())
+		if v.Bool("by-scope") {
+			return matchByScopePage(result.GroupByRule(), own), nil
+		}
+		return matchPage(result, own), nil
+	})
+}
+
+// matchPage lists files; the drill-down shows which scopes own the file
+// (name, pattern, and the rules file that declared it), who must approve it
+// and how its chain produced that, and, when the match ran with --diff, the
+// file's diff. Enter opens the file's full rule chain.
+func matchPage(result *review.Result, own ownership) tui.Page {
+	items := make([]tui.Item, 0, len(result.Files))
+	for _, fm := range result.Files {
+		var d tui.Detail
+		d.Fields = []tui.Field{{Label: "File", Value: fm.Path}, {Label: "Scopes", Value: strconv.Itoa(len(fm.Rules))}}
+		for _, r := range fm.Rules {
+			d.Sections = append(d.Sections, tui.Section{Title: "Scope " + ruleTitle(r), Lines: ruleLines(r)})
+		}
+		if fm.Diff != "" {
+			d.Tabs = append(d.Tabs, tui.Tab{Title: "Diff", Sections: []tui.Section{{Title: "Diff", Lines: strings.Split(strings.TrimRight(fm.Diff, "\n"), "\n"), Diff: true}}})
+		}
+		r := fileRulesRoute(fm.Path)
+		it := tui.Item{Title: fm.Path, Description: ruleTitles(fm.Rules), Detail: d, Route: &r}
+		own.annotate(&it, fm.Path)
+		items = append(items, it)
+	}
+	owned := result.Covered()
+	return tui.NewListPage("Files", items).
+		WithSummary(fmt.Sprintf("%d files · %d owned · %d unowned · %s", len(items), owned, len(items)-owned, own.summary()))
+}
+
+func matchByScopePage(groups []approval.RuleFiles, own ownership) tui.Page {
+	tg := make([]tui.TreeGroup, 0, len(groups))
+	for _, g := range groups {
+		files := slices.Sorted(slices.Values(g.Files))
+		items := make([]tui.Item, 0, len(files))
+		for _, f := range files {
+			r := fileRulesRoute(f)
+			it := tui.Item{
+				Title:  f,
+				Detail: tui.Detail{Fields: []tui.Field{{Label: "File", Value: f}, {Label: "Scope", Value: ruleTitle(g.Rule)}}},
+				Route:  &r,
+			}
+			own.annotate(&it, f)
+			items = append(items, it)
+		}
+		d := tui.Detail{Fields: append(ruleFieldsDetail(g.Rule), tui.Field{Label: "Files", Value: strconv.Itoa(len(files))})}
+		tg = append(tg, tui.TreeGroup{Title: ruleTitle(g.Rule), Detail: d, Items: items})
+	}
+	return tui.NewTreePage("Scopes", tg).WithSummary(countOf(len(groups), "scope") + " · " + own.summary())
 }
 
 func init() {

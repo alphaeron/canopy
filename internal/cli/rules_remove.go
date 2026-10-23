@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,13 +11,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/alphaeron/kit/internal/rulesedit"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// rulesRemoveCmd deletes one rule by its pattern. A rule is identified by
-// its pattern within its rules file; without --file the rules file is found as
-// for rules edit (see rulesSet.ruleTarget).
+// rulesRemoveCmd deletes one rule, found by its pattern as for rules edit
+// (see ruleTarget).
 var rulesRemoveCmd = &cobra.Command{
 	Use:         "remove <pattern>",
 	Short:       "Remove a rule from a rules file",
@@ -26,12 +27,14 @@ var rulesRemoveCmd = &cobra.Command{
 		pattern := args[0]
 		force, _ := cmd.Flags().GetBool("force")
 		mode, _ := resolveOutputMode(cmd)
-		s, err := openRulesSet(cmd.Context())
+		s, err := openWorkspace(cmd.Context(), nil)
 		if err != nil {
 			return err
 		}
-		fileFlag, _ := cmd.Flags().GetString("file")
-		target, err := s.ruleTarget(fileFlag, pattern, mode == modeTUI)
+		if err := warnBroken(os.Stderr, s); err != nil {
+			return err
+		}
+		target, err := ruleTarget(s, valuesFrom(cmd, args), pattern, mode == modeTUI)
 		if errors.Is(err, tui.ErrAborted) {
 			fmt.Fprintln(os.Stderr, "remove aborted")
 			return nil
@@ -46,7 +49,7 @@ var rulesRemoveCmd = &cobra.Command{
 				return nil
 			}
 		}
-		msg, err := removeRule(s, target, pattern)
+		msg, err := removeRule(s, target)
 		if err != nil {
 			return err
 		}
@@ -55,13 +58,13 @@ var rulesRemoveCmd = &cobra.Command{
 	},
 }
 
-// removeRule removes the rule keyed by pattern from rulesFile, for the CLI and
-// the TUI alike, and returns the confirmation message.
-func removeRule(s *rulesSet, rulesFile, pattern string) (string, error) {
-	if _, err := s.mutate(rulesFile, func(k *rulesfile.File) error { return k.Remove(pattern) }); err != nil {
+// removeRule removes target, for the CLI and the TUI alike, and returns the
+// confirmation message.
+func removeRule(s *rulesedit.Workspace, target rulesfile.Rule) (string, error) {
+	if err := s.Remove(target); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("removed rule %q from %s", pattern, rulesFile), nil
+	return fmt.Sprintf("removed rule %q at %s", target.Pattern, target.Location()), nil
 }
 
 // confirm prints a prompt to out when out is attached to a terminal, reads
@@ -84,8 +87,40 @@ func confirm(in io.Reader, out io.Writer) bool {
 	return answer == "y" || answer == "yes"
 }
 
+// rulesRemoveRoute is `rules remove <pattern>`, which asks before
+// removing unless --force is set.
+func rulesRemoveRoute(v tui.Values) tui.Route {
+	r := ruleRoute(rulesRemoveCmd, v, rulesRemoveRoute, func(ctx context.Context, v tui.Values) (string, error) {
+		s, err := openWorkspace(ctx, quietLog)
+		if err != nil {
+			return "", err
+		}
+		return removeFromValues(s, v)
+	})
+	r.Confirm = func(v tui.Values) string {
+		if v.Bool("force") {
+			return ""
+		}
+		return fmt.Sprintf("Remove rule %q?", strings.Join(v.Args, " "))
+	}
+	return r
+}
+
+func removeFromValues(s *rulesedit.Workspace, v tui.Values) (string, error) {
+	pattern, err := patternArg(v)
+	if err != nil {
+		return "", err
+	}
+	target, err := ruleTarget(s, v, pattern, false)
+	if err != nil {
+		return "", err
+	}
+	return removeRule(s, target)
+}
+
 func init() {
 	rulesFileFlag(rulesRemoveCmd, "the rules file holding the rule (default: the one rules file with that pattern)")
+	positionFlagFor(rulesRemoveCmd)
 	rulesRemoveCmd.Flags().Bool("force", false, "skip the interactive confirmation prompt")
 	tuiUnset(rulesRemoveCmd, "file", "the rules file declaring the pattern")
 	rulesCmd.AddCommand(rulesRemoveCmd)

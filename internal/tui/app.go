@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -21,66 +20,9 @@ import (
 	"github.com/alphaeron/kit/internal/brand"
 )
 
-// Page is one screen of the TUI. Pages are built by the constructors in this
-// package (NewListPage, NewTreePage, NewFormPage) and are driven only by
-// the app, which owns the chrome, navigation, and global keys.
-type Page interface {
-	// title is the pane title for pages not opened through a route.
-	title() string
-	// status is the page's summary for the status line.
-	status() string
-	init() tea.Cmd
-	setSize(w, h int)
-	setStyles(st *styles)
-	update(msg tea.Msg) tea.Cmd
-	view() string
-	// bindings are the page's own keys, shown in the help line.
-	bindings() []key.Binding
-	// capturing reports that the page is taking text input, so global
-	// single-key bindings must pass through to it.
-	capturing() bool
-	// cursor is the terminal cursor for the page's focused text input,
-	// relative to the page body, or nil when nothing takes text.
-	cursor() *tea.Cursor
-	// back performs a page-local "back" (clear a filter, return focus to
-	// the main pane) and reports whether it did; if not, the app pops the
-	// page.
-	back() bool
-}
-
-// Outcome is the result of an Action or a submitted form.
-type Outcome struct {
-	// Info is shown in the status line.
-	Info string
-	// Page, when non-nil, is pushed onto the navigation stack.
-	Page Page
-	// Reload re-runs the current page's route so it reflects the change.
-	Reload bool
-}
-
-// Config configures Run.
-type Config struct {
-	// Routes populate the home page and the command palette.
-	Routes []Route
-	// Start, when non-nil, is opened on top of the home page: this is how
-	// a subcommand deep-links into its own page. Back returns home.
-	Start *Route
-	// StartPage is Start's already-loaded page. Subcommands load their
-	// data before starting the TUI so load errors surface as ordinary CLI
-	// errors; when nil, Start is loaded in the background instead.
-	StartPage Page
-	// Overview, when set, describes the repository on the home page's
-	// root row. It runs off the UI loop.
-	Overview func(ctx context.Context) (Detail, error)
-
-	// previewDelay overrides how long the home page waits for the cursor
-	// to rest before previewing; tests shorten it.
-	previewDelay time.Duration
-}
-
 // Run starts the full-screen TUI and blocks until the user quits.
-func Run(ctx context.Context, cfg Config) error {
-	_, err := tea.NewProgram(newApp(ctx, cfg), tea.WithContext(ctx)).Run()
+func Run(ctx context.Context, opts Options) error {
+	_, err := tea.NewProgram(newApp(ctx, opts), tea.WithContext(ctx)).Run()
 	if err != nil {
 		return fmt.Errorf("run tui: %w", err)
 	}
@@ -186,27 +128,27 @@ type app struct {
 	pendingStart *Route
 }
 
-func newApp(ctx context.Context, cfg Config) *app {
+func newApp(ctx context.Context, opts Options) *app {
 	st := newStyles(true)
 	a := &app{
 		ctx:     ctx,
-		routes:  cfg.Routes,
+		routes:  opts.Routes,
 		st:      st,
 		help:    help.New(),
 		spinner: spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 	}
 	a.help.Styles = st.help
-	home := newHomePage(ctx, cfg.Routes, cfg.Overview)
-	if cfg.previewDelay > 0 {
-		home.delay = cfg.previewDelay
+	home := newHomePage(ctx, opts.Routes, opts.Overview)
+	if opts.previewDelay > 0 {
+		home.delay = opts.previewDelay
 	}
 	a.stack = []entry{{page: home}}
 	switch {
-	case cfg.Start != nil && cfg.StartPage != nil:
-		r := *cfg.Start
-		a.stack = append(a.stack, entry{route: &r, page: cfg.StartPage})
-	case cfg.Start != nil:
-		r := *cfg.Start
+	case opts.Start != nil && opts.StartPage != nil:
+		r := *opts.Start
+		a.stack = append(a.stack, entry{route: &r, page: opts.StartPage})
+	case opts.Start != nil:
+		r := *opts.Start
 		a.pendingStart = &r
 	}
 	for _, e := range a.stack {

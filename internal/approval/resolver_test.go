@@ -49,7 +49,7 @@ func (f *fakeResolver) Canonical(name string) string { return strings.ToLower(na
 func singleRuleChain(file string, selfApprove bool, targets ...rulesfile.ApproverTarget) RuleChain {
 	return RuleChain{FileChains: map[string][]RuleLayer{file: {{
 		DirectoryPath: "",
-		Rules:         []Rule{newRule(rulesfile.Rule{Name: "root", SelfApprove: selfApprove, Approvers: targets})},
+		Rules:         []ExecutableRule{newExecutableRule(rulesfile.Rule{Name: "root", SelfApprove: selfApprove, Approvers: targets})},
 	}}}}
 }
 
@@ -124,7 +124,7 @@ func TestUnknownTargetIsPruned(t *testing.T) {
 // many files, rules, and phases use it, so platforms need not cache.
 func TestReviewResolvesEachTargetOnce(t *testing.T) {
 	resolver := &fakeResolver{groups: map[string][]string{"org/team": {"bo"}}}
-	rule := []Rule{newRule(rulesfile.Rule{Name: "root", Approvers: []rulesfile.ApproverTarget{approver("org/team", 1)}})}
+	rule := []ExecutableRule{newExecutableRule(rulesfile.Rule{Name: "root", Approvers: []rulesfile.ApproverTarget{approver("org/team", 1)}})}
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
 		"/a.go": {{Rules: rule}},
 		"/b.go": {{Rules: rule}},

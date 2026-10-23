@@ -1,13 +1,17 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
+	"github.com/alphaeron/kit/internal/rulesedit"
 	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/kit/internal/tui"
 )
 
 // initCmd scaffolds a new rules file. It accepts an optional [path], where an
@@ -25,94 +29,85 @@ var initCmd = &cobra.Command{
 		if len(args) > 0 {
 			arg = args[0]
 		}
-		path := initPath(arg)
+		path := rulesedit.PathFor(arg)
 		force, _ := cmd.Flags().GetBool("force")
-		if err := checkInitTarget(path, force); err != nil {
-			return err
+		if err := rulesedit.CheckCreate(path, force); err != nil {
+			return forceHint(err)
 		}
 		pattern, _ := cmd.Flags().GetString("pattern")
 		mode, _ := resolveOutputMode(cmd)
 
-		var fields ruleFields
+		var fields rulesfile.Rule
 		var err error
 		if pattern == "" && mode == modeTUI {
-			fields, err = runRuleForm(ruleFields{Strategy: "union"}, nil)
+			fields, err = runRuleForm(newRuleSeed(), nil)
 			if err != nil {
 				return fmt.Errorf("run form: %w", err)
 			}
-		} else if fields, err = ruleFieldsFrom(ruleFields{Strategy: "union"}, valuesFrom(cmd, args)); err != nil {
+		} else if fields, err = applyRuleFlags(newRuleSeed(), valuesFrom(cmd, args)); err != nil {
 			return err
 		}
 
-		k, err := writeRulesFile(path, force, fields)
+		rules, err := createRulesFile(path, force, fields)
 		if err != nil {
 			return err
 		}
 		if mode == modeJSON {
-			return writeJSON(os.Stdout, k.Rules)
+			return writeJSON(os.Stdout, rules)
 		}
-		fmt.Println(initMessage(path, k))
+		fmt.Println(initMessage(path, rules))
 		return nil
 	},
 }
 
-// initPath is the rules file `init [path]` writes: FileName in the current
-// directory when arg is empty, FileName inside arg when it is a directory,
-// and arg itself otherwise.
-func initPath(arg string) string {
-	switch {
-	case arg == "":
-		return rulesfile.FileName
-	case isDir(arg):
-		return filepath.Join(arg, rulesfile.FileName)
-	}
-	return arg
-}
-
-// checkInitTarget refuses to overwrite an existing rules file without force.
-func checkInitTarget(path string, force bool) error {
-	if _, err := os.Stat(path); err == nil && !force {
-		return fmt.Errorf("rules file %q already exists; pass --force to overwrite", path)
-	}
-	return nil
-}
-
-// writeRulesFile writes a new rules file at path holding the rule fields
-// describe, or no rule when they have no pattern. The CLI and the TUI both
-// create rules files through it.
-func writeRulesFile(path string, force bool, fields ruleFields) (*rulesfile.File, error) {
-	if err := checkInitTarget(path, force); err != nil {
-		return nil, err
-	}
-	k := &rulesfile.File{Path: path}
+// createRulesFile writes the rules file `init` creates (see
+// rulesedit.Create): with the rule fields describe, or empty when they have
+// no pattern. The CLI and the TUI both create rules files through it.
+func createRulesFile(path string, force bool, fields rulesfile.Rule) (rulesfile.Rules, error) {
+	var rules []rulesfile.Rule
 	if fields.Pattern != "" {
-		rule, err := buildRuleFromFields(fields)
-		if err != nil {
-			return nil, err
-		}
-		if err := k.Add(rule); err != nil {
-			return nil, err
-		}
+		rules = append(rules, fields)
 	}
-	if err := k.Save(path); err != nil {
-		return nil, fmt.Errorf("write %s: %w", path, err)
-	}
-	return k, nil
+	written, err := rulesedit.Create(path, force, rules...)
+	return written, forceHint(err)
 }
 
-// initMessage confirms what writeRulesFile wrote.
-func initMessage(path string, k *rulesfile.File) string {
-	if len(k.Rules) > 0 {
-		return fmt.Sprintf("initialized %s with rule %q", path, k.Rules[0].Pattern)
+// forceHint tells the user how to overwrite an existing rules file.
+func forceHint(err error) error {
+	if errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("%w; pass --force to overwrite", err)
+	}
+	return err
+}
+
+// initMessage confirms what createRulesFile wrote.
+func initMessage(path string, rules rulesfile.Rules) string {
+	if len(rules) > 0 {
+		return fmt.Sprintf("initialized %s with rule %q", path, rules[0].Pattern)
 	}
 	return "initialized empty rules file at " + path
 }
 
-// isDir reports whether the path is a directory; os.Stat errors are treated
-// as "not-a-directory" so the caller falls through to the plain-file path.
-func isDir(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && info.IsDir()
+// initRoute is `init [path]`.
+func initRoute(v tui.Values) tui.Route {
+	return runRoute(initCmd, v, func(_ context.Context, v tui.Values) (string, error) { return initFromValues(v) })
+}
+
+func initFromValues(v tui.Values) (string, error) {
+	var arg string
+	if len(v.Args) > 0 {
+		arg = v.Args[0]
+	}
+	fields, err := applyRuleFlags(newRuleSeed(), v)
+	if err != nil {
+		return "", err
+	}
+	path := rulesedit.PathFor(arg)
+	rules, err := createRulesFile(path, v.Bool("force"), fields)
+	if err != nil {
+		return "", err
+	}
+	return initMessage(path, rules), nil
 }
 
 func init() {

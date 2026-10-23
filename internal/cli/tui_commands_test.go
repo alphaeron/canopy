@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/kit/internal/rulesedit"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
@@ -159,33 +160,57 @@ func TestValuesFromRepeatedFlag(t *testing.T) {
 }
 
 func TestRuleFieldsFrom(t *testing.T) {
-	seed := ruleFields{Pattern: "p", Name: "core", Strategy: "override", SelfApprove: true, ApproverText: "org/sec\t1"}
+	sec := rulesfile.ApproverTargets{{Target: "org/sec", RequiredCount: 1}}
+	seed := rulesfile.Rule{Pattern: "p", Name: "core", CombineStrategy: rulesfile.RuleCombineStrategyOverride, SelfApprove: true, Approvers: sec}
 	tests := []struct {
 		name  string
 		flags map[string]string
-		want  ruleFields
+		want  rulesfile.Rule
 	}{
 		{"unset flags keep the seed", nil, seed},
 		{"set flags win", map[string]string{"name": "x", "strategy": "union", "self-approve": "false", "ignore-parent": "true"},
-			ruleFields{Pattern: "p", Name: "x", Strategy: "union", Ignore: true, ApproverText: "org/sec\t1"}},
+			rulesfile.Rule{Pattern: "p", Name: "x", CombineStrategy: rulesfile.RuleCombineStrategyUnion, IgnoreParentDirs: true, Approvers: sec}},
 		{"approvers are replaced", map[string]string{"approver": "lead,2"},
-			func() ruleFields { f := seed; f.ApproverText = "lead\t2"; return f }()},
+			func() rulesfile.Rule {
+				f := seed
+				f.Approvers = rulesfile.ApproverTargets{{Target: "lead", RequiredCount: 2}}
+				return f
+			}()},
 	}
 	for _, tc := range tests {
-		got, err := ruleFieldsFrom(seed, tui.Values{Flags: tc.flags})
-		if err != nil || got != tc.want {
+		got, err := applyRuleFlags(seed, tui.Values{Flags: tc.flags})
+		if err != nil || !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: got %+v, %v; want %+v", tc.name, got, err, tc.want)
 		}
 	}
-	if _, err := ruleFieldsFrom(seed, tui.Values{Flags: map[string]string{"approver": "lead"}}); err == nil {
-		t.Error("an odd approver list must be rejected")
+	for _, flags := range []map[string]string{{"approver": "lead"}, {"strategy": "bogus"}} {
+		if _, err := applyRuleFlags(seed, tui.Values{Flags: flags}); err == nil {
+			t.Errorf("%v must be rejected", flags)
+		}
+	}
+}
+
+// TestRuleFieldsOf pins the edit seed: re-saving a rule keeps it, with an
+// omitted strategy made explicit as the override it behaves as.
+func TestRuleFieldsOf(t *testing.T) {
+	for strategy, want := range map[rulesfile.RuleCombineStrategy]rulesfile.RuleCombineStrategy{
+		rulesfile.RuleCombineStrategyUnion:     rulesfile.RuleCombineStrategyUnion,
+		rulesfile.RuleCombineStrategyIntersect: rulesfile.RuleCombineStrategyIntersect,
+		0:                                      rulesfile.RuleCombineStrategyOverride,
+	} {
+		r := rulesfile.Rule{Pattern: `.*\.go`, Name: "core", CombineStrategy: strategy}
+		f := editSeed(r)
+		r.CombineStrategy = want
+		if !reflect.DeepEqual(f, r) {
+			t.Errorf("editSeed(%v) = %+v, want %+v", strategy, f, r)
+		}
 	}
 }
 
 // TestRuleCommandsFromValues runs rules add, edit, and remove as the TUI
 // does, with the CLI's semantics.
 func TestRuleCommandsFromValues(t *testing.T) {
-	s := newTestRulesSet(t, map[string]rulesfile.Rules{rulesfile.FileName: {}, rulesfile.PathInDir("svc"): {}})
+	s := newTestWorkspace(t, map[string]rulesfile.Rules{rulesfile.FileName: {}, rulesfile.PathInDir("svc"): {}})
 	flags := func(kv ...string) map[string]string {
 		m := map[string]string{}
 		for i := 0; i+1 < len(kv); i += 2 {
@@ -203,9 +228,9 @@ func TestRuleCommandsFromValues(t *testing.T) {
 	if _, err := addFromValues(s, tui.Values{Flags: flags("pattern", `.*\.go`, "name", "svc", "self-approve", "true", "file", "svc")}); err != nil {
 		t.Fatalf("add --file: %v", err)
 	}
-	s.rules[rulesfile.FileName], s.rules[rulesfile.PathInDir("svc")] = loadRules(t, s, rulesfile.FileName), loadRules(t, s, rulesfile.PathInDir("svc"))
+	reloadRules(t, s)
 
-	if _, err := editFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("self-approve", "false")}); err == nil || !strings.Contains(err.Error(), "pass --file") {
+	if _, err := editFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("self-approve", "false")}); err == nil || !strings.Contains(err.Error(), "pass --file and --position") {
 		t.Errorf("an ambiguous edit must ask for --file, got %v", err)
 	}
 	if _, err := editFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("file", rulesfile.PathInDir("svc"), "self-approve", "false")}); err != nil {
@@ -214,17 +239,19 @@ func TestRuleCommandsFromValues(t *testing.T) {
 	if got := loadRules(t, s, rulesfile.PathInDir("svc")); got[0].SelfApprove || got[0].Name != "svc" {
 		t.Errorf("edit must set only the given flags: %+v", got[0])
 	}
+	reloadRules(t, s)
 	if _, err := editFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("file", rulesfile.PathInDir("svc"), "name", "", "approver", "")}); err != nil {
 		t.Fatalf("edit --name '' --approver '': %v", err)
 	}
 	if got := loadRules(t, s, rulesfile.PathInDir("svc")); got[0].Name != "" || len(got[0].Approvers) != 0 || got[0].CombineStrategy.String() != "union" {
 		t.Errorf("empty --name and --approver must clear only those fields: %+v", got[0])
 	}
+	reloadRules(t, s)
 	if _, err := editFromValues(s, tui.Values{}); err == nil {
 		t.Error("edit without a pattern must fail")
 	}
 
-	if _, err := removeFromValues(s, tui.Values{Args: []string{"nope"}}); !errors.Is(err, rulesfile.ErrPatternNotFound) {
+	if _, err := removeFromValues(s, tui.Values{Args: []string{"nope"}}); !errors.Is(err, rulesedit.ErrRuleNotFound) {
 		t.Errorf("removing an unknown pattern = %v", err)
 	}
 	if _, err := removeFromValues(s, tui.Values{Args: []string{`.*\.go`}, Flags: flags("file", rulesfile.FileName)}); err != nil {
@@ -252,8 +279,8 @@ func TestInitFromValues(t *testing.T) {
 	if _, err := initFromValues(v); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	k, err := rulesfile.Load(filepath.Join("svc", rulesfile.FileName))
-	if err != nil || len(k.Rules) != 1 || k.Rules[0].Name != "svc" || k.Rules[0].Approvers[0].Target != "lead" {
+	k, err := rulesedit.Load(filepath.Join("svc", rulesfile.FileName))
+	if err != nil || len(k) != 1 || k[0].Name != "svc" || k[0].Approvers[0].Target != "lead" {
 		t.Fatalf("init into a directory must write its rules file with the rule: %+v, %v", k, err)
 	}
 	if _, err := initFromValues(v); err == nil || !strings.Contains(err.Error(), "--force") {

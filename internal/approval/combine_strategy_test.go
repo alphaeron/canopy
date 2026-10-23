@@ -7,15 +7,15 @@ import (
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-func targetSet(names ...string) RuleTargets {
-	targets := make(RuleTargets, 0, len(names))
+func targetSet(names ...string) ExecutableTargets {
+	targets := make(ExecutableTargets, 0, len(names))
 	for _, n := range names {
-		targets = append(targets, RuleTarget{ApproverTarget: approver(n, 1), SelfApprove: true})
+		targets = append(targets, ExecutableTarget{ApproverTarget: approver(n, 1), SelfApprove: true})
 	}
 	return targets
 }
 
-func targetNames(targets RuleTargets) []string {
+func targetNames(targets ExecutableTargets) []string {
 	names := make([]string, 0, len(targets))
 	for _, t := range targets {
 		names = append(names, t.Target)
@@ -40,7 +40,7 @@ func TestUnionCombinePreservesOccurrencesAndBackingArray(t *testing.T) {
 	// The result carries its own backing array: appending after the combine
 	// must not mutate the accumulated footprint.
 	// Appending after the combine must not mutate the footprint.
-	_ = append(result, RuleTarget{})
+	_ = append(result, ExecutableTarget{})
 	if len(current) != 2 {
 		t.Errorf("union must not write into the current backing array, current grew to %d", len(current))
 	}
@@ -78,5 +78,24 @@ func TestNewCombineStrategyMapsConfigValues(t *testing.T) {
 	case IntersectCombineStrategy:
 	default:
 		t.Errorf("intersect config value should adapt to IntersectCombineStrategy")
+	}
+}
+
+func TestCombineStrategyEffect(t *testing.T) {
+	tests := []struct {
+		s     rulesfile.RuleCombineStrategy
+		first bool
+		want  string
+	}{
+		{rulesfile.RuleCombineStrategyIntersect, true, "establishes the required approvers"},
+		{rulesfile.RuleCombineStrategyUnion, false, "adds its approvers to those required above"},
+		{rulesfile.RuleCombineStrategyIntersect, false, "keeps only approvers also required above"},
+		{rulesfile.RuleCombineStrategyOverride, false, "replaces the approvers required above"},
+		{rulesfile.RuleCombineStrategy(0), false, "replaces the approvers required above"},
+	}
+	for _, tc := range tests {
+		if got := CombineStrategyEffect(tc.s, tc.first); got != tc.want {
+			t.Errorf("CombineStrategyEffect(%v, %v) = %q, want %q", tc.s, tc.first, got, tc.want)
+		}
 	}
 }

@@ -31,7 +31,7 @@ func tabbedPage(target *Route) func() Page {
 func startOn(t *testing.T, page func() Page, w, h int) *harness {
 	t.Helper()
 	r := staticRoute("files", page)
-	hs := newHarness(t, Config{Routes: []Route{r}, Start: &r, StartPage: page()})
+	hs := newHarness(t, Options{Routes: []Route{r}, Start: &r, StartPage: page()})
 	hs.send(tea.WindowSizeMsg{Width: w, Height: h})
 	return hs
 }

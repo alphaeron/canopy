@@ -1,13 +1,19 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
+	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/kit/internal/rulesedit"
 	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/kit/internal/tui"
 )
 
 // rulesListCmd lists the rules of every rules file in the repository, or of
@@ -29,22 +35,25 @@ func runRulesList(cmd *cobra.Command, args []string) error {
 		return openTUI(cmd, rulesListRoute(valuesFrom(cmd, args)))
 	}
 	filePath, _ := cmd.Flags().GetString("file")
-	s, err := openRulesSet(cmd.Context())
+	s, err := openWorkspace(cmd.Context(), nil)
 	if err != nil {
 		return err
 	}
-	only, err := s.resolve(filePath)
+	if err := warnBroken(os.Stderr, s); err != nil {
+		return err
+	}
+	only, err := resolveFile(s, filePath)
 	if err != nil {
 		return err
 	}
-	entries := s.entries(only)
+	entries := s.Entries(only)
 	if mode == modeJSON {
 		return writeJSON(os.Stdout, rulesJSON(entries))
 	}
-	if err := writeTable(os.Stdout, []string{"Rules File", "Pattern", "Name", "Strategy", "Approvers"}, ruleRows(entries)); err != nil {
+	if err := writeTable(os.Stdout, []string{"Rules File", "Position", "Pattern", "Name", "Strategy", "Approvers"}, ruleRows(entries)); err != nil {
 		return err
 	}
-	return narrowedNotice(os.Stderr, only, len(s.rules))
+	return narrowedNotice(os.Stderr, only, len(s.Rules))
 }
 
 // narrowedNotice tells the user, on stderr so stdout stays parseable, that
@@ -57,55 +66,28 @@ func narrowedNotice(w io.Writer, only string, total int) error {
 	return err
 }
 
-// ruleJSON is a rule in the rules list JSON: the rules file fields under
-// their rules file (YAML) names, plus the rules file that declares it.
-type ruleJSON struct {
-	RulesFile            string         `json:"rules_file"`
-	Pattern              string         `json:"pattern"`
-	Name                 string         `json:"name,omitempty"`
-	CombineStrategy      string         `json:"combine_strategy,omitempty"`
-	IgnoreParentDirs     bool           `json:"ignore_parent_dirs"`
-	CurrentDirectoryOnly bool           `json:"current_directory_only"`
-	SelfApprove          bool           `json:"self_approve"`
-	Approvers            []approverJSON `json:"approvers"`
-}
-
-type approverJSON struct {
-	Target        string `json:"target"`
-	RequiredCount int    `json:"required_count"`
-}
-
-// rulesJSON converts entries to the JSON list; it is never null.
-func rulesJSON(entries []rulesfile.DeclaredRule) []ruleJSON {
-	out := make([]ruleJSON, 0, len(entries))
-	for _, e := range entries {
-		approvers := make([]approverJSON, 0, len(e.Rule.Approvers))
-		for _, a := range e.Rule.Approvers {
-			approvers = append(approvers, approverJSON{Target: a.Target, RequiredCount: a.RequiredCount})
+// rulesJSON is rules as the rules list JSON: never null, and neither is a
+// rule's approver list.
+func rulesJSON(rules rulesfile.Rules) rulesfile.Rules {
+	out := make(rulesfile.Rules, 0, len(rules))
+	for _, r := range rules {
+		if r.Approvers == nil {
+			r.Approvers = rulesfile.ApproverTargets{}
 		}
-		out = append(out, ruleJSON{
-			RulesFile:            e.RulesFile,
-			Pattern:              e.Rule.Pattern,
-			Name:                 e.Rule.Name,
-			CombineStrategy:      strategyName(e.Rule),
-			IgnoreParentDirs:     e.Rule.IgnoreParentDirs,
-			CurrentDirectoryOnly: e.Rule.CurrentDirectoryOnly,
-			SelfApprove:          e.Rule.SelfApprove,
-			Approvers:            approvers,
-		})
+		out = append(out, r)
 	}
 	return out
 }
 
 // ruleRows are the table rows for entries.
-func ruleRows(entries []rulesfile.DeclaredRule) [][]string {
-	rows := make([][]string, 0, len(entries))
-	for _, e := range entries {
-		strategy := strategyName(e.Rule)
+func ruleRows(rules rulesfile.Rules) [][]string {
+	rows := make([][]string, 0, len(rules))
+	for _, r := range rules {
+		strategy := strategyName(r)
 		if strategy == "" {
 			strategy = "(default)"
 		}
-		rows = append(rows, []string{e.RulesFile, e.Rule.Pattern, e.Rule.Name, strategy, approversLabel(e.Rule.Approvers)})
+		rows = append(rows, []string{r.RulesFile, strconv.Itoa(r.Position), r.Pattern, r.Name, strategy, approversLabel(r.Approvers)})
 	}
 	return rows
 }
@@ -113,10 +95,188 @@ func ruleRows(entries []rulesfile.DeclaredRule) [][]string {
 // strategyName is the rule's combine_strategy as written in the rules file,
 // or "" when it is omitted (the approval package then applies its default).
 func strategyName(r rulesfile.Rule) string {
-	if _, err := rulesfile.ParseRuleCombineStrategy(r.CombineStrategy.String()); err != nil {
+	if !r.CombineStrategy.IsValid() {
 		return ""
 	}
 	return r.CombineStrategy.String()
+}
+
+// rulesListRoute lists the rules of every rules file, or of the one --file
+// names, with add, edit, and remove.
+func rulesListRoute(v tui.Values) tui.Route {
+	return commandRoute(rulesListCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		// The rules and the match share one read of the repository.
+		repo, engine, err := openLocal(quietLog)
+		if err != nil {
+			return nil, err
+		}
+		s, err := loadWorkspace(ctx, repo, engine)
+		if err != nil {
+			return nil, err
+		}
+		only, err := resolveFile(s, v.Flag("file"))
+		if err != nil {
+			return nil, err
+		}
+		match, err := matchWith(ctx, engine, review.Options{})
+		return rulesPage(s, only, newRuleMatches(match, err)), nil
+	})
+}
+
+// ruleMatches is one match over the repository, from which the rules page
+// shows each rule's reach and its overlaps; err is why it is unavailable.
+type ruleMatches struct {
+	match *review.Result
+	err   error
+}
+
+func newRuleMatches(match *review.Result, err error) ruleMatches {
+	return ruleMatches{match: match, err: err}
+}
+
+// files are the files the rule with key matched.
+func (m ruleMatches) files(key rulesfile.RuleKey) []string {
+	return m.match.FilesOf(key)
+}
+
+// overlaps are the other rules matching any of the rule's files, with how
+// many files each shares, ordered by that count.
+func (m ruleMatches) overlaps(key rulesfile.RuleKey) []tui.Row {
+	overlaps := m.match.Overlaps(key)
+	rows := make([]tui.Row, 0, len(overlaps))
+	for _, o := range overlaps {
+		r := rulesGetRoute(tui.Values{Args: []string{o.Pattern}})
+		rows = append(rows, tui.Row{Text: ruleLabel(o.Name, o.Pattern) + " in " + o.Location(), Note: countOf(o.Shared, "shared file"), Route: &r})
+	}
+	return rows
+}
+
+// rulesPage lists the rules of every rules file, or only only's. The status
+// line says when other rules files are hidden and how to see them.
+func rulesPage(s *rulesedit.Workspace, only string, matches ruleMatches) tui.Page {
+	entries := s.Entries(only)
+	items := make([]tui.Item, len(entries))
+	for i, e := range entries {
+		items[i] = ruleItem(e, matches)
+	}
+	title, summary := "Rules", countOf(len(entries), "rule")+" in "+countOf(len(s.Rules), "rules file")
+	if only != "" {
+		title += " · " + only
+		summary = fmt.Sprintf("%s · showing %s, 1 of %s · o to change", countOf(len(entries), "rule"), only, countOf(len(s.Rules), "rules file"))
+	}
+	summary = joinNotes(summary, brokenNote(s))
+	if matches.err != nil {
+		summary += " · file matches unavailable: " + matches.err.Error()
+	}
+	return tui.NewListPage(title, items).WithSummary(summary).WithActions(ruleActions(s)...)
+}
+
+// ruleItem is a rule row: the detail shows the full rule, what its
+// strategy does, how many files it matches, and the other rules matching
+// the same files, with the files themselves in a tab. Enter drills into
+// `rules get <pattern>`, the files the pattern matches and their rule
+// chains.
+func ruleItem(rule rulesfile.Rule, matches ruleMatches) tui.Item {
+	route := rulesGetRoute(tui.Values{Args: []string{rule.Pattern}})
+	fields := append(ruleFieldsDetail(rule),
+		tui.Field{Label: "Effect", Value: approval.CombineStrategyEffect(rule.CombineStrategy, false)},
+	)
+	desc := orNone(rule.Name) + " · " + rule.Location()
+	d := tui.Detail{Fields: fields}
+	if matches.err == nil {
+		files := matches.files(rule.Key())
+		d.Fields = append(d.Fields, tui.Field{Label: "Matches", Value: countOf(len(files), "file")})
+		d.Sections = []tui.Section{{Title: "Overlaps · rules matching the same files", Rows: matches.overlaps(rule.Key())}}
+		d.Tabs = []tui.Tab{{Title: "Files", Sections: []tui.Section{fileLinks("Files", files)}}}
+		desc += " · " + countOf(len(files), "file")
+	}
+	return tui.Item{Title: rule.Pattern, Description: desc, Detail: d, Route: &route, Value: rule}
+}
+
+// ruleFieldsDetail is r's definition as detail fields, with the rules file
+// declaring it.
+func ruleFieldsDetail(r rulesfile.Rule) []tui.Field {
+	strategy := strategyName(r)
+	if strategy == "" {
+		strategy = "(default)"
+	}
+	return []tui.Field{
+		{Label: "Pattern", Value: r.Pattern},
+		{Label: "Name", Value: r.Name},
+		{Label: "rules file", Value: r.RulesFile},
+		{Label: "Position", Value: strconv.Itoa(r.Position)},
+		{Label: "Strategy", Value: strategy},
+		{Label: "Ignore parent", Value: strconv.FormatBool(r.IgnoreParentDirs)},
+		{Label: "Current dir only", Value: strconv.FormatBool(r.CurrentDirectoryOnly)},
+		{Label: "Self approve", Value: strconv.FormatBool(r.SelfApprove)},
+		{Label: "Approvers", Value: approversLabel(r.Approvers)},
+	}
+}
+
+// ruleActions are the TUI forms of rules add, edit, and remove. Each row
+// knows its rules file, so edit and remove are never ambiguous; add offers
+// every rules file, preselecting the hovered row's, as `rules add` does
+// on a terminal.
+func ruleActions(s *rulesedit.Workspace) []tui.Action {
+	return []tui.Action{
+		{
+			Key: "a", Help: "add rule",
+			Run: func(ctx context.Context, it tui.Item) (tui.Outcome, error) {
+				choices := s.Rules.Paths()
+				if len(choices) == 0 {
+					return tui.Outcome{}, rulesedit.ErrNoRulesFiles
+				}
+				seed := newRuleSeed()
+				seed.RulesFile = nearestRulesFile(s)
+				if e, err := ruleOf(it); err == nil {
+					seed.RulesFile = e.RulesFile
+				}
+				page := newRuleFormPage("add rule", seed, choices, func(ctx context.Context, f rulesfile.Rule) (string, error) {
+					return addRule(s, f.RulesFile, f)
+				})
+				return tui.Outcome{Page: page}, nil
+			},
+		},
+		{
+			Key: "e", Help: "edit rule", RequiresItem: true,
+			Run: func(ctx context.Context, it tui.Item) (tui.Outcome, error) {
+				e, err := ruleOf(it)
+				if err != nil {
+					return tui.Outcome{}, err
+				}
+				page := newRuleFormPage("edit rule", editSeed(e), nil, func(ctx context.Context, f rulesfile.Rule) (string, error) {
+					return editRule(s, e, f)
+				})
+				return tui.Outcome{Page: page}, nil
+			},
+		},
+		{
+			Key: "x", Help: "remove rule", RequiresItem: true,
+			Confirm: func(it tui.Item) string {
+				if e, err := ruleOf(it); err == nil {
+					return fmt.Sprintf("Remove rule %q at %s?", e.Pattern, e.Location())
+				}
+				return fmt.Sprintf("Remove rule %q?", it.Title)
+			},
+			Run: func(ctx context.Context, it tui.Item) (tui.Outcome, error) {
+				e, err := ruleOf(it)
+				if err != nil {
+					return tui.Outcome{}, err
+				}
+				info, err := removeRule(s, e)
+				return tui.Outcome{Info: info, Reload: true}, err
+			},
+		},
+	}
+}
+
+// ruleOf recovers the rule a rules-page row was built from (see ruleItem).
+func ruleOf(it tui.Item) (rulesfile.Rule, error) {
+	r, ok := it.Value.(rulesfile.Rule)
+	if !ok {
+		return rulesfile.Rule{}, fmt.Errorf("row %q does not hold a rule", it.Title)
+	}
+	return r, nil
 }
 
 func init() {

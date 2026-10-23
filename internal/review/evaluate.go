@@ -1,4 +1,4 @@
-package server
+package review
 
 import (
 	"context"
@@ -12,21 +12,20 @@ import (
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/parallel"
-	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// evaluate reviews pr: it lists the changed files, validates the rules
+// Evaluate reviews pr: it lists the changed files, validates the rules
 // files among them as pr proposes them, and runs the review over the changed
 // files with the platform's review input. An invalid proposed rules file is
 // Failed; anything that keeps the review from running is Errored, with its
-// cause logged, never published. The pull request's warnings (see
-// PullRequest.Warnings) are added to whatever the outcome, and logged.
+// cause logged, never in the outcome. The change's warnings (see
+// Change.Warnings) are added to whatever the outcome, and logged.
 //
 // The changed files, the review input, and the rules are independent, so
 // they are read concurrently; the review then reuses the rules fetch (see
-// PullRequest).
-func evaluate(ctx context.Context, pr PullRequest, log *slog.Logger) review.Outcome {
+// Change).
+func Evaluate(ctx context.Context, pr Change, log *slog.Logger) Outcome {
 	o := outcome(ctx, pr, log)
 	o.Warnings = pr.Warnings()
 	for _, w := range o.Warnings {
@@ -35,11 +34,11 @@ func evaluate(ctx context.Context, pr PullRequest, log *slog.Logger) review.Outc
 	return o
 }
 
-// outcome is evaluate's outcome before the pull request's warnings.
-func outcome(ctx context.Context, pr PullRequest, log *slog.Logger) review.Outcome {
-	fail := func(step string, err error) review.Outcome {
+// outcome is Evaluate's outcome before the change's warnings.
+func outcome(ctx context.Context, pr Change, log *slog.Logger) Outcome {
+	fail := func(step string, err error) Outcome {
 		log.Error("review failed", "step", step, "error", err)
-		return review.Outcome{Verdict: review.Errored, Summary: errorSummary(ctx, err)}
+		return Outcome{Verdict: Errored, Summary: failureSummary(ctx, err)}
 	}
 
 	var (
@@ -80,7 +79,7 @@ func outcome(ctx context.Context, pr PullRequest, log *slog.Logger) review.Outco
 	if inErr != nil {
 		return fail("review input", inErr)
 	}
-	state := review.New(pr, log).Review(ctx, files, in)
+	state := New(pr, log).Review(ctx, files, in)
 	if ctx.Err() != nil {
 		return fail("review", ctx.Err())
 	}
@@ -92,9 +91,9 @@ func outcome(ctx context.Context, pr PullRequest, log *slog.Logger) review.Outco
 		if len(violations) == 1 {
 			summary = "1 invalid proposed rules file"
 		}
-		return review.Outcome{Verdict: review.Failed, Summary: summary, Items: slices.Sorted(maps.Keys(violations))}
+		return Outcome{Verdict: Failed, Summary: summary, Items: slices.Sorted(maps.Keys(violations))}
 	}
-	return review.OutcomeOf(state)
+	return OutcomeOf(state)
 }
 
 // validateProposed validates the pending rules files as pr proposes them,
@@ -108,7 +107,7 @@ func outcome(ctx context.Context, pr PullRequest, log *slog.Logger) review.Outco
 // The rules a review enforces come from the base revision, so this is what
 // keeps a pull request from merging a rules file that only fails once it
 // takes effect.
-func validateProposed(ctx context.Context, pr PullRequest, pending []string) (map[string][]error, error) {
+func validateProposed(ctx context.Context, pr Change, pending []string) (map[string][]error, error) {
 	// Each read is a round trip, so read the files concurrently, then
 	// handle them in order.
 	heads := make([]struct {
@@ -147,10 +146,10 @@ func validateProposed(ctx context.Context, pr PullRequest, pending []string) (ma
 	return out, nil
 }
 
-// errorSummary names why a review errored, without quoting the error,
-// which may carry platform API details.
-func errorSummary(ctx context.Context, err error) string {
-	if s := review.LimitSummary(err); s != "" {
+// failureSummary names why a review could not run, without quoting the
+// error, which may carry platform API details.
+func failureSummary(ctx context.Context, err error) string {
+	if s := LimitSummary(err); s != "" {
 		return s
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {

@@ -30,7 +30,7 @@ func homeRoutes(loads *int) []Route {
 // detail listing its subcommands as links.
 func TestHomeTree(t *testing.T) {
 	loads := 0
-	h := newHarness(t, Config{Routes: homeRoutes(&loads)})
+	h := newHarness(t, Options{Routes: homeRoutes(&loads)})
 	s := h.screen()
 	at := func(label string) int { return strings.Index(s, "──"+label) }
 	m, r, l, hp := at("match"), at("▼ rules"), at("list"), at("help")
@@ -53,7 +53,7 @@ func TestHomeTree(t *testing.T) {
 // TestHomeLeafOpens: enter on a command without subcommands opens it.
 func TestHomeLeafOpens(t *testing.T) {
 	loads := 0
-	h := newHarness(t, Config{Routes: homeRoutes(&loads)})
+	h := newHarness(t, Options{Routes: homeRoutes(&loads)})
 	h.press("enter")
 	if got := h.crumbs(); !strings.Contains(got, brand.Command+" › match") {
 		t.Fatalf("enter must open the hovered command, header %q", got)
@@ -65,7 +65,7 @@ func TestHomeLeafOpens(t *testing.T) {
 // home loads it afresh because the command may show something else now.
 func TestHomePreview(t *testing.T) {
 	loads := 0
-	h := newHarness(t, Config{Routes: homeRoutes(&loads)})
+	h := newHarness(t, Options{Routes: homeRoutes(&loads)})
 	if loads != 1 {
 		t.Fatalf("the hovered command must be previewed once, loads=%d", loads)
 	}
@@ -93,7 +93,7 @@ func TestHomePreview(t *testing.T) {
 func TestHomeDeepLinkDoesNotPreview(t *testing.T) {
 	loads := 0
 	routes := homeRoutes(&loads)
-	h := newHarness(t, Config{Routes: routes, Start: &routes[2], StartPage: filesPage()})
+	h := newHarness(t, Options{Routes: routes, Start: &routes[2], StartPage: filesPage()})
 	h.press("down", "down")
 	if loads != 0 {
 		t.Errorf("home must not preview while hidden, loads=%d", loads)
@@ -106,7 +106,7 @@ func TestHomeOverview(t *testing.T) {
 	overview := func(context.Context) (Detail, error) {
 		return Detail{Fields: []Field{{Label: "HEAD", Value: "main @ abc1234"}}}, nil
 	}
-	h := newHarness(t, Config{Routes: homeRoutes(&loads), Overview: overview})
+	h := newHarness(t, Options{Routes: homeRoutes(&loads), Overview: overview})
 	h.press("up")
 	if s := h.screen(); !strings.Contains(s, "main @ abc1234") || !strings.Contains(s, "5 commands") {
 		t.Fatalf("the root row must show the overview:\n%s", s)

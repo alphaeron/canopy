@@ -37,7 +37,7 @@ func TestUntrustedTextNeverReachesTerminal(t *testing.T) {
 		Detail: Detail{Sections: []Section{{Title: "Diff", Lines: []string{"+" + evil}, Diff: true}}},
 	}
 	r := staticRoute(evil, func() Page { return NewListPage(evil, []Item{item}) })
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r, StartPage: NewListPage(evil, []Item{item})})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r, StartPage: NewListPage(evil, []Item{item})})
 	out := h.a.View().Content
 	if strings.Contains(out, "\x1b]") || strings.Contains(out, "\x07") {
 		t.Errorf("an OSC sequence from repository content reached the terminal: %q", out)

@@ -2,23 +2,22 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"regexp"
-	"slices"
+	"strconv"
 
-	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/spf13/cobra"
 
+	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/kit/internal/rulesedit"
 	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/kit/internal/tui"
 )
 
-// rulesFilesCmd lists the rules files (the files that declare rules), every
-// one or only those whose paths a regex matches. Without --revision it reads
-// the working tree, so uncommitted rules files count; with one, it lists the
-// files committed at that revision, which gitrepo.Repository.FindFilesAt resolves
-// before any file walk, so a bad revision is an error rather than a
-// silently empty result.
+// rulesFilesCmd lists the rules files (the files that declare rules) in the
+// working tree, every one or only those whose paths a regex matches. A rules
+// file that cannot be read or parsed is listed too, and flagged.
 var rulesFilesCmd = &cobra.Command{
 	Use:         "files [pattern]",
 	Short:       "List the rules files, or those whose paths match a regex",
@@ -34,19 +33,28 @@ func runRulesFiles(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		pattern = args[0]
 	}
-	revision, _ := cmd.Flags().GetString("revision")
 
 	mode, _ := resolveOutputMode(cmd)
 	if mode == modeTUI {
 		return openTUI(cmd, rulesFilesRoute(valuesFrom(cmd, args)))
 	}
-	files, err := findRulesFiles(cmd.Context(), pattern, revision)
+	s, err := openWorkspace(cmd.Context(), nil)
+	if err != nil {
+		return err
+	}
+	files, err := s.PathsMatching(pattern)
 	if err != nil {
 		return err
 	}
 	switch mode {
 	case modeJSON:
-		return writeJSON(os.Stdout, map[string][]string{"pattern": append([]string{}, args...), "files": files})
+		invalid := []string{}
+		for _, f := range files {
+			if _, ok := s.Broken[f]; ok {
+				invalid = append(invalid, f)
+			}
+		}
+		return writeJSON(os.Stdout, map[string][]string{"pattern": append([]string{}, args...), "files": files, "invalid": invalid})
 	default:
 		for _, f := range files {
 			fmt.Println(f)
@@ -55,44 +63,75 @@ func runRulesFiles(cmd *cobra.Command, args []string) error {
 			fmt.Println("(no rules files match)")
 		}
 	}
-	return nil
+	return warnBroken(os.Stderr, s)
 }
 
-// findRulesFiles lists the rules files whose paths match pattern (every rules
-// file when empty), the repository-root rules file first. An empty revision
-// reads the working tree; any other lists the files committed at that revision.
-// The result is never nil, so it encodes as a JSON list.
-func findRulesFiles(ctx context.Context, pattern, revision string) ([]string, error) {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("invalid pattern %q: %w", pattern, err)
-	}
-	repo, err := getRepo()
-	if err != nil {
-		return nil, err
-	}
-	var files []string
-	if revision == "" {
-		files, err = repo.WorktreeFiles(ctx, func(p string) bool { return rulesfile.IsRulesFile(p) && re.MatchString(p) })
-		if err != nil {
-			return nil, fmt.Errorf("find rules files for pattern %q: %w", pattern, err)
+// rulesFilesRoute lists the rules files a pattern matches (`.*` for every one)
+// and asks for the pattern first when opened from home. Enter opens the rules
+// file's rules. A broken rules file is badged as failed, and its detail shows
+// why.
+func rulesFilesRoute(v tui.Values) tui.Route {
+	r := commandRoute(rulesFilesCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
+		var pattern string
+		if len(v.Args) > 0 {
+			pattern = v.Args[0]
 		}
-	} else {
-		files, err = repo.FindFilesAt(ctx, pattern, plumbing.Revision(revision), false)
+		s, err := openWorkspace(ctx, quietLog)
 		if err != nil {
-			return nil, fmt.Errorf("find rules files for pattern %q at %s: %w", pattern, revision, err)
+			return nil, err
 		}
-		files = slices.DeleteFunc(files, func(f string) bool { return !rulesfile.IsRulesFile(f) })
+		files, err := s.PathsMatching(pattern)
+		if err != nil {
+			return nil, err
+		}
+		items := make([]tui.Item, len(files))
+		for i, f := range files {
+			r := rulesListRoute(tui.Values{Flags: map[string]string{"file": f}})
+			desc, badge, d := rulesFileDetail(s, f, pattern)
+			items[i] = tui.Item{Title: f, Description: desc, Badge: badge, Detail: d, Route: &r}
+		}
+		title := "rules files"
+		if pattern != "" {
+			title += " matching " + pattern
+		}
+		return tui.NewListPage(title, items).WithSummary(joinNotes(countOf(len(files), "rules file"), brokenNote(s))), nil
+	})
+	if len(v.Args) > 0 {
+		r.Title = "files " + v.Args[0]
 	}
-	if files == nil {
-		files = []string{}
+	return requirePattern(r)
+}
+
+// rulesFileDetail describes a rules file as the working tree has it: its rules,
+// each linking to the files it matches, and the rules file above it, whose
+// rules it inherits unless a rule ignores parent directories. A broken rules
+// file is described by why it cannot be used instead.
+func rulesFileDetail(s *rulesedit.Workspace, file, pattern string) (string, tui.Badge, tui.Detail) {
+	d := tui.Detail{Fields: []tui.Field{{Label: "Path", Value: file}, {Label: "Matched by", Value: orNone(pattern)}}}
+	if e, ok := s.Broken[file]; ok {
+		d.Fields = append(d.Fields, tui.Field{Label: "Error", Value: e.Error(), Badge: tui.BadgeFail})
+		failure := "unusable"
+		if fe, ok := errors.AsType[*approval.RulesFileError](e); ok {
+			failure = fe.Op + " failed"
+		}
+		return "rules file · " + failure + ", skipped", tui.BadgeFail, d
 	}
-	slices.SortFunc(files, rulesfile.ComparePaths)
-	return files, nil
+	rules := s.Rules[file]
+	parent := "none (repository root)"
+	if rulesfile.Dir(file) != "" {
+		parent = orNoneLabel(s.Parent(file))
+	}
+	d.Fields = append(d.Fields, tui.Field{Label: "Rules", Value: strconv.Itoa(len(rules))}, tui.Field{Label: "Parent", Value: parent})
+	rows := make([]tui.Row, len(rules))
+	for i, rule := range rules {
+		r := rulesGetRoute(tui.Values{Args: []string{rule.Pattern}})
+		rows[i] = tui.Row{Text: ruleLabel(rule.Name, rule.Pattern), Note: joinNotes(strategyName(rule), approversLabel(rule.Approvers)), Route: &r}
+	}
+	d.Sections = []tui.Section{{Title: "Rules · enter shows matching files", Rows: rows}}
+	return "rules file · " + countOf(len(rules), "rule"), tui.BadgeOK, d
 }
 
 func init() {
 	rulesFilesCmd.RunE = runRulesFiles
-	rulesFilesCmd.Flags().String("revision", "", "list the rules files committed at this revision instead of the working tree")
 	rulesCmd.AddCommand(rulesFilesCmd)
 }

@@ -59,7 +59,7 @@ func valuesRoute(params []Param, loads *[]Values) Route {
 func TestOptionsReloadInPlace(t *testing.T) {
 	var loads []Values
 	r := valuesRoute([]Param{{Name: "changed", Kind: ParamBool, Help: "only changed files"}}, &loads)
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r})
 	h.press("o")
 	if _, ok := h.a.top().page.(*optionsPage); !ok {
 		t.Fatalf("o must open the options form:\n%s", h.screen())
@@ -85,7 +85,7 @@ func TestOptionsReloadInPlace(t *testing.T) {
 func TestRequiredArgOpensOptionsFirst(t *testing.T) {
 	var loads []Values
 	r := valuesRoute([]Param{{Name: "pattern", Arg: true, Required: true}}, &loads)
-	h := newHarness(t, Config{Routes: []Route{r}})
+	h := newHarness(t, Options{Routes: []Route{r}})
 	h.press("enter")
 	if _, ok := h.a.top().page.(*optionsPage); !ok || len(loads) != 0 {
 		t.Fatalf("a missing required argument must open the options form first (loads %d)", len(loads))
@@ -108,7 +108,7 @@ func TestOptionsChoices(t *testing.T) {
 		Choices: func(context.Context) ([]string, error) { return []string{"rules", "svc/rules"}, nil },
 	}}, &loads)
 	r.Values = Values{Flags: map[string]string{"file": "gone/rules"}}
-	h := newHarness(t, Config{Routes: []Route{r}, Start: &r})
+	h := newHarness(t, Options{Routes: []Route{r}, Start: &r})
 	h.press("o")
 	for _, want := range []string{"all", "svc/rules", "gone/rules"} {
 		if !strings.Contains(h.screen(), want) {
@@ -140,7 +140,7 @@ func TestRunRouteRunsFromOptions(t *testing.T) {
 	var runs []Values
 	fail := true
 	r := runRoute([]Param{{Name: "pattern", Required: true}}, &runs, &fail)
-	h := newHarness(t, Config{Routes: []Route{r}})
+	h := newHarness(t, Options{Routes: []Route{r}})
 	h.press("enter")
 	if _, ok := h.a.top().page.(*optionsPage); !ok || len(runs) != 0 {
 		t.Fatalf("opening a Run route must show its options first (runs %d)", len(runs))
@@ -172,7 +172,7 @@ func TestRunRouteConfirms(t *testing.T) {
 		}
 		return "Remove rule?"
 	}
-	h := newHarness(t, Config{Routes: []Route{r}})
+	h := newHarness(t, Options{Routes: []Route{r}})
 	h.press("enter", "enter")
 	if !strings.Contains(h.screen(), "Remove rule? [y/N]") || len(runs) != 0 {
 		t.Fatalf("must ask before running:\n%s", h.screen())
@@ -249,7 +249,7 @@ func TestRequiredChoice(t *testing.T) {
 	fail := false
 	r := runRoute([]Param{{Name: "pattern", Arg: true, Required: true, Kind: ParamChoice,
 		Choices: func(context.Context) ([]string, error) { return choices, nil }}}, &runs, &fail)
-	h := newHarness(t, Config{Routes: []Route{r}})
+	h := newHarness(t, Options{Routes: []Route{r}})
 	h.press("enter")
 	if len(h.a.stack) != 1 || !strings.Contains(h.screen(), "✗ rules add: no <pattern> to choose from") {
 		t.Fatalf("no choices must report instead of opening an unsubmittable form:\n%s", h.screen())
@@ -287,7 +287,7 @@ func TestClearableFlag(t *testing.T) {
 			var runs []Values
 			fail := false
 			r := runRoute(params, &runs, &fail)
-			h := newHarness(t, Config{Routes: []Route{r}})
+			h := newHarness(t, Options{Routes: []Route{r}})
 			h.press("enter")
 			h.send(tea.PasteMsg{Content: "p"})
 			h.press("enter")

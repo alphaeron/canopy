@@ -8,29 +8,48 @@ import (
 
 	huh "charm.land/huh/v2"
 
+	"github.com/alphaeron/kit/internal/rulesedit"
+	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// ruleFields is the rule editor's field set, as the CLI prompt and the
-// TUI's rule form edit it.
-type ruleFields struct {
-	// RulesFile is the rules file the rule is written to, when the form offered
-	// a choice of rules files.
-	RulesFile      string
-	Pattern        string
-	Name           string
-	Strategy       string
-	Ignore         bool
-	CurrentDirOnly bool
-	SelfApprove    bool
-	ApproverText   string
+// newRuleSeed is the rule editor's seed for a new rule, which is a union
+// rule unless the user picks another strategy. The editor (the CLI prompt
+// and the TUI's rule form) edits a rulesfile.Rule directly; its RulesFile is
+// the rules file the rule is written to when the form offers a choice.
+func newRuleSeed() rulesfile.Rule {
+	return rulesfile.Rule{CombineStrategy: rulesfile.RuleCombineStrategyUnion}
 }
 
-// strategies is the fixed set of matching strategies a rule may use.
-var strategies = []string{"union", "override", "intersect"}
+// editSeed is the rule editor's seed for editing r. It shows the strategy
+// the approval algorithm applies (RuleCombineStrategy.Effective), so
+// re-saving a rule whose combine_strategy is omitted or corrupt never
+// changes who has to approve.
+func editSeed(r rulesfile.Rule) rulesfile.Rule {
+	r.CombineStrategy = r.CombineStrategy.Effective()
+	return r
+}
+
+// approversText lets the form edit approvers as text (see
+// rulesedit.ParseApprovers). It keeps the text as typed and updates the
+// targets whenever the text parses; the field's validation blocks
+// submitting text that does not, so a submitted form's targets match it.
+type approversText struct {
+	text    string
+	targets *rulesfile.ApproverTargets
+}
+
+func (a *approversText) Get() string { return a.text }
+
+func (a *approversText) Set(text string) {
+	a.text = text
+	if t, err := rulesedit.ParseApprovers(text); err == nil {
+		*a.targets = t
+	}
+}
 
 // newRuleForm builds the huh form for the rule editor over the fields the
-// caller owns. Each field binds directly to that ruleFields value through
+// caller owns. Each field binds directly to that rule through
 // a pointer accessor, so the library writes results in place on submit;
 // the caller passes the same pointer runRuleForm or newRuleFormPage reads after
 // the form completes. Every accessor is pre-set from the form's current
@@ -39,7 +58,11 @@ var strategies = []string{"union", "override", "intersect"}
 // is non-empty the form starts with a rules file picker bound to f.RulesFile
 // (which seeds the selection). Esc or the cancel binding aborts the form
 // without touching the caller's value.
-func newRuleForm(f *ruleFields, rulesFiles []string) *huh.Form {
+func newRuleForm(f *rulesfile.Rule, rulesFiles []string) *huh.Form {
+	strategies := make([]huh.Option[rulesfile.RuleCombineStrategy], 0, 3)
+	for _, s := range rulesfile.RuleCombineStrategies() {
+		strategies = append(strategies, huh.NewOption(s.String(), s))
+	}
 	fields := []huh.Field{}
 	if len(rulesFiles) > 0 {
 		// The target rules file comes first: it decides where the rule lives.
@@ -70,23 +93,27 @@ func newRuleForm(f *ruleFields, rulesFiles []string) *huh.Form {
 			Title("Name").
 			Value(&f.Name).
 			Validate(huh.ValidateNotEmpty()),
-		huh.NewSelect[string]().
+		huh.NewSelect[rulesfile.RuleCombineStrategy]().
 			Title("Strategy").
-			Options(huh.NewOptions(strategies...)...).
-			Value(&f.Strategy),
+			Options(strategies...).
+			Value(&f.CombineStrategy),
 		huh.NewConfirm().
 			Title("Ignore").
-			Value(&f.Ignore),
+			Value(&f.IgnoreParentDirs),
 		huh.NewConfirm().
 			Title("Current-dir-only").
-			Value(&f.CurrentDirOnly),
+			Value(&f.CurrentDirectoryOnly),
 		huh.NewConfirm().
 			Title("Self-approve").
 			Value(&f.SelfApprove),
 		huh.NewInput().
 			Title("Approvers").
 			Placeholder("one per line, tab-separated").
-			Value(&f.ApproverText),
+			Accessor(&approversText{text: rulesedit.ApproversToText(f.Approvers), targets: &f.Approvers}).
+			Validate(func(s string) error {
+				_, err := rulesedit.ParseApprovers(s)
+				return err
+			}),
 	)...))
 }
 
@@ -96,11 +123,8 @@ func newRuleForm(f *ruleFields, rulesFiles []string) *huh.Form {
 // pattern that does not compile, so on a nil error the pattern is compiled
 // and the name is non-empty. A non-empty rulesFiles adds a rules file picker,
 // and the chosen file is returned in RulesFile.
-func runRuleForm(f ruleFields, rulesFiles []string) (ruleFields, error) {
+func runRuleForm(f rulesfile.Rule, rulesFiles []string) (rulesfile.Rule, error) {
 	fields := f
-	if fields.Strategy == "" {
-		fields.Strategy = "union"
-	}
 	submitted, err := tui.RunForm(newRuleForm(&fields, rulesFiles))
 	if err != nil || !submitted {
 		return f, err
@@ -112,10 +136,7 @@ func runRuleForm(f ruleFields, rulesFiles []string) (ruleFields, error) {
 // non-empty rulesFiles starts the form with a rules file picker (seeded from
 // seed.RulesFile), as in rules add. submit persists the edited fields and
 // returns a confirmation message.
-func newRuleFormPage(name string, seed ruleFields, rulesFiles []string, submit func(ctx context.Context, f ruleFields) (string, error)) tui.Page {
-	if seed.Strategy == "" {
-		seed.Strategy = "union"
-	}
+func newRuleFormPage(name string, seed rulesfile.Rule, rulesFiles []string, submit func(ctx context.Context, f rulesfile.Rule) (string, error)) tui.Page {
 	summary := "new rule"
 	if seed.Name != "" {
 		summary = "rule " + seed.Name
