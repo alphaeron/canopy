@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -22,7 +23,7 @@ var rulesAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a rule to a rules file",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s, err := openWorkspace(cmd.Context(), nil)
+		s, err := openWorkspace(cmd.Context(), cliLog())
 		if err != nil {
 			return err
 		}
@@ -47,14 +48,12 @@ var rulesAddCmd = &cobra.Command{
 				seed.RulesFile = nearestRulesFile(s)
 			}
 			fields, err = runRuleForm(seed, choices)
-			if err != nil {
-				return fmt.Errorf("run form: %w", err)
-			}
-			// The form requires a pattern, so an empty one means it was
-			// cancelled.
-			if fields.Pattern == "" {
+			if errors.Is(err, tui.ErrAborted) {
 				fmt.Fprintln(os.Stderr, "add aborted")
 				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("run form: %w", err)
 			}
 			if target == "" {
 				target = fields.RulesFile
@@ -83,7 +82,7 @@ var rulesAddCmd = &cobra.Command{
 	},
 }
 
-// ruleFieldsFrom applies the rule flags set in v over seed: a flag given on
+// applyRuleFlags applies the rule flags set in v over seed: a flag given on
 // the command line (see valuesFrom) or in the TUI's options form always
 // wins, while an unset one leaves seed's value standing, so a single-field
 // rules edit does not zero out the other fields. init and add seed the

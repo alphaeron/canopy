@@ -167,18 +167,18 @@ func TestRulesListOutput(t *testing.T) {
 			Approvers: rulesfile.ApproverTargets{{Target: "org/sec", RequiredCount: 1}}},
 		{RulesFile: rulesfile.PathInDir("svc"), Pattern: `.*`},
 	}
-	js := rulesJSON(entries)
+	js := entries
 	if js[0].CombineStrategy != rulesfile.RuleCombineStrategyUnion || js[0].Approvers[0] != (rulesfile.ApproverTarget{Target: "org/sec", RequiredCount: 1}) {
 		t.Errorf("first JSON rule = %+v", js[0])
 	}
 	if out, err := json.Marshal(js); err != nil || !strings.Contains(string(out), `"rules_file":"`+rulesfile.FileName+`","position":0,"pattern":".*\\.go"`) {
 		t.Errorf("rules JSON = %s, %v; want each rule's location and fields", out, err)
 	}
-	if js[1].CombineStrategy != 0 || js[1].Approvers == nil {
-		t.Errorf("an omitted strategy is omitted and approvers is never null: %+v", js[1])
+	if out, _ := json.Marshal(js[1]); strings.Contains(string(out), "combine_strategy") || !strings.Contains(string(out), `"approvers":[]`) {
+		t.Errorf("an omitted strategy is omitted and approvers is never null: %s", out)
 	}
-	if got := rulesJSON(nil); got == nil || len(got) != 0 {
-		t.Errorf("no rules must encode as [], got %#v", got)
+	if out, _ := json.Marshal(rulesfile.Rules(nil)); string(out) != "[]" {
+		t.Errorf("no rules must encode as [], got %s", out)
 	}
 	rows := ruleRows(entries)
 	if want := []string{rulesfile.PathInDir("svc"), "0", ".*", "", "(default)", ""}; !reflect.DeepEqual(rows[1], want) {

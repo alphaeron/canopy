@@ -17,14 +17,15 @@ import (
 // files with the platform's review input. An invalid proposed rules file is
 // Failed; anything that keeps the review from running is Errored, with its
 // cause logged, never in the outcome. The change's warnings (see
-// Change.Warnings) are added to whatever the outcome, and logged.
+// Change.Warnings) are added to the review's own (such as files no rule
+// covers), whatever the outcome, and logged.
 //
 // The changed files, the review input, and the rules are independent, so
 // they are read concurrently; the review then reuses the rules fetch (see
 // Change).
 func Evaluate(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome {
 	o := outcome(ctx, pr, log)
-	o.Warnings = pr.Warnings()
+	o.Warnings = append(o.Warnings, pr.Warnings()...)
 	for _, w := range o.Warnings {
 		log.Warn("review warning", "warning", w)
 	}
@@ -38,6 +39,7 @@ func outcome(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome 
 		return approval.Outcome{Verdict: approval.Errored, Summary: failureSummary(ctx, err)}
 	}
 
+	engine := &Engine{Source: pr, Log: log}
 	var (
 		wg         sync.WaitGroup
 		files      []string
@@ -53,7 +55,7 @@ func outcome(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome 
 			filesStep = "changed files"
 			return
 		}
-		violations, filesErr = New(pr, log).ValidateProposed(ctx, files)
+		violations, filesErr = engine.ValidateProposed(ctx, files)
 		if filesErr != nil {
 			filesStep = "validate proposed rules files"
 		}
@@ -70,7 +72,7 @@ func outcome(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome 
 	if inErr != nil {
 		return fail("review input", inErr)
 	}
-	state := New(pr, log).Review(ctx, files, in)
+	state := engine.Review(ctx, files, in)
 	if ctx.Err() != nil {
 		return fail("review", ctx.Err())
 	}
@@ -84,9 +86,12 @@ func outcome(ctx context.Context, pr Change, log *slog.Logger) approval.Outcome 
 // the CLI alike: a change proposing an invalid rules file (proposed, as
 // Engine.ValidateProposed reports it) is Failed whatever its approvals,
 // and otherwise the review state decides (approval.ReviewState.Outcome).
+// Either way the review's warnings are the outcome's.
 func OutcomeOf(state *approval.ReviewState, proposed map[string][]error) approval.Outcome {
 	if len(proposed) > 0 {
-		return approval.InvalidRulesOutcome(slices.Sorted(maps.Keys(proposed)))
+		o := approval.InvalidRulesOutcome(slices.Sorted(maps.Keys(proposed)))
+		o.Warnings = slices.Clone(state.Warnings)
+		return o
 	}
 	return state.Outcome()
 }

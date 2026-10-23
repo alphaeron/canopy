@@ -12,7 +12,6 @@ func TestFileStateOwnership(t *testing.T) {
 		{"awaiting rule approvers", FileState{Status: StatusMissingApprovers}, OwnedByRules},
 		{"repository owners", FileState{Status: StatusMissingApprovers, UsedFallback: true}, OwnedByFallback},
 		{"no active repository owners", FileState{Status: StatusError, UsedFallback: true}, OwnedByFallback},
-		{"evaluation failed", FileState{Status: StatusError}, OwnershipBroken},
 		{"unresolved target", FileState{Status: StatusUnresolved, UsedFallback: true}, OwnershipBroken},
 	}
 	for _, tc := range tests {

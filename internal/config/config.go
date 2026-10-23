@@ -1,5 +1,5 @@
 // Package config is the single place that discovers and parses the shared
-// configuration for every binary (the CLI and REST API).
+// configuration for every binary (the CLI and the review server).
 // Both entry points call Load first thing in main() and pass the resulting
 // *Config by value into the internal packages; no other package owns a
 // package-level viper instance. The only documented side effect of Load is
@@ -34,11 +34,11 @@ import (
 // defaults. Each hosted platform has its own section, so adding a platform
 // adds a section rather than top-level keys. Every key is documented in the
 // README's "Configuration" section so the same table serves deployment of
-// the REST API.
+// the review server.
 type Config struct {
 	// Verbose selects debug-level structured logging; false selects info.
 	Verbose bool `mapstructure:"verbose"`
-	// ServeAddr is the REST API listen address; defaults to ":8080".
+	// ServeAddr is the review server's listen address; defaults to ":8080".
 	ServeAddr string `mapstructure:"serve_addr"`
 	// ReviewTimeout bounds one webhook-triggered review; defaults to 50
 	// seconds.
@@ -47,16 +47,16 @@ type Config struct {
 	// of time, which can no longer use the review's own deadline; defaults
 	// to 30 seconds.
 	ReportTimeout time.Duration `mapstructure:"report_timeout"`
-	// ReviewWorkers is how many reviews the REST API runs at once;
+	// ReviewWorkers is how many reviews the review server runs at once;
 	// defaults to 4.
 	ReviewWorkers int `mapstructure:"review_workers"`
 	// ReviewQueuePerWorker is how many pull requests may wait per review
 	// worker; defaults to 16. See ReviewQueue for the total.
 	ReviewQueuePerWorker int `mapstructure:"review_queue_per_worker"`
-	// ShutdownTimeout bounds how long the REST API waits for open requests
+	// ShutdownTimeout bounds how long the review server waits for open requests
 	// once it is told to stop; defaults to 10 seconds.
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
-	// GitHub configures the GitHub platform for the REST API.
+	// GitHub configures the GitHub platform for the review server.
 	GitHub GitHub `mapstructure:"github"`
 	// Path is the file the configuration was read from, when one existed.
 	// It is empty when defaults and environment alone formed the active
@@ -65,8 +65,8 @@ type Config struct {
 	Path string `mapstructure:"-"`
 }
 
-// GitHub is the GitHub platform's section: the GitHub App the REST API
-// acts as. The CLI never reads it.
+// GitHub is the GitHub platform's section: the GitHub App the review
+// server acts as. The CLI never reads it.
 type GitHub struct {
 	// AppID is the numeric GitHub App ID, kept as a string so the file and
 	// environment supply exactly the same value with no numeric coercion
@@ -280,12 +280,6 @@ func Load(explicitPath string) (*Config, error) {
 		v.SetConfigFile(explicitPath)
 	}
 
-	v.SetDefault("serve_addr", DefaultServeAddr)
-	v.SetDefault("review_timeout", DefaultReviewTimeout)
-	v.SetDefault("report_timeout", DefaultReportTimeout)
-	v.SetDefault("review_workers", DefaultReviewWorkers)
-	v.SetDefault("review_queue_per_worker", DefaultReviewQueuePerWorker)
-	v.SetDefault("shutdown_timeout", DefaultShutdownTimeout)
 	for _, key := range configKeys(reflect.TypeFor[Config](), "") {
 		if err := v.BindEnv(key, envName(key)); err != nil {
 			return nil, err
@@ -311,6 +305,7 @@ func Load(explicitPath string) (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+	// Defaults apply to unset and to non-positive values alike.
 	if cfg.ServeAddr == "" {
 		cfg.ServeAddr = DefaultServeAddr
 	}

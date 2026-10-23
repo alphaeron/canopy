@@ -92,6 +92,17 @@ func TestEvaluate(t *testing.T) {
 			want: approval.Outcome{Verdict: approval.Passed, Summary: "1 file approved", Warnings: []string{"large pull request (3500 files)"}},
 		},
 		{
+			name: "an uncovered file waits for an owner other than the author, and is warned of",
+			setup: func(pr *stubChange) {
+				pr.changedSet = []string{"docs/a.md"}
+				pr.rules = rulesfile.Set{rulesfile.FileName: {{Pattern: `^src/`, Approvers: rulesfile.ApproverTargets{{Target: "lead", RequiredCount: 1}}}}}
+				pr.input = approval.ReviewInput{Author: "alice", Owners: []string{"alice"}}
+				pr.warnings = []string{"large pull request (3500 files)"}
+			},
+			want: approval.Outcome{Verdict: approval.Pending, Summary: "1 file awaits approval", Items: []string{"alice"},
+				Warnings: []string{approval.UncoveredWarning(1), "large pull request (3500 files)"}},
+		},
+		{
 			name:  "rate limited",
 			setup: func(pr *stubChange) { pr.changedErr = fmt.Errorf("listing: %w", approval.ErrRateLimited) },
 			want:  approval.Outcome{Verdict: approval.Errored, Summary: "rate limited by the platform; try again later"},

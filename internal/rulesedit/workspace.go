@@ -43,16 +43,26 @@ func (e *AmbiguousRuleError) Error() string {
 	return fmt.Sprintf("pattern %q matches %d rules: %s", e.Pattern, len(e.Rules), strings.Join(refs, ", "))
 }
 
+// Validator reports the violations of a set of rules files, keyed by path,
+// omitting valid files: the review platform's validation
+// (approval.Evaluator.Validate), which adds its own checks to
+// rulesfile.Set.Validate.
+type Validator interface {
+	Validate(rules rulesfile.Set) map[string][]error
+}
+
 // Workspace is the rules files of a repository checkout on disk: Rules is
 // every rules file the working tree has that loaded, keyed as in
 // rulesfile.Set; Broken is every one that could not be read or parsed,
 // with why; and Root is the repository root they are read from and written
 // to. Lookups answer from Rules; changes are written to disk and are not
-// reflected in Rules.
+// reflected in Rules. Validator validates the rules as the review platform
+// does; nil validates with rulesfile.Set.Validate alone.
 type Workspace struct {
-	Root   string
-	Rules  rulesfile.Set
-	Broken map[string]error
+	Root      string
+	Rules     rulesfile.Set
+	Broken    map[string]error
+	Validator Validator
 }
 
 // Paths lists every rules file, the broken ones included, in
@@ -237,17 +247,22 @@ func (w *Workspace) Parent(rulesFile string) string {
 	return w.NearestTo(path.Dir(dir))
 }
 
-// Validate reports the violations of every rules file (see Set.Validate),
-// or only of only when it is set. A broken rules file's one violation is
-// its FileError.
+// Validate reports the violations of every rules file, or only of only
+// when it is set, as Validator reports them. A broken rules file's one
+// violation is why it could not be read or parsed.
 func (w *Workspace) Validate(only string) map[string][]error {
+	set := w.Rules
+	if only != "" {
+		set = rulesfile.Set{}
+		if rules, ok := w.Rules[only]; ok {
+			set[only] = rules
+		}
+	}
 	var out map[string][]error
-	if only == "" {
-		out = w.Rules.Validate()
-	} else if rules, ok := w.Rules[only]; ok {
-		out = rulesfile.Set{only: rules}.Validate()
+	if w.Validator != nil {
+		out = w.Validator.Validate(set)
 	} else {
-		out = map[string][]error{}
+		out = set.Validate()
 	}
 	for p, e := range w.Broken {
 		if only == "" || p == only {
@@ -280,16 +295,17 @@ func (w *Workspace) mutate(rulesFile string, change func(rulesfile.Rules) (rules
 }
 
 // Add appends rule to rulesFile, after every rule there (so it is applied
-// last in its layer), and returns the file's rules as saved.
+// last in its layer), and returns the file's rules as saved. A rule with a
+// violation is rejected.
 func (w *Workspace) Add(rulesFile string, rule rulesfile.Rule) (rulesfile.Rules, error) {
 	return w.mutate(rulesFile, func(rules rulesfile.Rules) (rulesfile.Rules, error) { return add(rules, rule) })
 }
 
 // Edit replaces the rule at target's location with rule and returns it as
 // saved. A rule's pattern is part of what the rule is, so rule keeps
-// target's pattern. The rules file must still hold target's pattern at that
-// position, or the edit fails with ErrRulesFileChanged rather than change
-// another rule.
+// target's pattern. The rules file must still hold target, unchanged, at
+// that position, or the edit fails with ErrRulesFileChanged rather than
+// change another rule. A rule with a violation is rejected.
 func (w *Workspace) Edit(target, rule rulesfile.Rule) (rulesfile.Rule, error) {
 	rule.Pattern = target.Pattern
 	rules, err := w.mutate(target.RulesFile, func(rules rulesfile.Rules) (rulesfile.Rules, error) {
@@ -302,7 +318,7 @@ func (w *Workspace) Edit(target, rule rulesfile.Rule) (rulesfile.Rule, error) {
 }
 
 // Remove deletes the rule at target's location. As with Edit, the rules
-// file must still hold target's pattern at that position.
+// file must still hold target, unchanged, at that position.
 func (w *Workspace) Remove(target rulesfile.Rule) error {
 	_, err := w.mutate(target.RulesFile, func(rules rulesfile.Rules) (rulesfile.Rules, error) { return remove(rules, target) })
 	return err

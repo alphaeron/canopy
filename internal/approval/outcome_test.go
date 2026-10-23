@@ -55,9 +55,13 @@ func TestOutcomeNeverQuotesErrors(t *testing.T) {
 // approvers still needed, each with the most approvals it still owes a file.
 func TestOutcomePendingNamesWhoIsNeeded(t *testing.T) {
 	need := func(target string, required, satisfied int) ApproverTargetState {
+		st := StatusMissingApprovers
+		if satisfied >= required {
+			st = StatusSatisfied
+		}
 		return ApproverTargetState{
 			ApproverTarget: rulesfile.ApproverTarget{Target: target, RequiredCount: required},
-			SatisfiedCount: satisfied, Satisfied: satisfied >= required,
+			SatisfiedCount: satisfied, Status: st,
 		}
 	}
 	state := &ReviewState{Overall: StatusMissingApprovers, Files: map[string]FileState{

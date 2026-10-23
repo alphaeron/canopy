@@ -8,6 +8,8 @@ require (
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/danielgtaylor/huma/v2 v2.39.1
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-git/go-git/v6 v6.0.0-beta.1
 	github.com/google/go-github/v93 v93.0.0
 	github.com/sergi/go-diff v1.4.0
@@ -33,11 +35,9 @@ require (
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cloudflare/circl v1.6.5 // indirect
-	github.com/danielgtaylor/huma/v2 v2.39.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
-	github.com/go-chi/chi/v5 v5.5.0 // indirect
 	github.com/go-git/gcfg/v2 v2.0.2 // indirect
 	github.com/go-git/go-billy/v6 v6.0.0-beta.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect

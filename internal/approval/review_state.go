@@ -21,15 +21,18 @@ type ReviewState struct {
 	Overall  Status
 	Events   []Event  // chronological trace across fetch, sift, and approve
 	Errors   []string // every error encountered, so none are invisible
-	Err      error    // surfaced, not swallowed
+	// Warnings are conditions worth reporting that do not change the
+	// status, such as files no rule covers.
+	Warnings []string
+	Err      error // every error in Errors, joined
 }
 
 // Event represents a step in the review process for auditability.
 type Event struct {
-	Phase  string // "sift" | "approve"
+	Phase  string // "fetch", "sift", or "approve"
 	Path   string
-	Layer  string
-	Rule   string
+	Layer  string // the layer's directory; "" for the root or no layer
+	Rule   string // the rule, as Rule.String names it
 	Status Status
 	Note   string // e.g. "rule .*\.go combined via union; required += backend-team"
 }
@@ -103,8 +106,15 @@ func (rs *ReviewState) FileEvents(path string) []Event {
 // StatusError is Errored, and every other status is pending (approvals are
 // still missing or unresolved). A pending outcome's items are the approvers
 // still needed, each with how many more approvals it owes the file that
-// needs the most.
+// needs the most. The state's warnings are the outcome's.
 func (rs *ReviewState) Outcome() Outcome {
+	o := rs.verdict()
+	o.Warnings = slices.Clone(rs.Warnings)
+	return o
+}
+
+// verdict is Outcome without the warnings.
+func (rs *ReviewState) verdict() Outcome {
 	switch rs.Overall {
 	case StatusSatisfied, StatusDone:
 		n := len(rs.Files)
@@ -126,7 +136,7 @@ func (rs *ReviewState) Outcome() Outcome {
 		}
 		waiting++
 		for _, r := range fs.Required {
-			if !r.Satisfied {
+			if r.Status != StatusSatisfied {
 				owed[r.Target] = max(owed[r.Target], r.RequiredCount-r.SatisfiedCount)
 			}
 		}
@@ -147,6 +157,23 @@ func (rs *ReviewState) Outcome() Outcome {
 		}
 	}
 	return Outcome{Verdict: Pending, Summary: summary, Items: items}
+}
+
+// ReviewReport is a review with what it means for the change: its state and
+// its outcome, which may differ from the state's own (see
+// review.OutcomeOf). It encodes as the review's JSON with an "outcome".
+type ReviewReport struct {
+	State   *ReviewState
+	Outcome Outcome
+}
+
+// MarshalJSON encodes the report as ReviewState.MarshalJSON does, adding
+// the outcome.
+func (r ReviewReport) MarshalJSON() ([]byte, error) {
+	out := reviewJSONOf(r.State)
+	o := outcomeJSONOf(r.Outcome)
+	out.Outcome = &o
+	return json.Marshal(out)
 }
 
 // MarshalJSON encodes the review in its stable wire form: statuses as their

@@ -20,9 +20,9 @@ type worktree struct {
 	repo *gitrepo.Repository
 }
 
-// Files lists the working tree's files.
+// Files lists the working tree's files: the listing Source.AllFiles shares.
 func (w *worktree) Files(ctx context.Context) ([]string, error) {
-	return w.repo.WorktreeFiles(ctx, func(string) bool { return true })
+	return w.repo.WorktreeFiles(ctx)
 }
 
 // ReadFile reads the file at path from disk. The name must match the
@@ -46,7 +46,7 @@ func (w *worktree) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	}
 	f, err := os.Open(full)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	// Only rules files are read through the tree, so a file over the rules
 	// file limit is refused rather than read whole.
@@ -76,7 +76,7 @@ func fileExistsCaseSensitive(path string) (bool, error) {
 		return false, nil
 	}
 
-	// Verify exact casing by reading parent directory
+	// The parent directory's entries tell the exact casing.
 	dir, expectedFile := filepath.Split(path)
 	if dir == "" {
 		dir = "."

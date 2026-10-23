@@ -41,6 +41,10 @@ var initCmd = &cobra.Command{
 		var err error
 		if pattern == "" && mode == modeTUI {
 			fields, err = runRuleForm(newRuleSeed(), nil)
+			if errors.Is(err, tui.ErrAborted) {
+				fmt.Fprintln(os.Stderr, "init aborted")
+				return nil
+			}
 			if err != nil {
 				return fmt.Errorf("run form: %w", err)
 			}

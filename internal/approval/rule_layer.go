@@ -40,79 +40,47 @@ func (rl *RuleLayer) Execute(
 	log *slog.Logger,
 ) LayerState {
 	result := incoming
-	state := LayerState{
-		DirectoryPath: rl.DirectoryPath,
-		Active:        true,
-	}
+	state := LayerState{DirectoryPath: rl.DirectoryPath}
 
 	for _, rule := range rl.Rules {
-		// 1. Prune the rule's active and valid approver targets, preserving
-		// their required counts. Target-level state stays at the rule level.
 		activeTargets := rule.Prune(ctx, p, resolver)
-
-		// 2. Track this rule's per-target satisfaction in the layer state.
-		// The rule consumes only its own targets' execution.
 		ruleState := rule.Execute(ctx, p, resolver, file, rl.DirectoryPath, log)
-		state.Rules = append(state.Rules, ruleState)
 		state.ResolvedBy = append(state.ResolvedBy, ruleState.ResolvedBy...)
 
-		// Rule Fallback Logic: If pruning or an empty config yields 0 active
-		// approvers for this rule, the rule is skipped — an error condition.
-		// The skip is recorded in the review error list (which forces the
-		// final review state to statusError) and on the rule's own state so
-		// it stays visible in the hierarchical breakdown, while the
-		// algorithm still falls back to preceding rules, parent directories,
-		// or the repository owners.
+		// A rule left with no active targets is skipped, which is an error:
+		// it is recorded on the rule's state and in the review's errors
+		// (forcing the overall status to StatusError), while evaluation
+		// falls back to the rules before it, the parent directories, or
+		// the repository owners.
 		if len(activeTargets) == 0 {
 			ruleState.Status = StatusError
 			ruleState.Reason = "No active targets - rule is skipped"
-			state.Rules[len(state.Rules)-1] = ruleState
-			skipErr := fmt.Errorf(
-				"no active targets after pruning for rule %q in layer %q",
-				rule.Name, rl.DirectoryPath)
+			state.Rules = append(state.Rules, ruleState)
+			skipErr := fmt.Errorf("no active targets after pruning for rule %s", rule)
 			builder.AddError(skipErr)
-			builder.AddEvent("approve", file, rl.DirectoryPath, rule.Name, StatusError, "No active targets - rule is skipped")
+			builder.AddEvent("approve", file, rl.DirectoryPath, rule.String(), StatusError, ruleState.Reason)
 			log.Error("approve: rule has no active approvers",
 				"component", "rule_layer", "phase", "approve",
-				"file", file, "layer", rl.DirectoryPath, "rule", rule.Name,
+				"file", file, "layer", rl.DirectoryPath, "rule", rule.String(),
 				"error", skipErr)
 			continue
 		}
+		state.Rules = append(state.Rules, ruleState)
 
-		// 3. Establish the base set if this is the first valid rule we
-		// encounter in this layer.
+		// The first rule with targets establishes the requirement.
 		if len(result) == 0 {
-			builder.AddEvent("approve", file, rl.DirectoryPath, rule.Name, StatusActive, "First rule in layer - establishing base approvers")
+			builder.AddEvent("approve", file, rl.DirectoryPath, rule.String(), StatusActive, "First rule in layer - establishing base approvers")
 			result = activeTargets
 			continue
 		}
-
-		// 4. Apply the combination strategy specified by *this rule* relative
-		// to the running required approver footprint accumulated so far. The
-		// config value adapts into the strategy that the footprint delegates
-		// to.
-		result = result.Combine(
-			// The "child/incoming" rule target set.
-			activeTargets,
-			// The strategy to combine approvers by.
-			newCombineStrategy(rule.CombineStrategy),
-			builder,
-			file,
-			rl.DirectoryPath,
-			rule.Name,
-		)
+		result = result.combine(activeTargets, newCombineStrategy(rule.CombineStrategy), builder, file, rl.DirectoryPath, rule.String())
 	}
 
-	// Determine layer-level status from its rule states: the first non-satisfied
-	// rule escalates the layer to that rule's own status.
-	status := StatusSatisfied
+	// The first rule that is not satisfied sets the layer's status.
+	state.Status = StatusSatisfied
 	if unsat, ok := firstMatching(state.Rules, func(rs RuleState) bool { return rs.Status != StatusSatisfied }); ok {
-		status = unsat.Status
+		state.Status = unsat.Status
 	}
-	state.Status = status
-
-	// Layer-level state carries the rule-target footprint this layer
-	// produced, which the chain consumes to feed the next layer down.
 	state.Required = result
 	return state
 }

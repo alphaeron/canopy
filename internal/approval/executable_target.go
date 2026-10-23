@@ -8,25 +8,20 @@ import (
 )
 
 // ExecutableTarget pairs an approver target with the self-approval policy of
-// the rule that produced it, with the methods that execute it. The policy
-// travels with the target through the
-// combine strategies so that an author who is also a resolved member counts
-// only toward requirements whose rule allowed self-approval.
+// the rule that produced it. The policy travels with the target through the
+// combine strategies, so an author who is also a resolved member counts only
+// toward requirements whose rule allowed self-approval.
 type ExecutableTarget struct {
 	rulesfile.ApproverTarget
 	SelfApprove bool
 }
 
-// ExecutableTargets is a collection of executable targets. A named slice
-// keeps the target-specific state management (combining, counting,
-// eligibility) with the target type, so each layer of the algorithm owns its
-// own state and types independently.
+// ExecutableTargets is the targets a rule or a chain of rules requires.
 type ExecutableTargets []ExecutableTarget
 
 // Execute evaluates this target against the review state: it resolves the
 // target to its member set, enforces the self-approval constraint, and counts
-// the eligible members that have approved. The returned state carries that
-// evaluation and the resolved members that contributed.
+// the eligible members that have approved.
 func (rt *ExecutableTarget) Execute(ctx context.Context, p participants, resolver ApproverResolver) *ApproverTargetState {
 	members, err := resolver.Resolve(ctx, rt.Target)
 	if err != nil {
@@ -35,13 +30,12 @@ func (rt *ExecutableTarget) Execute(ctx context.Context, p participants, resolve
 			ResolvedBy:     []string{},
 			Status:         StatusUnresolved,
 			Reason:         resolveFailure(err),
+			err:            err,
 		}
 	}
 
-	// Enforce self-approval constraint against the target identity: when
-	// the rule forbids self-approval, a target that IS the author can
-	// never be satisfied. The policy decision is the single contributes
-	// predicate shared with member-level counting.
+	// A target that is the author can never count when the rule forbids
+	// self-approval.
 	if !rt.contributes(p.canonical(rt.Target), p) {
 		return &ApproverTargetState{
 			ApproverTarget: rt.ApproverTarget,
@@ -51,9 +45,9 @@ func (rt *ExecutableTarget) Execute(ctx context.Context, p participants, resolve
 		}
 	}
 
-	// Prune targets with no eligible member, which covers inactive
-	// individuals, groups whose members are all inactive, and groups whose
-	// only active member is the author under a non-self-approve rule.
+	// No eligible member: inactive individuals, groups whose members are
+	// all inactive, and groups whose only active member is the excluded
+	// author.
 	if !rt.HasAnyEligibleMember(members, p) {
 		return &ApproverTargetState{
 			ApproverTarget: rt.ApproverTarget,
@@ -63,49 +57,35 @@ func (rt *ExecutableTarget) Execute(ctx context.Context, p participants, resolve
 		}
 	}
 
-	resolved := rt.approveMembers(members, p)
-	count := len(resolved)
+	resolved := rt.approvingMembers(members, p)
 	st := StatusSatisfied
-	if count < rt.RequiredCount {
+	if len(resolved) < rt.RequiredCount {
 		st = StatusMissingApprovers
 	}
 	return &ApproverTargetState{
 		ApproverTarget: rt.ApproverTarget,
-		SatisfiedCount: count,
-		Satisfied:      count >= rt.RequiredCount,
+		SatisfiedCount: len(resolved),
 		ResolvedBy:     resolved,
 		Status:         st,
 	}
 }
 
-// approveMembers resolves the target to its member set and returns which
-// resolved members counted toward it, applying the author / self-approval
-// exclusion.
-func (rt *ExecutableTarget) approveMembers(members []string, p participants) []string {
+// approvingMembers are the members whose approval counts toward the target:
+// they approved, and the self-approval policy lets them count.
+func (rt *ExecutableTarget) approvingMembers(members []string, p participants) []string {
 	var resolved []string
 	for _, member := range members {
-		if !rt.approves(member, p) {
-			continue
+		if rt.contributes(member, p) && p.approvers[member] {
+			resolved = append(resolved, member)
 		}
-		resolved = append(resolved, member)
 	}
 	return resolved
 }
 
-// approves reports whether a resolved member's approval counts toward this
-// target. When the producing rule forbids self-approval, the author never
-// contributes, even when they are a member of a resolved group.
-func (rt *ExecutableTarget) approves(member string, p participants) bool {
-	return rt.contributes(member, p) && p.approvers[member]
-}
-
-// contributes is the single implementation of the rule's self-approval
-// requirement: it reports whether this author-approved member may count
-// toward this target. When the rule forbids self-approval (the default),
-// the author's approval never counts, whether the author is the target
-// itself or a member of a resolved group. Every self-approval decision in
-// the algorithm funnels through this predicate, so the requirement and its
-// implementation live on one type - the ExecutableTarget carrying the policy.
+// contributes is the one implementation of the rule's self-approval policy:
+// whether member may count toward this target. When the rule forbids
+// self-approval (the default) the author never counts, whether the author
+// is the target itself or a member of a resolved group.
 func (rt *ExecutableTarget) contributes(member string, p participants) bool {
 	return rt.SelfApprove || member != p.author
 }
@@ -126,20 +106,16 @@ func (rt *ExecutableTarget) HasAnyEligibleMember(members []string, p participant
 	return false
 }
 
-// Combine merges this (accumulated) footprint with the set of rule targets
-// coming in from this rule using the supplied strategy, and records the
-// strategy application in the event trace. Data and its trace stay on this
-// state holder; the merging algorithm itself belongs to the CombineStrategy
-// implementation so each combining strategy is a standalone, testable
-// behavior.
-func (current *ExecutableTargets) Combine(
+// combine merges incoming, the targets of the next rule, into the targets
+// accumulated so far with strat, recording the step in the event trace.
+func (current ExecutableTargets) combine(
 	incoming ExecutableTargets,
-	strat CombineStrategy,
+	strat combineStrategy,
 	builder *ReviewStateBuilder,
-	file, layer, ruleName string,
+	file, layer, rule string,
 ) ExecutableTargets {
-	builder.AddEvent("approve", file, layer, ruleName, StatusActive, "Applied "+strat.note())
-	return strat.apply(*current, incoming)
+	builder.AddEvent("approve", file, layer, rule, StatusActive, "Applied "+strat.note())
+	return strat.apply(current, incoming)
 }
 
 // resolveFailure is the reason a target that could not be resolved reports:

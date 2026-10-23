@@ -19,8 +19,8 @@ func TestDefaultResolverIgnoresCase(t *testing.T) {
 	}
 
 	pr := ReviewInput{Author: "someone", Approvers: []string{"Lead"}}
-	rc := buildChain("/src/x.go", buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("lead", 1)))
-	if fs := executeChain(t, rc, pr).Files["/src/x.go"]; fs.Status != StatusSatisfied {
+	rc := buildChain("src/x.go", buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("lead", 1)))
+	if fs := executeChain(t, rc, pr).Files["src/x.go"]; fs.Status != StatusSatisfied {
 		t.Errorf("approval by Lead for target lead: status = %s, want satisfied", fs.Status)
 	}
 }

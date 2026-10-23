@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/spf13/cobra"
@@ -23,8 +24,7 @@ type gitRepo = gitrepo.Repository
 
 // getRepo opens the git repository at the current working directory, or the
 // nearest parent that contains one. It is the single repository entry point
-// for every CLI command; the returned wrapper carries FindFiles and other
-// helpers that the commands share.
+// for every CLI command.
 func getRepo() (*gitRepo, error) {
 	repo, err := git.PlainOpenWithOptions(".", &git.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
@@ -80,11 +80,12 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	return tui.Run(cmd.Context(), tui.Options{Routes: appRoutes(), Overview: repoOverview})
 }
 
-// Execute adds all child commands to the root command and sets flags
-// appropriately. This is called by the main entry point. It only needs to
-// happen once to the rootCmd.
+// Execute runs the command line and exits non-zero when the command fails.
+// Cobra has already printed the error.
 func Execute() {
-	cobra.CheckErr(rootCmd.Execute())
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
 }
 
 func init() {

@@ -40,7 +40,7 @@ func runCoverageCmd(cmd *cobra.Command, args []string) error {
 	if mode == modeTUI {
 		return openTUI(cmd, coverageRoute(valuesFrom(cmd, args)))
 	}
-	report, _, err := runCoverage(cmd.Context(), opts, nil)
+	report, _, err := runCoverage(cmd.Context(), opts, cliLog())
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func renderCoverage(mode outputMode, report *review.CoverageReport) error {
 			return err
 		}
 		if len(report.Uncovered) > 0 {
-			fmt.Println("\nUncovered files: " + strings.Join(report.Uncovered, "\n  ") + "  ")
+			fmt.Println("\nUncovered files:\n  " + strings.Join(report.Uncovered, "\n  "))
 		}
 	}
 	return nil
@@ -94,11 +94,15 @@ func renderCoverage(mode outputMode, report *review.CoverageReport) error {
 func coverageRoute(v tui.Values) tui.Route {
 	return commandRoute(coverageCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
 		opts := review.Options{ChangedOnly: v.Bool("changed"), ScopeName: v.Flag("scope")}
-		report, match, err := runCoverage(ctx, opts, quietLog)
+		repo, engine, err := openLocal(quietLog)
 		if err != nil {
 			return nil, err
 		}
-		s, err := openWorkspace(ctx, quietLog)
+		report, match, err := coverageWith(ctx, engine, opts)
+		if err != nil {
+			return nil, err
+		}
+		s, err := loadWorkspace(ctx, repo, engine)
 		if err != nil {
 			return nil, err
 		}

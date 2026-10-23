@@ -31,14 +31,7 @@ func chainSection(fs approval.FileState) tui.Section {
 	for i, l := range fs.Layers {
 		rulesPath := rulesfile.PathInDir(l.DirectoryPath)
 		r := rulesListRoute(tui.Values{Flags: map[string]string{"file": rulesPath}})
-		note := "active"
-		if !l.Active {
-			note = "inactive"
-		}
-		if l.Reason != "" {
-			note += " · " + l.Reason
-		}
-		s.Rows = append(s.Rows, tui.Row{Text: rulesPath, Badge: statusBadge(l.Status), Note: note, Route: &r})
+		s.Rows = append(s.Rows, tui.Row{Text: rulesPath, Badge: statusBadge(l.Status), Note: statusLabel(l.Status), Route: &r})
 		for j, rule := range l.Rules {
 			s.Rows = append(s.Rows, tui.Row{
 				Indent: 1,

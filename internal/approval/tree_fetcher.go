@@ -64,7 +64,7 @@ func (f *TreeFetcher) Execute(ctx context.Context) (rulesfile.Set, error) {
 		rules rulesfile.Rules
 		err   error
 	}, len(rulesPaths))
-	parallel.For(len(rulesPaths), parallel.Limit, func(i int) {
+	parallel.For(len(rulesPaths), func(i int) {
 		read[i].rules, read[i].err = f.readRules(ctx, rulesPaths[i])
 	})
 

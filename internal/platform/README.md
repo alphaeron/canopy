@@ -9,16 +9,17 @@ else is shared:
 | What | Interface | Defined in |
 |---|---|---|
 | The files under review and their diffs | `review.Source` | `internal/review/source.go` |
-| Where rules files are read from | `approval.Tree` | `internal/approval/fetcher.go` |
+| Where rules files are read from | `approval.Tree` | `internal/approval/tree_fetcher.go` |
 | What an approver target means, and who is the same user | `approval.ApproverResolver` | `internal/approval/resolver.go` |
 | Turning the platform's own data into a `Source` | a constructor in the platform package | — |
-| *Hosted only:* the pull request webhook flow: receiving webhooks | `server.PRWebhook` | `internal/server/server.go` |
-| *Hosted only:* the pull request under review: review input, proposed files, where it reports (its key), status | `server.PullRequest` | `internal/server/server.go` |
+| *Hosted only:* the pull request webhook flow: receiving webhooks | `server.PRWebhook` | `internal/server/pr_webhook.go` |
+| *Hosted only:* the pull request under review: review input, proposed files, where it reports (its key), status | `server.PullRequest` | `internal/server/pull_request.go` (embedding `review.Change`, `internal/review/change.go`) |
 
 The server implements one flow, the pull request webhook: a platform's `PRWebhook` turns each
 verified delivery into a `PullRequest`, and the server reviews it and has it report its status.
-`PullRequest` embeds `review.Source`, so a hosted platform's `Source` implements it. Both are
-defined by their consumer, the server; nothing hosted-only lives in `review`.
+`PullRequest` embeds `review.Change` (a `review.Source` with its review input and warnings, what
+`review.Evaluate` reviews), so a hosted platform's `Source` implements it. `PRWebhook` and
+`PullRequest` are defined by their consumer, the server.
 
 `platformtest` checks a platform against all of these, so a new platform is verified to plug in
 rather than assumed to.
@@ -131,17 +132,18 @@ func (p *PRWebhook) PullRequest(event string, body []byte) (server.PullRequest, 
   Fetch what the event doesn't carry (GitHub's webhook has no file list or patches) once, on first
   use, and share it, so `ChangedFiles` and `DiffContent` list the files once. Don't
   keep a failed listing, so a later call retries.
-- Don't paginate by hand in each call. Write one `paginate` helper for your client, as in
-  `ghplatform/paginate.go`.
+- Don't paginate by hand in each call. Use the client library's own pagination where it has one
+  (go-github's `*Iter` methods, gathered by `ghplatform/collect.go`), or write one helper.
+- Let one layer own rate limits. `ghplatform` turns off go-github's own rate limit check
+  (`github.WithDisableRateLimitCheck`) so its retrying transport sees every request and reports
+  `approval.ErrRateLimited`.
 - Request authentication belongs to the platform's `PRWebhook.VerifyWebhook`, not this constructor.
 
 ### `server.PullRequest`: the pull request under review
 
 ```go
 type PullRequest interface {
-    review.Source
-    ReviewInput(ctx context.Context) (approval.ReviewInput, error)
-    Warnings() []string
+    review.Change // review.Source + ReviewInput(ctx) and Warnings()
     Key() string
     Report(ctx context.Context, o approval.Outcome) error
 }
@@ -155,7 +157,7 @@ type PullRequest interface {
   fails, count the user as inactive: only a user the platform confirms is active.
 - **`Warnings`**: what reading the pull request found worth reporting that does not change the
   verdict (GitHub: a pull request too large for its file listing). The server calls it once the
-  reads are done and adds the warnings to the outcome.
+  reads are done and adds the warnings to the review's own (such as files no rule covers).
 - **`Key`**: where `Report` publishes, as a string, without calling the platform (GitHub: the
   repository, lower-cased, and the head commit, `owner/repo@sha`). The server runs the reviews of
   one key one at a time, and only the newest reports: a review requested while another of its key
@@ -164,8 +166,8 @@ type PullRequest interface {
   two that publish to different places must not.
 - **`Report`**: publish `o` as the pull request's status, replacing the earlier one (one name per
   platform; GitHub: a completed check run named `kit` on the head commit, a new one per report).
-  Map `review.Passed`, `review.Pending`, and `review.Failed` to distinct states, and
-  `review.Errored` to a state that neither passes nor waits (it may share the failed state, told
+  Map `approval.Passed`, `approval.Pending`, and `approval.Failed` to distinct states, and
+  `approval.Errored` to a state that neither passes nor waits (it may share the failed state, told
   apart by its text; GitHub: `success`, `action_required`, `failure`, and `failure`). Carry
   `o.Description(limit)`, with the platform's limit for a one-line summary (GitHub: the check run's
   title, 140), as the status's headline: it fits the summary, warnings, and as many items as there

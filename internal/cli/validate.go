@@ -24,7 +24,7 @@ var validateCmd = &cobra.Command{
 file in the repository's working tree. --file narrows the check to one rules file.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		filePath, _ := cmd.Flags().GetString("file")
-		s, err := openWorkspace(cmd.Context(), nil)
+		s, err := openWorkspace(cmd.Context(), cliLog())
 		if err != nil {
 			return err
 		}

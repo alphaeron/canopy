@@ -8,22 +8,11 @@ import (
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// ExecutableRule is the review algorithm's view of a single configured rule:
-// a rulesfile.Rule with the methods that execute it. It owns the rule level
-// of the pipeline: producing the
-// rule's approver targets, pruning the targets that can never contribute,
-// and executing the rule against the review state to build its RuleState.
-// As with every other layer of the pipeline (chain, layer, target) the
-// single entry point is Execute and the only state it returns is this
-// level's state: RuleState, derived entirely from its target states.
+// ExecutableRule is a rulesfile.Rule as the review algorithm runs it: it
+// produces the rule's approver targets, prunes those that can never
+// contribute, and evaluates the rule into its RuleState.
 type ExecutableRule struct {
 	rulesfile.Rule
-}
-
-// newExecutableRule adapts a configured rules-file rule into the algorithm's
-// rule level, the boundary where configuration becomes behavior.
-func newExecutableRule(rule rulesfile.Rule) ExecutableRule {
-	return ExecutableRule{Rule: rule}
 }
 
 // Targets returns the rule's approver targets, each carrying the rule's
@@ -78,13 +67,11 @@ func (r *ExecutableRule) Execute(
 	var resolvedBy []string
 
 	for _, target := range r.Targets() {
-		// Target-level execution carries its own self-approval policy and
-		// its own state; the rule only aggregates.
 		state := target.Execute(ctx, p, resolver)
 		if state.Status == StatusUnresolved {
 			log.Error("approve: could not resolve approver target",
 				"component", "rule", "phase", "approve",
-				"file", file, "layer", layer, "rule", r.Name,
+				"file", file, "layer", layer, "rule", r.String(),
 				"target", target.Target, "reason", state.Reason)
 		}
 		approverStates = append(approverStates, *state)
@@ -93,18 +80,13 @@ func (r *ExecutableRule) Execute(
 		}
 	}
 
-	// Determine rule-level status from its approver target states: the first
-	// unsatisfied target (any status that is not StatusSatisfied) escalates the
-	// rule to the target's own status.
+	// The first unsatisfied target sets the rule's status.
 	ruleStatus := StatusSatisfied
 	if unsat, ok := firstMatching(approverStates, func(at ApproverTargetState) bool { return at.Status != StatusSatisfied }); ok {
 		ruleStatus = unsat.Status
 	}
 
-	// The snapshot of the configuration captures what was effectively
-	// applied for this iteration: a corrupt or omitted combine_strategy is
-	// rewritten to the default (override) behavior so the state always
-	// reports what actually ran.
+	// The state records the strategy that ran: an omitted one is override.
 	appliedRule := r.Rule
 	appliedRule.CombineStrategy = appliedRule.CombineStrategy.Effective()
 

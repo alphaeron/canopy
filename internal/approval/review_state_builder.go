@@ -10,11 +10,12 @@ type ReviewStateBuilder struct {
 	// events is the trace in fixed-size blocks: a large review records
 	// millions of events, and growing one slice would copy them all again
 	// at each growth. Build joins the blocks once.
-	events  [][]Event
-	errors  []string
-	causes  []error // the errors behind errors, for errors.Is on Err
-	files   map[string]FileState
-	overall Status
+	events   [][]Event
+	errors   []string
+	causes   []error // the errors behind errors, for errors.Is on Err
+	warnings []string
+	files    map[string]FileState
+	overall  Status
 }
 
 // NewReviewStateBuilder creates a new review state builder.
@@ -84,43 +85,44 @@ func (b *ReviewStateBuilder) AddError(err error) {
 	b.causes = append(b.causes, err)
 }
 
-// WithFiles sets the per-file states on the state being built. It returns the receiver so the remaining steps chain together.
+// AddWarning records a condition worth reporting that does not change the
+// review's status (see ReviewState.Warnings).
+func (b *ReviewStateBuilder) AddWarning(w string) {
+	b.warnings = append(b.warnings, w)
+}
+
+// WithFiles sets the per-file states on the state being built.
 func (b *ReviewStateBuilder) WithFiles(files map[string]FileState) *ReviewStateBuilder {
-	if b == nil {
-		return b
-	}
 	b.files = files
 	return b
 }
 
-// WithOverall sets the overall approval status computed by the algorithm on the state being built. It returns the receiver so the remaining steps chain together.
+// WithOverall sets the overall status the algorithm computed.
 func (b *ReviewStateBuilder) WithOverall(overall Status) *ReviewStateBuilder {
-	if b == nil {
-		return b
-	}
 	b.overall = overall
 	return b
 }
 
-// Build assembles the full review state from the accumulated events, errors, and steps. When errors have accumulated, the overall approval status is forced to StatusError and Err is set to a combined error so callers can always tell that the review did not run cleanly. This is the only step that reads back the state; all earlier steps only write into it.
-func (b *ReviewStateBuilder) Build(baseErr error) *ReviewState {
-	errors := b.errors
+// Build assembles the review state. When errors have accumulated, the
+// overall status is StatusError and Err joins every one of them, so
+// errors.Is and errors.As on Err see each cause.
+func (b *ReviewStateBuilder) Build() *ReviewState {
 	overall := b.overall
-	if len(errors) > 0 {
+	var err error
+	if len(b.errors) > 0 {
 		overall = StatusError
-		if baseErr == nil {
-			baseErr = reviewErrors(b.causes)
-		}
+		err = reviewErrors(b.causes)
 	}
 	events := slices.Concat(b.events...)
 	if events == nil {
 		events = []Event{} // an empty trace, never a missing one
 	}
 	return &ReviewState{
-		Files:   b.files,
-		Overall: overall,
-		Events:  events,
-		Errors:  errors,
-		Err:     baseErr,
+		Files:    b.files,
+		Overall:  overall,
+		Events:   events,
+		Errors:   b.errors,
+		Warnings: b.warnings,
+		Err:      err,
 	}
 }

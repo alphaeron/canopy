@@ -21,13 +21,19 @@ var ErrRuleNotFound = errors.New("no such rule")
 var ErrRulesFileChanged = errors.New("rules file changed since it was read; reload and try again")
 
 // add appends rule to rules. A pattern the rules already declare is allowed
-// (a layer combines its rules in order); one that is not a valid regular
-// expression is rejected, so the rules stay valid after every change.
+// (a layer combines its rules in order); a rule with a violation
+// (rulesfile.Rules.Validate) is rejected, so a change never makes valid
+// rules invalid.
 func add(rules rulesfile.Rules, rule rulesfile.Rule) (rulesfile.Rules, error) {
-	if _, err := regexp.Compile(rule.Pattern); err != nil {
-		return nil, fmt.Errorf("add rule: invalid pattern %q: %w", rule.Pattern, err)
+	if err := check(rule); err != nil {
+		return nil, fmt.Errorf("add rule: %w", err)
 	}
 	return append(rules, rule), nil
+}
+
+// check is rule's violations as one error, or nil when it has none.
+func check(rule rulesfile.Rule) error {
+	return errors.Join(rulesfile.Rules{rule}.Validate()...)
 }
 
 // at checks that rules still hold target, unchanged, at target's position:
@@ -53,10 +59,14 @@ func sameRule(a, b rulesfile.Rule) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-// replace replaces the rule at target's position with rule (see at).
+// replace replaces the rule at target's position with rule (see at),
+// rejecting a rule with a violation as add does.
 func replace(rules rulesfile.Rules, target, rule rulesfile.Rule) (rulesfile.Rules, error) {
 	if err := at(rules, target); err != nil {
 		return nil, err
+	}
+	if err := check(rule); err != nil {
+		return nil, fmt.Errorf("edit rule: %w", err)
 	}
 	rules[target.Position] = rule
 	return rules, nil

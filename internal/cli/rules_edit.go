@@ -26,7 +26,7 @@ var rulesEditCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pattern := args[0]
 		mode, _ := resolveOutputMode(cmd)
-		s, err := openWorkspace(cmd.Context(), nil)
+		s, err := openWorkspace(cmd.Context(), cliLog())
 		if err != nil {
 			return err
 		}
@@ -44,7 +44,12 @@ var rulesEditCmd = &cobra.Command{
 
 		fields := editSeed(target)
 		if mode == modeTUI {
-			if fields, err = runRuleForm(fields, nil); err != nil {
+			fields, err = runRuleForm(fields, nil)
+			if errors.Is(err, tui.ErrAborted) {
+				fmt.Fprintln(os.Stderr, "edit aborted")
+				return nil
+			}
+			if err != nil {
 				return fmt.Errorf("run form: %w", err)
 			}
 		}

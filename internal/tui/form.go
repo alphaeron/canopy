@@ -2,7 +2,6 @@ package tui
 
 import (
 	"errors"
-	"fmt"
 
 	"charm.land/bubbles/v2/key"
 	huh "charm.land/huh/v2"
@@ -26,31 +25,10 @@ func RunForm(form *huh.Form) (bool, error) {
 // ErrAborted reports that the user cancelled an interactive prompt.
 var ErrAborted = errors.New("aborted")
 
-// Choice is one option of Pick: the label shown and the value returned.
+// Choice is one option of PickTree: the label shown and the value returned.
 type Choice struct {
 	Label string
 	Value string
-}
-
-// Pick asks the user to choose one of choices on the terminal and returns
-// its value, or ErrAborted if they cancel. The CLI uses it to resolve what
-// the TUI resolves by row, such as which rules file holds the rule to edit.
-func Pick(title string, choices []Choice) (string, error) {
-	var value string
-	opts := make([]huh.Option[string], len(choices))
-	for i, c := range choices {
-		opts[i] = huh.NewOption(Clean(c.Label), c.Value)
-	}
-	err := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title(Clean(title)).Options(opts...).Value(&value),
-	)).WithKeyMap(standaloneKeyMap()).Run()
-	if errors.Is(err, huh.ErrUserAborted) {
-		return "", ErrAborted
-	}
-	if err != nil {
-		return "", fmt.Errorf("pick: %w", err)
-	}
-	return value, nil
 }
 
 // standaloneKeyMap is huh's key map with esc added to quit, so the CLI's

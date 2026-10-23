@@ -43,10 +43,10 @@ func twoLayerFile() approval.FileState {
 		Path:   "svc/a.go",
 		Status: approval.StatusMissingApprovers,
 		Layers: []approval.LayerState{
-			{DirectoryPath: "", Active: true, Status: approval.StatusSatisfied,
+			{DirectoryPath: "", Status: approval.StatusSatisfied,
 				Rules:    []approval.RuleState{{Rule: rulesfile.Rule{Pattern: `.*`, Name: "security", CombineStrategy: rulesfile.RuleCombineStrategyUnion}, Approvers: []approval.ApproverTargetState{sec}, Status: approval.StatusSatisfied}},
 				Required: approval.ExecutableTargets{{ApproverTarget: sec.ApproverTarget}}},
-			{DirectoryPath: "svc", Active: true, Status: approval.StatusMissingApprovers,
+			{DirectoryPath: "svc", Status: approval.StatusMissingApprovers,
 				Rules:    []approval.RuleState{{Rule: rulesfile.Rule{Pattern: `\.go$`, CombineStrategy: rulesfile.RuleCombineStrategyUnion}, Approvers: []approval.ApproverTargetState{backend}, Status: approval.StatusMissingApprovers}},
 				Required: approval.ExecutableTargets{{ApproverTarget: sec.ApproverTarget}, {ApproverTarget: backend.ApproverTarget}}},
 		},
@@ -80,9 +80,9 @@ func TestFileReviewDetail(t *testing.T) {
 	}
 	text := strings.Join(chain, "\n")
 	for _, want := range []string{
-		rulesfile.FileName + " | active",
+		rulesfile.FileName + " | satisfied",
 		"security: .* | union: establishes the required approvers",
-		rulesfile.PathInDir("svc") + " | active",
+		rulesfile.PathInDir("svc") + " | missing approvers",
 		`\.go$ | union: adds its approvers to those required above`,
 		"→ requires org/sec (1), org/backend (2)",
 	} {
@@ -90,7 +90,7 @@ func TestFileReviewDetail(t *testing.T) {
 			t.Errorf("chain missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Index(text, rulesfile.PathInDir("svc")) < strings.Index(text, rulesfile.FileName+" | active") {
+	if strings.Index(text, rulesfile.PathInDir("svc")) < strings.Index(text, rulesfile.FileName+" | satisfied") {
 		t.Errorf("layers must run root first:\n%s", text)
 	}
 	trace := d.Tabs[1].Sections[0].Rows
@@ -170,9 +170,6 @@ func TestUncoveredSection(t *testing.T) {
 	if !strings.Contains(dirs[2].Note, "2 files") {
 		t.Errorf("note = %q", dirs[2].Note)
 	}
-	if s.NearestTo("other/dir") != rulesfile.FileName || newTestWorkspace(t, map[string]rulesfile.Rules{rulesfile.PathInDir("svc"): {}}).NearestTo(".") != "" {
-		t.Error("nearestTo must walk up to the root and report none past it")
-	}
 }
 
 // TestRuleMatchesOverlaps: a rule's overlaps are the other rules matching
@@ -181,18 +178,26 @@ func TestRuleMatchesOverlaps(t *testing.T) {
 	root := rulesfile.Rule{Pattern: ".*", RulesFile: rulesfile.FileName, Name: "all"}
 	goRule := rulesfile.Rule{Pattern: `\.go$`, RulesFile: rulesfile.PathInDir("svc"), Name: "go"}
 	docs := rulesfile.Rule{Pattern: `\.md$`, RulesFile: rulesfile.FileName, Position: 1}
-	m := newRuleMatches(&review.Result{Files: []review.FileMatch{
+	m := ruleMatches{match: &review.Result{Files: []review.FileMatch{
 		{Path: "svc/a.go", Rules: rulesfile.Rules{root, goRule}},
 		{Path: "svc/b.go", Rules: rulesfile.Rules{root, goRule}},
 		{Path: "README.md", Rules: rulesfile.Rules{root, docs}},
-	}}, nil)
+	}}}
 	rows := m.overlaps(root.Key())
 	if len(rows) != 2 || !strings.HasPrefix(rows[0].Text, "go:") || rows[0].Note != "2 shared files" || rows[1].Note != "1 shared file" {
 		t.Fatalf("overlaps = %+v", rows)
 	}
-	it := ruleItem(rulesfile.Rule{RulesFile: rulesfile.PathInDir("svc"), Pattern: `\.go$`}, m)
+	it := ruleItem(goRule, m)
 	if !strings.Contains(it.Description, "2 files") || len(it.Detail.Tabs) != 1 || len(it.Detail.Tabs[0].Sections[0].Rows) != 2 {
 		t.Errorf("rule item = %+v", it)
+	}
+	// Enter opens the chains of exactly the rule's own files, whatever else
+	// its pattern would match.
+	if it.Route == nil || it.Route.Command != "rules get" || !reflect.DeepEqual(it.Route.Values.Args, []string{review.ExactPattern("svc/a.go", "svc/b.go")}) {
+		t.Errorf("rule route = %+v, want rules get for the rule's files", it.Route)
+	}
+	if r := ruleFilesRoute(docs, nil); r != nil {
+		t.Errorf("a rule with no files has route %+v, want none", r)
 	}
 }
 

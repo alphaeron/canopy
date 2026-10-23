@@ -15,7 +15,7 @@ type FileMatch struct {
 	Path string `json:"path"`
 	// Rules is every rule that matched this file (all layers and all rules
 	// from a file's rules file chain), each with its RulesFile set. Empty
-	// when no rule matched.
+	// (encoded as []) when no rule matched.
 	Rules rulesfile.Rules `json:"rules"`
 	// Diff is the unified diff content when Options.IncludeDiff is set.
 	Diff string `json:"diff,omitempty"`

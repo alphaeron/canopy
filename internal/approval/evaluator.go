@@ -58,7 +58,7 @@ func (s *Evaluator) Execute(ctx context.Context, in ReviewInput, files []string)
 		if repoRules == nil {
 			return events.WithFiles(map[string]FileState{}).
 				WithOverall(StatusError).
-				Build(err)
+				Build()
 		}
 	} else {
 		events.AddEvent("fetch", "", "", "", StatusDone,
@@ -76,7 +76,7 @@ func (s *Evaluator) Execute(ctx context.Context, in ReviewInput, files []string)
 		events.AddError(err)
 		return events.WithFiles(map[string]FileState{}).
 			WithOverall(StatusError).
-			Build(err)
+			Build()
 	}
 
 	// Approve phase: evaluate the rule chains and assemble the final state.

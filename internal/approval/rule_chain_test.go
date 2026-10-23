@@ -41,7 +41,7 @@ func buildContext(approvers map[string]bool, isActive func(string) bool, repoOwn
 func buildLayer(dir, name string, strategy rulesfile.RuleCombineStrategy, targets ...rulesfile.ApproverTarget) RuleLayer {
 	return RuleLayer{
 		DirectoryPath: dir,
-		Rules:         []ExecutableRule{newExecutableRule(rulesfile.Rule{Name: name, CombineStrategy: strategy, Approvers: targets})},
+		Rules:         []ExecutableRule{{Rule: rulesfile.Rule{Name: name, CombineStrategy: strategy, Approvers: targets}}},
 	}
 }
 
@@ -89,13 +89,13 @@ func TestUnionRecurringTargetCountsPerOccurrence(t *testing.T) {
 	// per occurrence.
 	pr := buildContext(approverSet("team-a"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain(
-		"/src/file.go",
-		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
-		buildLayer("/src", "src", rulesfile.RuleCombineStrategyUnion, approver("team-a", 2)),
+		"src/file.go",
+		buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("src", "src", rulesfile.RuleCombineStrategyUnion, approver("team-a", 2)),
 	)
 	state := executeChain(t, rc, pr)
 
-	fs, ok := state.Files["/src/file.go"]
+	fs, ok := state.Files["src/file.go"]
 	if !ok {
 		t.Fatalf("missing file state for /src/file.go")
 	}
@@ -104,14 +104,14 @@ func TestUnionRecurringTargetCountsPerOccurrence(t *testing.T) {
 	}
 	// Per-occurrence evaluation against the same approver pool:
 	// occurrence 1 (root, requires 1) is satisfied by the one matching approver.
-	if !fs.Required[0].Satisfied || fs.Required[0].SatisfiedCount != 1 {
-		t.Errorf("root occurrence should be satisfied 1/1, got Satisfied=%v count=%d",
-			fs.Required[0].Satisfied, fs.Required[0].SatisfiedCount)
+	if fs.Required[0].Status != StatusSatisfied || fs.Required[0].SatisfiedCount != 1 {
+		t.Errorf("root occurrence should be satisfied 1/1, got status=%s count=%d",
+			fs.Required[0].Status, fs.Required[0].SatisfiedCount)
 	}
 	// occurrence 2 (/src, requires 2) still needs one more.
-	if fs.Required[1].Satisfied || fs.Required[1].SatisfiedCount != 1 || fs.Required[1].RequiredCount != 2 {
-		t.Errorf("/src occurrence should be unsatisfied 1/2, got Satisfied=%v count=%d required=%d",
-			fs.Required[1].Satisfied, fs.Required[1].SatisfiedCount, fs.Required[1].RequiredCount)
+	if fs.Required[1].Status == StatusSatisfied || fs.Required[1].SatisfiedCount != 1 || fs.Required[1].RequiredCount != 2 {
+		t.Errorf("src occurrence should be unsatisfied 1/2, got status=%s count=%d required=%d",
+			fs.Required[1].Status, fs.Required[1].SatisfiedCount, fs.Required[1].RequiredCount)
 	}
 	if fs.Status != StatusMissingApprovers {
 		t.Errorf("file status = %s, want missing_approvers", fs.Status)
@@ -129,12 +129,12 @@ func TestUnionPreservesBothOccurrences(t *testing.T) {
 	// yields two required entries with their respective counts.
 	pr := buildContext(approverSet("team-a", "team-b"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain(
-		"/src/x.go",
-		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
-		buildLayer("/src", "src", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
+		"src/x.go",
+		buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("src", "src", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
 	)
 	state := executeChain(t, rc, pr)
-	fs := state.Files["/src/x.go"]
+	fs := state.Files["src/x.go"]
 	if len(fs.Required) != 3 {
 		t.Fatalf("expected 3 target occurrences after union, got %d: %+v", len(fs.Required), fs.Required)
 	}
@@ -157,16 +157,16 @@ func TestIntersectKeepsSharedTargetOnly(t *testing.T) {
 	// README: root requires A+B, /src (intersect) requires B+C -> only B.
 	pr := buildContext(approverSet("b"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain(
-		"/src/x.go",
-		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("a", 1), approver("b", 1)),
-		buildLayer("/src", "src", rulesfile.RuleCombineStrategyIntersect, approver("b", 1), approver("c", 1)),
+		"src/x.go",
+		buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("a", 1), approver("b", 1)),
+		buildLayer("src", "src", rulesfile.RuleCombineStrategyIntersect, approver("b", 1), approver("c", 1)),
 	)
 	state := executeChain(t, rc, pr)
-	fs := state.Files["/src/x.go"]
+	fs := state.Files["src/x.go"]
 	if len(fs.Required) != 1 {
 		t.Fatalf("expected only the shared target b, got %+v", fs.Required)
 	}
-	if fs.Required[0].Target != "b" || !fs.Required[0].Satisfied {
+	if fs.Required[0].Target != "b" || fs.Required[0].Status != StatusSatisfied {
 		t.Errorf("expected b to be present and satisfied, got %+v", fs.Required[0])
 	}
 	if fs.Status != StatusSatisfied || state.Overall != StatusSatisfied {
@@ -178,12 +178,12 @@ func TestOverrideDiscardsParentRules(t *testing.T) {
 	// README: override -> subdirectory rules completely replace parent.
 	pr := buildContext(approverSet("team-b"), activeAllOwners(), []string{"zowner"})
 	rc := buildChain(
-		"/src/x.go",
-		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
-		buildLayer("/src", "src", rulesfile.RuleCombineStrategyOverride, approver("team-b", 1)),
+		"src/x.go",
+		buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("src", "src", rulesfile.RuleCombineStrategyOverride, approver("team-b", 1)),
 	)
 	state := executeChain(t, rc, pr)
-	fs := state.Files["/src/x.go"]
+	fs := state.Files["src/x.go"]
 	if len(fs.Required) != 1 || fs.Required[0].Target != "team-b" {
 		t.Fatalf("override should leave only team-b, got %+v", fs.Required)
 	}
@@ -195,9 +195,9 @@ func TestOverrideDiscardsParentRules(t *testing.T) {
 func TestFallbackSatisfiedByActiveOwnerApproval(t *testing.T) {
 	// No matching rules -> repository owner fallback, owner already approved.
 	pr := buildContext(approverSet("zowner"), activeAllOwners(), []string{"zowner"})
-	rc := buildChain("/orphan.go")
+	rc := buildChain("orphan.go")
 	state := executeChain(t, rc, pr)
-	fs := state.Files["/orphan.go"]
+	fs := state.Files["orphan.go"]
 	if !fs.UsedFallback {
 		t.Errorf("expected UsedFallback=true")
 	}
@@ -215,9 +215,9 @@ func TestFallbackUnsatisfiableWithNoActiveOwners(t *testing.T) {
 	// overall error, and a non-nil error propagates back to the caller so the
 	// PR can be blocked and a warning posted.
 	pr := buildContext(approverSet(), activeAllOwners(), []string{}) // no owners at all
-	rc := buildChain("/orphan.go")
+	rc := buildChain("orphan.go")
 	state := executeChain(t, rc, pr)
-	fs := state.Files["/orphan.go"]
+	fs := state.Files["orphan.go"]
 	if fs.Status != StatusError {
 		t.Errorf("file status = %s, want error", fs.Status)
 	}
@@ -235,7 +235,7 @@ func TestFallbackUnsatisfiableWithNoActiveOwners(t *testing.T) {
 func TestFallbackUnsatisfiableWhenAllOwnersInactive(t *testing.T) {
 	// Owners exist but are all inactive -> same unsatisfiable terminal state.
 	pr := buildContext(approverSet(), inactiveAllOwners(), []string{"zowner"})
-	rc := buildChain("/orphan.go")
+	rc := buildChain("orphan.go")
 	state := executeChain(t, rc, pr)
 	if state.Overall != StatusError {
 		t.Errorf("overall status = %s, want error", state.Overall)
@@ -243,7 +243,7 @@ func TestFallbackUnsatisfiableWhenAllOwnersInactive(t *testing.T) {
 	if state.Err == nil {
 		t.Errorf("expected non-nil error when all owners inactive")
 	}
-	fs := state.Files["/orphan.go"]
+	fs := state.Files["orphan.go"]
 	if fs.Status != StatusError {
 		t.Errorf("file status = %s, want error", fs.Status)
 	}
@@ -262,9 +262,9 @@ func TestFallbackUnresolvableOwnerIsUnresolved(t *testing.T) {
 	// and the accumulated error must force the overall status to
 	// StatusError, mirroring the non-fallback resolution-failure path.
 	pr := buildContext(approverSet(), activeAllOwners(), []string{"zowner"})
-	rc := buildChain("/orphan.go")
+	rc := buildChain("orphan.go")
 	state := executeChainWithResolver(t, rc, pr, failingResolver{})
-	fs := state.Files["/orphan.go"]
+	fs := state.Files["orphan.go"]
 	if !fs.UsedFallback {
 		t.Errorf("expected UsedFallback=true")
 	}
@@ -307,11 +307,11 @@ func TestGroupTargetResolvedAgainstMembers(t *testing.T) {
 	// is satisfied even though the group name never appears in
 	// approvers.
 	pr := buildContext(approverSet("bo"), activeAllOwners(), []string{"zowner"})
-	rc := buildChain("/src/x.go",
-		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-x", 1)),
+	rc := buildChain("src/x.go",
+		buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("team-x", 1)),
 	)
 	state := executeChainWithResolver(t, rc, pr, groupResolver{})
-	fs := state.Files["/src/x.go"]
+	fs := state.Files["src/x.go"]
 	if fs.UsedFallback {
 		t.Errorf("expected the group rule to satisfy the file, got fallback")
 	}
@@ -322,7 +322,7 @@ func TestGroupTargetResolvedAgainstMembers(t *testing.T) {
 		t.Fatalf("expected one tracked rule layer state, got %+v", fs.Layers)
 	}
 	ts := fs.Layers[0].Rules[0].Approvers[0]
-	if !ts.Satisfied || ts.Status != StatusSatisfied {
+	if ts.Status != StatusSatisfied {
 		t.Errorf("group target should be satisfied, got %+v", ts)
 	}
 	if len(ts.ResolvedBy) != 1 || ts.ResolvedBy[0] != "bo" {
@@ -337,11 +337,11 @@ func TestGroupTargetEligibleOnlyThroughAuthorIsPruned(t *testing.T) {
 	// applies.
 	pr := buildContext(approverSet(testAuthor),
 		func(s string) bool { return s == testAuthor }, []string{"zowner"})
-	rc := buildChain("/src/x.go",
-		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-y", 1)),
+	rc := buildChain("src/x.go",
+		buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("team-y", 1)),
 	)
 	state := executeChainWithResolver(t, rc, pr, groupResolver{})
-	fs := state.Files["/src/x.go"]
+	fs := state.Files["src/x.go"]
 	if !fs.UsedFallback {
 		t.Errorf("expected fallback after the group rule pruned to empty")
 	}
@@ -363,23 +363,23 @@ func TestRuleStateSnapshotsEffectiveCombineStrategy(t *testing.T) {
 	// (override) by the algorithm. The historical review state must report
 	// what actually ran, so that rule state snapshots the effective strategy,
 	// never the raw config value.
-	rule := newExecutableRule(rulesfile.Rule{
+	rule := ExecutableRule{Rule: rulesfile.Rule{
 		Name:            "root",
 		CombineStrategy: rulesfile.RuleCombineStrategy(0), // invalid sentinel
 		Approvers:       []rulesfile.ApproverTarget{approver("team-a", 1)},
-	})
+	}}
 	pr := buildContext(approverSet("team-a"), activeAllOwners(), []string{"zowner"})
-	rs := rule.Execute(t.Context(), newParticipants(pr, identity), &DefaultApproverResolver{}, "/src/x.go", "/", testLogger())
+	rs := rule.Execute(t.Context(), newParticipants(pr, identity), &DefaultApproverResolver{}, "src/x.go", "", testLogger())
 	if rs.CombineStrategy != rulesfile.RuleCombineStrategyOverride {
 		t.Errorf("snapshot combine strategy = %s, want override for an invalid config value", rs.CombineStrategy)
 	}
 	// Raw config values pass through unchanged.
-	valid := newExecutableRule(rulesfile.Rule{
+	valid := ExecutableRule{Rule: rulesfile.Rule{
 		Name:            "src",
 		CombineStrategy: rulesfile.RuleCombineStrategyIntersect,
 		Approvers:       []rulesfile.ApproverTarget{approver("team-a", 1)},
-	})
-	rs = valid.Execute(t.Context(), newParticipants(pr, identity), &DefaultApproverResolver{}, "/src/x.go", "/src", testLogger())
+	}}
+	rs = valid.Execute(t.Context(), newParticipants(pr, identity), &DefaultApproverResolver{}, "src/x.go", "src", testLogger())
 	if rs.CombineStrategy != rulesfile.RuleCombineStrategyIntersect {
 		t.Errorf("snapshot combine strategy = %s, want intersect pass-through", rs.CombineStrategy)
 	}
@@ -391,15 +391,15 @@ func TestAuthorApprovalIgnoredWhenSelfApproveDisallowed(t *testing.T) {
 	// author must not appear in the resolved members.
 	pr := buildContext(approverSet(testAuthor), activeAllOwners(), []string{"zowner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {{DirectoryPath: "/", Rules: []ExecutableRule{newExecutableRule(rulesfile.Rule{
+		"src/x.go": {{DirectoryPath: "", Rules: []ExecutableRule{{Rule: rulesfile.Rule{
 			Name:            "root",
 			CombineStrategy: rulesfile.RuleCombineStrategyUnion,
 			SelfApprove:     false,
 			Approvers:       []rulesfile.ApproverTarget{approver("team-y", 1)},
-		})}}},
+		}}}}},
 	}}
 	state := executeChainWithResolver(t, rc, pr, groupResolver{})
-	fs := state.Files["/src/x.go"]
+	fs := state.Files["src/x.go"]
 	if fs.Status != StatusMissingApprovers {
 		t.Errorf("file status = %s, want missing_approvers despite author approval", fs.Status)
 	}
@@ -407,7 +407,7 @@ func TestAuthorApprovalIgnoredWhenSelfApproveDisallowed(t *testing.T) {
 		t.Fatalf("expected 1 required target, got %+v", fs.Required)
 	}
 	s := fs.Required[0]
-	if s.Satisfied || s.SatisfiedCount != 0 {
+	if s.Status == StatusSatisfied || s.SatisfiedCount != 0 {
 		t.Errorf("expected the author's approval to be excluded, got %+v", s)
 	}
 	if len(s.ResolvedBy) != 0 {
@@ -420,15 +420,15 @@ func TestAuthorApprovalCountedWhenSelfApproveAllowed(t *testing.T) {
 	// approval now satisfies the target.
 	pr := buildContext(approverSet(testAuthor), activeAllOwners(), []string{"zowner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/src/x.go": {{DirectoryPath: "/", Rules: []ExecutableRule{newExecutableRule(rulesfile.Rule{
+		"src/x.go": {{DirectoryPath: "", Rules: []ExecutableRule{{Rule: rulesfile.Rule{
 			Name:            "root",
 			CombineStrategy: rulesfile.RuleCombineStrategyUnion,
 			SelfApprove:     true,
 			Approvers:       []rulesfile.ApproverTarget{approver("team-y", 1)},
-		})}}},
+		}}}}},
 	}}
 	state := executeChainWithResolver(t, rc, pr, groupResolver{})
-	fs := state.Files["/src/x.go"]
+	fs := state.Files["src/x.go"]
 	if fs.Status != StatusSatisfied {
 		t.Errorf("file status = %s, want satisfied via author self-approval", fs.Status)
 	}
@@ -445,13 +445,13 @@ func TestAuthorshipIsApproval(t *testing.T) {
 	for _, selfApprove := range []bool{true, false} {
 		pr := buildContext(approverSet(), activeAllOwners(), []string{"zowner"})
 		rc := RuleChain{FileChains: map[string][]RuleLayer{
-			"/src/x.go": {{DirectoryPath: "/", Rules: []ExecutableRule{newExecutableRule(rulesfile.Rule{
+			"src/x.go": {{DirectoryPath: "", Rules: []ExecutableRule{{Rule: rulesfile.Rule{
 				Name:        "root",
 				SelfApprove: selfApprove,
 				Approvers:   []rulesfile.ApproverTarget{approver("team-y", 1)},
-			})}}},
+			}}}}},
 		}}
-		fs := executeChainWithResolver(t, rc, pr, groupResolver{}).Files["/src/x.go"]
+		fs := executeChainWithResolver(t, rc, pr, groupResolver{}).Files["src/x.go"]
 		want := StatusMissingApprovers
 		if selfApprove {
 			want = StatusSatisfied
@@ -467,11 +467,11 @@ func TestRulesPrunedToEmptyFallBackButStillErrors(t *testing.T) {
 	// is skipped - an error condition - and the owner fallback satisfies the
 	// file, but the final state still terminates error.
 	pr := buildContext(approverSet("zowner"), func(s string) bool { return s == "zowner" }, []string{"zowner"}) // team-a inactive
-	rc := buildChain("/src/x.go",
-		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+	rc := buildChain("src/x.go",
+		buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
 	)
 	state := executeChain(t, rc, pr)
-	fs := state.Files["/src/x.go"]
+	fs := state.Files["src/x.go"]
 	if !fs.UsedFallback {
 		t.Errorf("expected fallback after rule pruning to empty")
 	}
@@ -506,12 +506,12 @@ func TestPrunedRuleErrorsEvenWhenLaterRuleSatisfies(t *testing.T) {
 		[]string{"zowner"},
 	)
 	rc := buildChain(
-		"/src/x.go",
-		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
-		buildLayer("/src", "src", rulesfile.RuleCombineStrategyUnion, approver("team-b", 1)),
+		"src/x.go",
+		buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1)),
+		buildLayer("src", "src", rulesfile.RuleCombineStrategyUnion, approver("team-b", 1)),
 	)
 	state := executeChain(t, rc, pr)
-	fs := state.Files["/src/x.go"]
+	fs := state.Files["src/x.go"]
 	if fs.Status != StatusSatisfied {
 		t.Errorf("file status = %s, want satisfied by the later rule", fs.Status)
 	}
@@ -528,11 +528,11 @@ func TestPerRuleStateTrackingInLayers(t *testing.T) {
 	// individual rule states in detail"; each LayerState must now expose its
 	// per-rule / per-target satisfaction breakdown.
 	pr := buildContext(approverSet("team-b"), activeAllOwners(), []string{"zowner"})
-	rc := buildChain("/src/x.go",
-		buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
+	rc := buildChain("src/x.go",
+		buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("team-a", 1), approver("team-b", 1)),
 	)
 	state := executeChain(t, rc, pr)
-	fs := state.Files["/src/x.go"]
+	fs := state.Files["src/x.go"]
 	if len(fs.Layers) != 1 {
 		t.Fatalf("expected 1 layer, got %d", len(fs.Layers))
 	}
@@ -548,10 +548,10 @@ func TestPerRuleStateTrackingInLayers(t *testing.T) {
 		t.Fatalf("expected 2 approver target states, got %d", len(rule.Approvers))
 	}
 	// team-a unsatisfied (1 required, 0 matching), team-b satisfied.
-	if rule.Approvers[0].Target != "team-a" || rule.Approvers[0].Satisfied {
+	if rule.Approvers[0].Target != "team-a" || rule.Approvers[0].Status == StatusSatisfied {
 		t.Errorf("team-a should be tracked as unsatisfied, got %+v", rule.Approvers[0])
 	}
-	if rule.Approvers[1].Target != "team-b" || !rule.Approvers[1].Satisfied {
+	if rule.Approvers[1].Target != "team-b" || rule.Approvers[1].Status != StatusSatisfied {
 		t.Errorf("team-b should be tracked as satisfied, got %+v", rule.Approvers[1])
 	}
 	if rule.Status != StatusMissingApprovers {
@@ -567,8 +567,8 @@ func TestFallbackUnsatisfiableBeatsSatisfiedFiles(t *testing.T) {
 	// terminal state even when other files are fully satisfied.
 	pr := buildContext(approverSet("owner"), inactiveAllOwners(), []string{"owner"})
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/ok.go":     {buildLayer("/", "root", rulesfile.RuleCombineStrategyUnion, approver("owner", 1))},
-		"/orphan.go": {},
+		"ok.go":     {buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("owner", 1))},
+		"orphan.go": {},
 	}}
 	state := executeChain(t, rc, pr)
 	// /ok.go: rule pruned (owner inactive by IsActive) -> fallback ->
@@ -616,19 +616,72 @@ func TestSharedChainIsTracedPerFile(t *testing.T) {
 	}
 }
 
-// TestPatternsByFile pins the chain as rule patterns per file, in chain
-// order (the repository root first), omitting files no rule applies to.
-func TestPatternsByFile(t *testing.T) {
+// TestRulesByFile pins the chain as rules per file, in chain order (the
+// repository root first), each located by rules file and position, with
+// files no rule applies to present and empty.
+func TestRulesByFile(t *testing.T) {
 	rules := rulesfile.Set{
-		rulesfile.FileName:         {{Pattern: `.*\.go$`}},
+		rulesfile.FileName:         {{Pattern: `.*\.go$`}, {Pattern: `.*\.go$`, Position: 1}},
 		rulesfile.PathInDir("src"): {{Pattern: `api`}},
 	}
 	chain, err := GetFileRuleChain(t.Context(), rules, []string{"main.go", "src/api.go", "docs/readme.md"}, nil, testLogger())
 	if err != nil {
 		t.Fatalf("GetFileRuleChain: %v", err)
 	}
-	want := map[string][]string{"main.go": {`.*\.go$`}, "src/api.go": {`.*\.go$`, `api`}}
-	if got := chain.PatternsByFile(); !reflect.DeepEqual(got, want) {
-		t.Errorf("PatternsByFile = %v, want %v", got, want)
+	keys := map[string][]rulesfile.RuleKey{}
+	for file, rs := range chain.RulesByFile() {
+		keys[file] = []rulesfile.RuleKey{}
+		for _, r := range rs {
+			keys[file] = append(keys[file], r.Key())
+		}
+	}
+	root0, root1 := rulesfile.RuleKey{RulesFile: rulesfile.FileName}, rulesfile.RuleKey{RulesFile: rulesfile.FileName, Position: 1}
+	want := map[string][]rulesfile.RuleKey{
+		"main.go":        {root0, root1},
+		"src/api.go":     {root0, root1, {RulesFile: rulesfile.PathInDir("src")}},
+		"docs/readme.md": {},
+	}
+	if !reflect.DeepEqual(keys, want) {
+		t.Errorf("RulesByFile keys = %v, want %v", keys, want)
+	}
+}
+
+// TestFallbackAuthorshipIsNotAnOwnerReview: a file no rule covers needs a
+// repository owner's review; no rule allows self-approval there, so an
+// owner authoring the change does not count, and the review warns that the
+// file is uncovered.
+func TestFallbackAuthorshipIsNotAnOwnerReview(t *testing.T) {
+	rc := buildChain("docs/readme.md")
+	in := ReviewInput{Author: "Alice", Owners: []string{"alice"}}
+
+	state := executeChain(t, rc, in)
+	fs := state.Files["docs/readme.md"]
+	if !fs.UsedFallback || fs.Status != StatusMissingApprovers || state.Overall != StatusMissingApprovers {
+		t.Fatalf("file = %+v, overall = %s; want the owners still to review", fs, state.Overall)
+	}
+	for _, r := range fs.Required {
+		if len(r.ResolvedBy) != 0 {
+			t.Errorf("owner %s counts %v; authorship must not count", r.Target, r.ResolvedBy)
+		}
+	}
+	if want := []string{UncoveredWarning(1)}; !reflect.DeepEqual(state.Warnings, want) {
+		t.Errorf("warnings = %q, want %q", state.Warnings, want)
+	}
+	if o := state.Outcome(); o.Verdict != Pending || !reflect.DeepEqual(o.Warnings, state.Warnings) {
+		t.Errorf("outcome = %+v, want pending with the review's warnings", o)
+	}
+
+	other := ReviewInput{Author: "carol", Approvers: []string{"alice"}, Owners: []string{"alice"}}
+	if got := executeChain(t, rc, other).Files["docs/readme.md"].Status; got != StatusSatisfied {
+		t.Errorf("approved by the owner: status = %s, want satisfied", got)
+	}
+}
+
+// TestCoveredFilesDoNotWarn: only files no rule covers are warned of; a
+// rule that prunes away falls back without the warning (it errors instead).
+func TestCoveredFilesDoNotWarn(t *testing.T) {
+	rc := buildChain("src/x.go", buildLayer("", "root", rulesfile.RuleCombineStrategyUnion, approver("bob", 1)))
+	if w := executeChain(t, rc, buildContext(approverSet("bob"), activeAllOwners(), []string{"zowner"})).Warnings; len(w) != 0 {
+		t.Errorf("warnings = %q, want none", w)
 	}
 }

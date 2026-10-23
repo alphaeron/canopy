@@ -4,14 +4,10 @@ import (
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// CombineStrategy is the pluggable algorithm that merges the accumulated
-// rule-target footprint with the incoming set of one rule. Implementing it
-// as a real strategy (not a switch inside the state type) lets each combining
-// algorithm be tested and evolved in isolation: the state holder keeps the
-// data and the event trace, and the strategy only carries the algorithm.
-// Unexported interface methods prevent strategies from being defined outside
-// this package.
-type CombineStrategy interface {
+// combineStrategy merges the targets accumulated from the rules above with
+// the targets of the next rule, and describes itself for the event trace and
+// for people.
+type combineStrategy interface {
 	apply(current, incoming ExecutableTargets) ExecutableTargets
 	note() string
 	// effect says what the strategy does to the approvers required by the
@@ -19,50 +15,35 @@ type CombineStrategy interface {
 	effect() string
 }
 
-// OverrideCombineStrategy discards everything accumulated from higher levels:
-// this rule's targets take total priority.
-type OverrideCombineStrategy struct{}
+// overrideStrategy discards the accumulated targets for the incoming ones.
+type overrideStrategy struct{}
 
-func (OverrideCombineStrategy) apply(_ ExecutableTargets, incoming ExecutableTargets) ExecutableTargets {
-	return incoming
-}
+func (overrideStrategy) apply(_, incoming ExecutableTargets) ExecutableTargets { return incoming }
 
-func (OverrideCombineStrategy) note() string {
-	return "override strategy - existing approvers replaced"
-}
+func (overrideStrategy) note() string { return "override strategy - existing approvers replaced" }
 
-func (OverrideCombineStrategy) effect() string {
-	return "replaces the approvers required above"
-}
+func (overrideStrategy) effect() string { return "replaces the approvers required above" }
 
-// UnionCombineStrategy keeps every target occurrence from every layer so each
-// per-layer required_count is satisfied independently. A recurring target
-// (e.g. root wants 1, /src wants 2) is appended once per occurrence against
-// the same approver pool.
-type UnionCombineStrategy struct{}
+// unionStrategy keeps every target occurrence, so each occurrence's
+// required_count is satisfied independently against the same approvers.
+type unionStrategy struct{}
 
-func (UnionCombineStrategy) apply(current, incoming ExecutableTargets) ExecutableTargets {
-	// Allocate a fresh backing array explicitly. Current and incoming may both
-	// hold views with spare capacity, so an append-based concatenation must
-	// never write into either caller's array.
+func (unionStrategy) apply(current, incoming ExecutableTargets) ExecutableTargets {
+	// A fresh backing array: current and incoming may have spare capacity
+	// that other chains share.
 	combined := make(ExecutableTargets, 0, len(current)+len(incoming))
 	combined = append(combined, current...)
 	return append(combined, incoming...)
 }
 
-func (UnionCombineStrategy) note() string {
-	return "union strategy - approvers combined with OR logic"
-}
+func (unionStrategy) note() string { return "union strategy - approvers combined with OR logic" }
 
-func (UnionCombineStrategy) effect() string {
-	return "adds its approvers to those required above"
-}
+func (unionStrategy) effect() string { return "adds its approvers to those required above" }
 
-// IntersectCombineStrategy keeps only the targets present in BOTH the
-// accumulated footprint and this rule's targets.
-type IntersectCombineStrategy struct{}
+// intersectStrategy keeps only the incoming targets also accumulated above.
+type intersectStrategy struct{}
 
-func (IntersectCombineStrategy) apply(current, incoming ExecutableTargets) ExecutableTargets {
+func (intersectStrategy) apply(current, incoming ExecutableTargets) ExecutableTargets {
 	m := make(map[string]bool, len(current))
 	for _, v := range current {
 		m[v.Target] = true
@@ -76,44 +57,22 @@ func (IntersectCombineStrategy) apply(current, incoming ExecutableTargets) Execu
 	return res
 }
 
-func (IntersectCombineStrategy) note() string {
+func (intersectStrategy) note() string {
 	return "intersection strategy - approvers combined with AND logic"
 }
 
-func (IntersectCombineStrategy) effect() string {
-	return "keeps only approvers also required above"
-}
+func (intersectStrategy) effect() string { return "keeps only approvers also required above" }
 
-// DefaultCombineStrategy applies when a rule's combine_strategy is corrupt or
-// omitted. Delegates to override; carries its own note so the event trace
-// stays distinguishable.
-type DefaultCombineStrategy struct{}
-
-func (d DefaultCombineStrategy) apply(current, incoming ExecutableTargets) ExecutableTargets {
-	return OverrideCombineStrategy{}.apply(current, incoming)
-}
-
-func (DefaultCombineStrategy) note() string {
-	return "default strategy"
-}
-
-func (DefaultCombineStrategy) effect() string {
-	return OverrideCombineStrategy{}.effect()
-}
-
-// newCombineStrategy adapts the configuration value read from a rules file at
-// the config-to-algorithm boundary. Corrupt or omitted strategies default to
-// override.
-func newCombineStrategy(s rulesfile.RuleCombineStrategy) CombineStrategy {
-	switch s {
-	case rulesfile.RuleCombineStrategyOverride:
-		return OverrideCombineStrategy{}
+// newCombineStrategy is the strategy the algorithm applies for s: an omitted
+// or unknown one is override (rulesfile.RuleCombineStrategy.Effective).
+func newCombineStrategy(s rulesfile.RuleCombineStrategy) combineStrategy {
+	switch s.Effective() {
 	case rulesfile.RuleCombineStrategyUnion:
-		return UnionCombineStrategy{}
+		return unionStrategy{}
 	case rulesfile.RuleCombineStrategyIntersect:
-		return IntersectCombineStrategy{}
+		return intersectStrategy{}
 	default:
-		return DefaultCombineStrategy{}
+		return overrideStrategy{}
 	}
 }
 

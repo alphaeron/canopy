@@ -41,7 +41,7 @@ type RuleCoverage struct {
 // rule are covered, and each rule's share of the universe is reported in
 // Result.GroupByRule order.
 func CoverageOf(m *Result) *CoverageReport {
-	report := &CoverageReport{Universe: len(m.Files)}
+	report := &CoverageReport{Universe: len(m.Files), Uncovered: []string{}}
 	for _, fm := range m.Files {
 		if len(fm.Rules) > 0 {
 			report.Covered++

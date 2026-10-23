@@ -14,18 +14,20 @@ import (
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
 
-// rulesGetCmd resolves the review rule chain for every file/regex argument.
-// Each arg is the regular expression of the files to analyze, matched
-// against the repository at HEAD exactly as the match/coverage engine
-// consumes it — this is the pure "which rules apply where" projection.
+// rulesGetCmd resolves the review rule chain for the files the regex
+// arguments select, matched against the working tree's files exactly as the
+// match/coverage engine consumes them: the pure "which rules apply where"
+// projection.
 var rulesGetCmd = &cobra.Command{
 	Use:   "get [pattern...]",
 	Short: "Get review rules for a file/regex",
-	Long: `The get subcommand allows for checking applicable review rules for
-a file/pattern matching a set of files.
+	Long: `The get subcommand shows the review rules that apply to each file the
+regular expressions select (a file matching any of them), from the
+repository-root rules file down.
 
 This way, review requirements can be visualized locally without opening a
 pull or merge request.`,
@@ -34,41 +36,44 @@ pull or merge request.`,
 
 // runRulesGet is rulesGetCmd's RunE, assigned in init: it opens the TUI, whose
 // routes refer back to the command, so a RunE literal would be an
-// initialization cycle.
+// initialization cycle. --json is one object: each selected file's rules,
+// in chain order, each naming its rules file and position.
 func runRulesGet(cmd *cobra.Command, args []string) error {
-	if mode, _ := resolveOutputMode(cmd); mode == modeTUI {
+	mode, _ := resolveOutputMode(cmd)
+	if mode == modeTUI {
 		return openTUI(cmd, rulesGetRoute(valuesFrom(cmd, args)))
 	}
-	if len(args) == 0 {
-		args = []string{`.*`}
-	}
-	engine, err := openEngine(nil)
+	engine, err := openEngine(cliLog())
 	if err != nil {
 		return err
 	}
-
-	mode, _ := resolveOutputMode(cmd)
-	for _, arg := range args {
-		paths, err := engine.Files(cmd.Context(), review.Options{Patterns: []string{arg}})
-		if err != nil {
-			return fmt.Errorf("find files for %q: %w", arg, err)
-		}
-		ruleChain, err := engine.RuleChain(cmd.Context(), paths)
-		if err != nil {
-			return fmt.Errorf("fetch rules for %q: %w", arg, err)
-		}
-		switch mode {
-		case modeJSON:
-			if err := writeJSON(os.Stdout, ruleChain.PatternsByFile()); err != nil {
-				return err
-			}
-		default:
-			if err := printRuleChain(os.Stdout, ruleChain); err != nil {
-				return err
-			}
-		}
+	paths, chain, err := ruleChainFor(cmd.Context(), engine, args)
+	if err != nil {
+		return err
 	}
-	return nil
+	if mode == modeJSON {
+		byFile := chain.RulesByFile()
+		out := make(map[string]rulesfile.Rules, len(paths))
+		for _, p := range paths {
+			out[p] = byFile[p]
+		}
+		return writeJSON(os.Stdout, out)
+	}
+	return printRuleChain(os.Stdout, chain)
+}
+
+// ruleChainFor is the files patterns select (every file when there are
+// none) with their rule chain.
+func ruleChainFor(ctx context.Context, engine *review.Engine, patterns []string) ([]string, approval.RuleChain, error) {
+	paths, err := engine.Files(ctx, review.Options{Patterns: patterns})
+	if err != nil {
+		return nil, approval.RuleChain{}, fmt.Errorf("find files: %w", err)
+	}
+	chain, err := engine.RuleChain(ctx, paths)
+	if err != nil {
+		return nil, approval.RuleChain{}, fmt.Errorf("fetch rules: %w", err)
+	}
+	return paths, chain, nil
 }
 
 // printRuleChain writes each file's chain as an indented tree: the file,
@@ -101,7 +106,7 @@ func printRule(b *strings.Builder, rule approval.ExecutableRule, indent string) 
 	fmt.Fprintf(b, "%sSelfApprove:          %t\n", indent, rule.SelfApprove)
 	fmt.Fprintf(b, "%sApprovers:\n", indent)
 	for _, approver := range rule.Approvers {
-		fmt.Fprintf(b, "%s  %s\n", indent, approver)
+		fmt.Fprintf(b, "%s  %s (%d)\n", indent, approver.Target, approver.RequiredCount)
 	}
 	b.WriteString("\n")
 }
@@ -112,21 +117,13 @@ func printRule(b *strings.Builder, rule approval.ExecutableRule, indent string) 
 // the regex first, as `rules files` does, rather than loading every file.
 func rulesGetRoute(v tui.Values) tui.Route {
 	r := commandRoute(rulesGetCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
-		patterns := v.Args
-		if len(patterns) == 0 {
-			patterns = []string{`.*`}
-		}
 		engine, err := openEngine(quietLog)
 		if err != nil {
 			return nil, err
 		}
-		paths, err := engine.Files(ctx, review.Options{Patterns: patterns})
+		_, chain, err := ruleChainFor(ctx, engine, v.Args)
 		if err != nil {
-			return nil, fmt.Errorf("find files: %w", err)
-		}
-		chain, err := engine.RuleChain(ctx, paths)
-		if err != nil {
-			return nil, fmt.Errorf("fetch rules: %w", err)
+			return nil, err
 		}
 		return rulesGetPage(chain, ownership{state: engine.Requirements(ctx, chain)}), nil
 	})

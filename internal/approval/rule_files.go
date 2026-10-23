@@ -14,9 +14,8 @@ type RuleFiles struct {
 }
 
 // GroupByRule inverts byFile, each file's applicable rules (with RulesFile
-// set), into one entry per distinct rule by Rule.Key, sorted by key. A
-// pattern declared more than once in one rules file is one entry, under the
-// declaration that comes first in a file's list.
+// set), into one entry per rule by Rule.Key, sorted by key: rules sharing a
+// pattern, even in one rules file, are separate entries.
 func GroupByRule(byFile map[string]rulesfile.Rules) []RuleFiles {
 	byKey := map[rulesfile.RuleKey]*RuleFiles{}
 	for file, rules := range byFile {

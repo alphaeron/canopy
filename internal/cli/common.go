@@ -13,8 +13,8 @@ import (
 // openEngine builds the match engine every command evaluates with: the
 // local platform over the repository containing the current directory. It
 // is the one place the CLI chooses a platform, so reviewing a change on a
-// hosted platform from the CLI only changes this function. log may be nil
-// (slog.Default()); the TUI passes quietLog.
+// hosted platform from the CLI only changes this function. log receives the
+// algorithm's structured output: commands pass cliLog(), the TUI quietLog.
 func openEngine(log *slog.Logger) (*review.Engine, error) {
 	_, engine, err := openLocal(log)
 	return engine, err
@@ -29,7 +29,17 @@ func openLocal(log *slog.Logger) (*gitRepo, *review.Engine, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return repo, review.New(local.NewSource(repo, log), log), nil
+	return repo, &review.Engine{Source: local.NewSource(repo, log), Log: log}, nil
+}
+
+// cliLog is the logger a command hands the algorithm: quiet, since a
+// command prints its result and every error it meets, unless --verbose asks
+// for the trace.
+func cliLog() *slog.Logger {
+	if verbose {
+		return slog.Default()
+	}
+	return quietLog
 }
 
 // positionFlagFor registers --position on rules edit or rules remove: which

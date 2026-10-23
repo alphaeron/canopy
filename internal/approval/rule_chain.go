@@ -15,8 +15,8 @@ import (
 // pipeline. Files that match the same rules may share one []RuleLayer, so a
 // chain's layers must not be modified.
 type RuleChain struct {
-	// Key: File path (e.g., "/src/api/v1/auth.go")
-	// Value: Topologically ordered rules from child up to the allowed parent boundary
+	// FileChains maps each repository-relative file path (e.g.
+	// "src/api/v1/auth.go") to its rule layers, from the root down.
 	FileChains map[string][]RuleLayer
 }
 
@@ -49,7 +49,7 @@ func (rc *RuleChain) Execute(
 
 	files := make(map[string]FileState, len(rc.FileChains))
 	evaluated := map[chainKey]*chainResult{}
-	var unsatisfiableFiles []string
+	uncovered := 0
 
 	for file, layers := range rc.FileChains {
 		if err := ctx.Err(); err != nil {
@@ -62,8 +62,8 @@ func (rc *RuleChain) Execute(
 			evaluated[keyOf(layers)] = r
 		}
 		fs := r.fileState(file, events)
-		if fs.UsedFallback && fs.Status == StatusError {
-			unsatisfiableFiles = append(unsatisfiableFiles, file)
+		if len(layers) == 0 {
+			uncovered++
 		}
 		log.Debug("approve: file evaluated",
 			"component", "rule_chain", "phase", "approve",
@@ -83,19 +83,22 @@ func (rc *RuleChain) Execute(
 		}
 	}
 
-	// Surface an error when any file is unsatisfiable so that callers can
-	// block the change and report why.
-	var overallErr error
-	if len(unsatisfiableFiles) > 0 {
-		overallErr = fmt.Errorf("unsatisfiable rules for %d file(s): %v",
-			len(unsatisfiableFiles), unsatisfiableFiles)
+	// A file no rule covers is reviewed by the repository owners; that
+	// does not change the verdict, but a reader should know.
+	if uncovered > 0 {
+		events.AddWarning(UncoveredWarning(uncovered))
 	}
 
-	// The builder forces Overall to StatusError and combines accumulated
-	// errors into Err when anything went wrong.
+	// The builder forces Overall to StatusError when errors accumulated.
 	return events.WithFiles(files).
 		WithOverall(overallStatus).
-		Build(overallErr)
+		Build()
+}
+
+// UncoveredWarning is the review warning for n files that no rule covers,
+// which fall back to the repository owners.
+func UncoveredWarning(n int) string {
+	return plural(n, "file") + " covered by no rule; the repository owners review them"
 }
 
 // chainKey identifies a chain by its layers' backing array: files whose
@@ -223,9 +226,7 @@ func (r *chainResult) fileState(file string, events *ReviewStateBuilder) FileSta
 	}
 	for _, state := range r.required {
 		if state.Status == StatusUnresolved {
-			events.AddError(fmt.Errorf(
-				"approver target %q for file %q: %s",
-				state.Target, file, state.Reason))
+			events.AddError(fmt.Errorf("approver target %q for file %q: %w", state.Target, file, state.err))
 		}
 	}
 	return fs
@@ -258,7 +259,7 @@ func (rc *RuleChain) prefetch(ctx context.Context, p participants, resolver Appr
 		}
 	}
 	names := slices.Collect(maps.Keys(named))
-	parallel.For(len(names), parallel.Limit, func(i int) {
+	parallel.For(len(names), func(i int) {
 		_, _ = resolver.Resolve(ctx, names[i]) // cached for evaluation, which reports any error
 	})
 
@@ -273,7 +274,7 @@ func (rc *RuleChain) prefetch(ctx context.Context, p participants, resolver Appr
 		}
 	}
 	users := slices.Collect(maps.Keys(first))
-	parallel.For(len(users), parallel.Limit, func(i int) { p.isActive(users[i]) })
+	parallel.For(len(users), func(i int) { p.isActive(users[i]) })
 }
 
 // statusFromApproverStates derives a layer/file status from a slice of
@@ -288,9 +289,7 @@ func statusFromApproverStates(states []ApproverTargetState) Status {
 			fileStatus = StatusMissingApprovers
 		}
 	}
-	// An unresolved target is worse than a missing approval: the first one
-	// present escalates the state to StatusUnresolved so the cause stays
-	// obvious in the state tree, mirroring the non-fallback branch.
+	// An unresolved target is worse than a missing approval.
 	if _, ok := firstMatching(states, func(s ApproverTargetState) bool { return s.Status == StatusUnresolved }); ok {
 		return StatusUnresolved
 	}
@@ -363,72 +362,57 @@ func (rc *RuleChain) evaluateFallback(
 				"file", file, "owner", owner, "error", resolveErr)
 			states = append(states, ApproverTargetState{
 				ApproverTarget: rulesfile.ApproverTarget{Target: owner, RequiredCount: 1},
-				SatisfiedCount: 0,
-				Satisfied:      false,
 				ResolvedBy:     []string{},
 				Status:         StatusUnresolved,
 				Reason:         resolveFailure(err),
+				err:            err,
 			})
 			continue
 		}
 
-		satisfiedCount := 0
+		// No rule covers the file, so no rule allows self-approval: the
+		// author's authoring never counts as an owner's review.
 		var resolved []string
 		for _, member := range members {
-			if p.approvers[member] {
-				satisfiedCount++
+			if member != p.author && p.approvers[member] {
 				resolved = append(resolved, member)
 			}
 		}
-
-		satisfied := satisfiedCount >= 1
 		st := StatusSatisfied
-		if !satisfied {
+		if len(resolved) == 0 {
 			st = StatusMissingApprovers
 		}
-
 		states = append(states, ApproverTargetState{
 			ApproverTarget: rulesfile.ApproverTarget{Target: owner, RequiredCount: 1},
-			SatisfiedCount: satisfiedCount,
-			Satisfied:      satisfied,
+			SatisfiedCount: len(resolved),
 			ResolvedBy:     resolved,
 			Status:         st,
-			Reason:         "",
 		})
 	}
 
 	return states, false
 }
 
-// ByRule inverts the chain from "which rules apply to this file" to "which
-// files does this rule apply to": one entry per distinct rule, by
-// rulesfile.RuleKey, sorted by pattern, then rules file, each rule's
-// RulesFile set. A pattern declared more than once in one rules file is one
-// entry, under the first declaration.
-func (rc *RuleChain) ByRule() []RuleFiles {
-	byFile := make(map[string]rulesfile.Rules, len(rc.FileChains))
+// RulesByFile is every rule applying to each file, in chain order, each
+// with its location set; a file no rule applies to has none.
+func (rc *RuleChain) RulesByFile() map[string]rulesfile.Rules {
+	out := make(map[string]rulesfile.Rules, len(rc.FileChains))
 	for file, layers := range rc.FileChains {
+		var rules rulesfile.Rules
 		for _, layer := range layers {
 			for _, rule := range layer.Rules {
 				r := rule.Rule
 				r.RulesFile = layer.RulesFile()
-				byFile[file] = append(byFile[file], r)
+				rules = append(rules, r)
 			}
 		}
-	}
-	return GroupByRule(byFile)
-}
-
-// PatternsByFile is the pattern of every rule applying to each file, in chain
-// order. A file no rule applies to is omitted.
-func (rc *RuleChain) PatternsByFile() map[string][]string {
-	out := map[string][]string{}
-	for file, layers := range rc.FileChains {
-		for _, layer := range layers {
-			for _, rule := range layer.Rules {
-				out[file] = append(out[file], rule.Pattern)
-			}
-		}
+		out[file] = rules
 	}
 	return out
+}
+
+// ByRule inverts the chain from "which rules apply to this file" to "which
+// files does this rule apply to": one entry per rule (see GroupByRule).
+func (rc *RuleChain) ByRule() []RuleFiles {
+	return GroupByRule(rc.RulesByFile())
 }

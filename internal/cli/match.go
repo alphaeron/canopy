@@ -46,7 +46,7 @@ func runMatchCmd(cmd *cobra.Command, args []string) error {
 	if mode == modeTUI {
 		return openTUI(cmd, matchRoute(valuesFrom(cmd, args)))
 	}
-	result, err := runMatch(cmd.Context(), opts, nil)
+	result, err := runMatch(cmd.Context(), opts, cliLog())
 	if err != nil {
 		return err
 	}
@@ -122,37 +122,36 @@ func renderMatchByScope(mode outputMode, groups []approval.RuleFiles) error {
 	return nil
 }
 
-// ruleTitles returns the names of the rules matching a file, or "none" if
+// ruleTitles names the rules matching a file (see ruleTitle), or "none" if
 // no rule matched.
 func ruleTitles(rules rulesfile.Rules) string {
 	if len(rules) == 0 {
 		return "none"
 	}
-	var out []string
-	for _, s := range rules {
-		if s.Name != "" {
-			out = append(out, s.Name)
-		}
+	out := make([]string, len(rules))
+	for i, r := range rules {
+		out[i] = ruleTitle(r)
 	}
-	if len(out) == 0 {
-		return "none"
-	}
-	return strings.Join(out, " ")
+	return strings.Join(out, ", ")
 }
 
 // matchRoute shows the match result per file, or per scope with --by-scope.
 // Each file is also evaluated for who must approve it.
 func matchRoute(v tui.Values) tui.Route {
 	return commandRoute(matchCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
-		result, err := runMatch(ctx, review.Options{
-			ChangedOnly: v.Bool("changed"),
-			IncludeDiff: v.Bool("diff"),
-			ScopeName:   v.Flag("scope"),
-		}, quietLog)
+		engine, err := openEngine(quietLog)
 		if err != nil {
 			return nil, err
 		}
-		own := ownershipOf(ctx, result.Paths())
+		result, err := matchWith(ctx, engine, review.Options{
+			ChangedOnly: v.Bool("changed"),
+			IncludeDiff: v.Bool("diff"),
+			ScopeName:   v.Flag("scope"),
+		})
+		if err != nil {
+			return nil, err
+		}
+		own := ownershipOf(ctx, engine, result.Paths())
 		if v.Bool("by-scope") {
 			return matchByScopePage(result.GroupByRule(), own), nil
 		}

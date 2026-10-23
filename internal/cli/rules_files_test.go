@@ -61,6 +61,10 @@ func TestBrokenRulesFile(t *testing.T) {
 	if _, ok := s.Rules[rulesfile.FileName]; !ok || len(s.Rules) != 1 {
 		t.Errorf("rules = %v, want only the root rules file", s.Rules)
 	}
+	// kit validate checks rules files as the review's platform does.
+	if s.Validator != engine.Source.Evaluator() {
+		t.Errorf("workspace validator = %v, want the engine's evaluator", s.Validator)
+	}
 	if fe, ok := errors.AsType[*approval.RulesFileError](s.Broken[bad]); !ok || fe.Op != "parse" {
 		t.Fatalf("broken = %v, want %s's parse error", s.Broken, bad)
 	}
@@ -76,14 +80,14 @@ func TestBrokenRulesFile(t *testing.T) {
 		t.Errorf("brokenNote = %q", got)
 	}
 
-	desc, badge, d := rulesFileDetail(s, bad, "")
+	desc, badge, d := rulesFileDetail(s, bad, "", ruleMatches{})
 	if badge != tui.BadgeFail || desc != "rules file · parse failed, skipped" {
 		t.Errorf("broken row = %q, %v; want a failed badge", desc, badge)
 	}
 	if f := d.Fields[len(d.Fields)-1]; f.Label != "Error" || f.Badge != tui.BadgeFail || !strings.Contains(f.Value, "parse rules file "+bad) {
 		t.Errorf("broken detail must show the error: %+v", d.Fields)
 	}
-	if _, badge, _ := rulesFileDetail(s, rulesfile.FileName, ""); badge != tui.BadgeOK {
+	if _, badge, _ := rulesFileDetail(s, rulesfile.FileName, "", ruleMatches{}); badge != tui.BadgeOK {
 		t.Errorf("a loaded rules file's badge = %v, want OK", badge)
 	}
 	if got := s.Validate(""); len(got[bad]) != 1 {

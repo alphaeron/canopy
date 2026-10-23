@@ -314,3 +314,45 @@ func TestWorkspaceBroken(t *testing.T) {
 		t.Errorf("Validate(other) must leave the broken file out: %v", got)
 	}
 }
+
+// TestWorkspaceRejectsInvalidRules: add and edit write only rules without
+// violations, so a change never leaves a rules file invalid.
+func TestWorkspaceRejectsInvalidRules(t *testing.T) {
+	w := newTestWorkspace(t, rulesfile.Set{rulesfile.FileName: {{Pattern: `.*`}}})
+	bad := rulesfile.Rule{Pattern: `\.go$`, Approvers: rulesfile.ApproverTargets{{Target: "bob", RequiredCount: 0}}}
+	if _, err := w.Add(rulesfile.FileName, bad); err == nil {
+		t.Error("Add accepted an approver with no required count")
+	}
+	target := w.Entries("")[0]
+	if _, err := w.Edit(target, bad); err == nil {
+		t.Error("Edit accepted an approver with no required count")
+	}
+	if got := loadTestRules(t, w, rulesfile.FileName); len(got) != 1 || len(got[0].Approvers) != 0 {
+		t.Errorf("rules on disk = %+v, want them unchanged", got)
+	}
+}
+
+// stubValidator reports one violation for every rules file it is given.
+type stubValidator struct{ seen []string }
+
+func (v *stubValidator) Validate(rules rulesfile.Set) map[string][]error {
+	out := map[string][]error{}
+	for p := range rules {
+		v.seen = append(v.seen, p)
+		out[p] = []error{errors.New("platform says no")}
+	}
+	return out
+}
+
+// TestWorkspaceValidateUsesValidator: validation goes through the review
+// platform's validator, narrowed to one rules file when asked.
+func TestWorkspaceValidateUsesValidator(t *testing.T) {
+	v := &stubValidator{}
+	w := &Workspace{Rules: rulesfile.Set{rulesfile.FileName: {{Pattern: `.*`}}, rulesfile.PathInDir("svc"): {{Pattern: `.*`}}}, Validator: v}
+	if got := w.Validate(rulesfile.PathInDir("svc")); len(got) != 1 || len(got[rulesfile.PathInDir("svc")]) != 1 {
+		t.Errorf("Validate(svc) = %v, want the validator's violation for svc only", got)
+	}
+	if !reflect.DeepEqual(v.seen, []string{rulesfile.PathInDir("svc")}) {
+		t.Errorf("validator saw %v, want only svc's rules file", v.seen)
+	}
+}

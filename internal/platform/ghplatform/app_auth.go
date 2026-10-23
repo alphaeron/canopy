@@ -160,10 +160,13 @@ func (a *appAuth) installationClient(installation int64) (*github.Client, error)
 	})
 }
 
-// client is a GitHub client on the configured API URL over transport.
+// client is a GitHub client on the configured API URL over transport. Its
+// own rate limit check is off: it would refuse a request locally, without
+// waiting or reporting approval.ErrRateLimited, once a response said the
+// limit is spent, so every request reaches retryTransport instead.
 func (a *appAuth) client(transport http.RoundTripper) (*github.Client, error) {
 	base := a.baseURL
-	return github.NewClient(github.WithTransport(transport), github.WithURLs(&base, &base))
+	return github.NewClient(github.WithTransport(transport), github.WithURLs(&base, &base), github.WithDisableRateLimitCheck())
 }
 
 // bearer authenticates each request with the bearer token that token

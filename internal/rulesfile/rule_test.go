@@ -1,8 +1,10 @@
 package rulesfile
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -224,5 +226,20 @@ func TestApproverTargetRequiredCountValidation(t *testing.T) {
 	r := Rule{Pattern: `.*`, Approvers: ApproverTargets{{Target: "a", RequiredCount: 0}}}
 	if len(Rules{r}.Validate()) == 0 {
 		t.Fatal("expected a required_count validation error")
+	}
+}
+
+// TestRuleListsEncodeEmptyNotNull: a rule without approvers, and an empty
+// rule list, encode as [] so JSON consumers need no null checks.
+func TestRuleListsEncodeEmptyNotNull(t *testing.T) {
+	got, err := json.Marshal(struct {
+		Rules Rules `json:"rules"`
+		Rule  Rule  `json:"rule"`
+	}{Rule: Rule{Pattern: "x"}})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if s := string(got); !strings.Contains(s, `"rules":[]`) || !strings.Contains(s, `"approvers":[]`) {
+		t.Errorf("json = %s, want empty lists", s)
 	}
 }

@@ -10,12 +10,11 @@ import "sync"
 // together stay well under GitHub's limit on concurrent requests.
 const Limit = 8
 
-// For calls f(i) for every i in [0, n), at most limit at a time, and
+// For calls f(i) for every i in [0, n), at most Limit at a time, and
 // returns once every call has returned. The calls run concurrently, so each
-// should write only its own result (e.g. index i of a slice). A limit below
-// 1 runs the calls one at a time.
-func For(n, limit int, f func(i int)) {
-	sem := make(chan struct{}, max(limit, 1))
+// should write only its own result (e.g. index i of a slice).
+func For(n int, f func(i int)) {
+	sem := make(chan struct{}, Limit)
 	var wg sync.WaitGroup
 	for i := range n {
 		sem <- struct{}{}

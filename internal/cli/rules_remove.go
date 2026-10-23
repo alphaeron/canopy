@@ -27,7 +27,7 @@ var rulesRemoveCmd = &cobra.Command{
 		pattern := args[0]
 		force, _ := cmd.Flags().GetBool("force")
 		mode, _ := resolveOutputMode(cmd)
-		s, err := openWorkspace(cmd.Context(), nil)
+		s, err := openWorkspace(cmd.Context(), cliLog())
 		if err != nil {
 			return err
 		}

@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"regexp"
 	"slices"
-	"sort"
+	"strings"
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/logx"
@@ -38,14 +38,10 @@ type Engine struct {
 	Log    *slog.Logger
 }
 
-// New constructs an Engine on the given Source and logger.
-func New(src Source, log *slog.Logger) *Engine {
-	return &Engine{Source: src, Log: log}
-}
-
 // Files resolves the sorted file universe for opts: ChangedFiles when
-// Options.ChangedOnly is true, AllFiles otherwise, narrowed by
-// Options.Patterns. An invalid pattern is an error.
+// Options.ChangedOnly is true, AllFiles otherwise (both sorted, as Source
+// lists them), narrowed by Options.Patterns. An invalid pattern is an
+// error.
 func (e *Engine) Files(ctx context.Context, opts Options) ([]string, error) {
 	res := make([]*regexp.Regexp, len(opts.Patterns))
 	for i, p := range opts.Patterns {
@@ -66,11 +62,11 @@ func (e *Engine) Files(ctx context.Context, opts Options) ([]string, error) {
 		return nil, err
 	}
 	if len(res) > 0 {
+		// A clone: the source's listing may be shared.
 		files = slices.DeleteFunc(slices.Clone(files), func(f string) bool {
 			return !slices.ContainsFunc(res, func(re *regexp.Regexp) bool { return re.MatchString(f) })
 		})
 	}
-	sort.Strings(files)
 	return files, nil
 }
 
@@ -88,7 +84,8 @@ func (e *Engine) RuleChain(ctx context.Context, files []string) (approval.RuleCh
 // Requirements runs the approve phase over chain with no approvals
 // simulated, on the source's platform, so each file's state says who must
 // approve it. Every approver counts as active and there are no repository
-// owners, so a file no rule covers is reported as an unsatisfiable fallback.
+// owners, so a file no rule covers is reported as an unsatisfiable
+// fallback.
 func (e *Engine) Requirements(ctx context.Context, chain approval.RuleChain) *approval.ReviewState {
 	return e.Source.Evaluator().Approve(ctx, approval.ReviewInput{}, chain)
 }
@@ -172,17 +169,10 @@ func (e *Engine) fileScopes(ctx context.Context, opts Options) (*Result, error) 
 	if err != nil {
 		return nil, err
 	}
-	res := &Result{RepoRoot: e.repoRoot()}
+	byFile := chain.RulesByFile()
+	res := &Result{RepoRoot: e.repoRoot(), Files: make([]FileMatch, 0, len(universe))}
 	for _, file := range universe {
-		fm := FileMatch{Path: file}
-		for _, layer := range chain.FileChains[file] {
-			for _, rule := range layer.Rules {
-				r := rule.Rule
-				r.RulesFile = layer.RulesFile()
-				fm.Rules = append(fm.Rules, r)
-			}
-		}
-		res.Files = append(res.Files, fm)
+		res.Files = append(res.Files, FileMatch{Path: file, Rules: byFile[file]})
 	}
 	return res, nil
 }
@@ -233,7 +223,7 @@ func (e *Engine) ValidateProposed(ctx context.Context, files []string) (map[stri
 		data []byte
 		err  error
 	}, len(pending))
-	parallel.For(len(pending), parallel.Limit, func(i int) {
+	parallel.For(len(pending), func(i int) {
 		heads[i].data, heads[i].err = e.Source.ReadHead(ctx, pending[i])
 	})
 
@@ -276,6 +266,15 @@ func (e *Engine) Review(ctx context.Context, files []string, in approval.ReviewI
 	return state
 }
 
-// ExactPattern is the Options.Patterns entry selecting exactly the file at
-// path.
-func ExactPattern(path string) string { return "^" + regexp.QuoteMeta(path) + "$" }
+// ExactPattern is the Options.Patterns entry selecting exactly the files at
+// paths.
+func ExactPattern(paths ...string) string {
+	quoted := make([]string, len(paths))
+	for i, p := range paths {
+		quoted[i] = regexp.QuoteMeta(p)
+	}
+	if len(quoted) == 1 {
+		return "^" + quoted[0] + "$"
+	}
+	return "^(?:" + strings.Join(quoted, "|") + ")$"
+}

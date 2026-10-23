@@ -108,7 +108,7 @@ func newRuleForm(f *rulesfile.Rule, rulesFiles []string) *huh.Form {
 			Value(&f.SelfApprove),
 		huh.NewInput().
 			Title("Approvers").
-			Placeholder("one per line, tab-separated").
+			Placeholder("one per line: target required_count").
 			Accessor(&approversText{text: rulesedit.ApproversToText(f.Approvers), targets: &f.Approvers}).
 			Validate(func(s string) error {
 				_, err := rulesedit.ParseApprovers(s)
@@ -118,7 +118,7 @@ func newRuleForm(f *rulesfile.Rule, rulesFiles []string) *huh.Form {
 }
 
 // runRuleForm runs the rule form on the terminal pre-filled from f and
-// returns the edited set, or f unchanged if the user cancels. The form's
+// returns the edited rule, or tui.ErrAborted if the user cancels. The form's
 // validation blocks submission with an empty pattern, an empty name, or a
 // pattern that does not compile, so on a nil error the pattern is compiled
 // and the name is non-empty. A non-empty rulesFiles adds a rules file picker,
@@ -126,8 +126,11 @@ func newRuleForm(f *rulesfile.Rule, rulesFiles []string) *huh.Form {
 func runRuleForm(f rulesfile.Rule, rulesFiles []string) (rulesfile.Rule, error) {
 	fields := f
 	submitted, err := tui.RunForm(newRuleForm(&fields, rulesFiles))
-	if err != nil || !submitted {
+	if err != nil {
 		return f, err
+	}
+	if !submitted {
+		return f, tui.ErrAborted
 	}
 	return fields, nil
 }

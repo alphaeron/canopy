@@ -51,7 +51,7 @@ func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 		},
 	}
 	s := &Evaluator{Fetch: fetch, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
-	rs := s.Execute(t.Context(), buildContext(approverSet("team-a"), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
+	rs := s.Execute(t.Context(), buildContext(approverSet("team-a"), func(string) bool { return true }, []string{"zowner"}), []string{"src/api.go"})
 
 	if rs.Err != nil {
 		t.Fatalf("clean run should not produce an error, got %v", rs.Err)
@@ -68,16 +68,16 @@ func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 	if !eventAt(rs, "fetch", "", StatusDone) {
 		t.Errorf("expected a completed fetch event")
 	}
-	if !eventAt(rs, "sift", "/src/api.go", StatusDone) {
+	if !eventAt(rs, "sift", "src/api.go", StatusDone) {
 		t.Errorf("expected a sift event for file /src/api.go")
 	}
-	if !eventAt(rs, "approve", "/src/api.go", StatusSatisfied) {
+	if !eventAt(rs, "approve", "src/api.go", StatusSatisfied) {
 		t.Errorf("expected a satisfied approve event for file /src/api.go")
 	}
 	if rs.Overall != StatusSatisfied {
 		t.Errorf("overall status = %s, want satisfied", rs.Overall)
 	}
-	if fs := rs.Files["/src/api.go"]; fs.Status != StatusSatisfied {
+	if fs := rs.Files["src/api.go"]; fs.Status != StatusSatisfied {
 		t.Errorf("file status = %s, want satisfied", fs.Status)
 	}
 }
@@ -85,7 +85,7 @@ func TestReviewerExecuteTracesFetchSiftAndApprovePhases(t *testing.T) {
 func TestReviewerExecuteFetchErrorFailsReview(t *testing.T) {
 	fetchErr := errors.New("no rules files in repository")
 	s := &Evaluator{Fetch: &stubFetcher{err: fetchErr}, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
-	rs := s.Execute(t.Context(), buildContext(approverSet(), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
+	rs := s.Execute(t.Context(), buildContext(approverSet(), func(string) bool { return true }, []string{"zowner"}), []string{"src/api.go"})
 
 	if rs.Overall != StatusError {
 		t.Errorf("overall status = %s, want error", rs.Overall)
@@ -114,7 +114,7 @@ func TestReviewerExecuteSiftErrorFailsReview(t *testing.T) {
 		},
 	}
 	s := &Evaluator{Fetch: fetch, Resolver: &DefaultApproverResolver{}, Log: testLogger()}
-	rs := s.Execute(t.Context(), buildContext(approverSet("team-a"), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
+	rs := s.Execute(t.Context(), buildContext(approverSet("team-a"), func(string) bool { return true }, []string{"zowner"}), []string{"src/api.go"})
 
 	if rs.Overall != StatusError {
 		t.Errorf("overall status = %s, want error after sift failure", rs.Overall)
@@ -125,12 +125,12 @@ func TestReviewerExecuteSiftErrorFailsReview(t *testing.T) {
 	if len(rs.Errors) == 0 {
 		t.Errorf("sift error must be accumulated in Errors, got none: %v", rs.Errors)
 	}
-	if !eventAt(rs, "sift", "/src/api.go", StatusError) {
+	if !eventAt(rs, "sift", "src/api.go", StatusError) {
 		t.Errorf("expected a sift phase error event for /src/api.go")
 	}
 	// The broken rule yields no layers -> repository owner fallback is
 	// tried, so the approve phase must still be traced.
-	if !eventAt(rs, "approve", "/src/api.go", StatusUnresolved) {
+	if !eventAt(rs, "approve", "src/api.go", StatusUnresolved) {
 		t.Errorf("expected the approve phase to fall back after the sift failure")
 	}
 }
@@ -146,7 +146,7 @@ func TestReviewerExecuteUnresolvableTargetIsTracked(t *testing.T) {
 	}
 	resolver := failingResolver{}
 	s := &Evaluator{Fetch: fetch, Resolver: resolver, Log: testLogger()}
-	rs := s.Execute(t.Context(), buildContext(approverSet("ghost-team"), func(string) bool { return true }, []string{"zowner"}), []string{"/src/api.go"})
+	rs := s.Execute(t.Context(), buildContext(approverSet("ghost-team"), func(string) bool { return true }, []string{"zowner"}), []string{"src/api.go"})
 
 	if len(rs.Errors) == 0 {
 		t.Errorf("resolution failure must be accumulated in Errors, got none")
@@ -154,7 +154,7 @@ func TestReviewerExecuteUnresolvableTargetIsTracked(t *testing.T) {
 	if rs.Overall != StatusError {
 		t.Errorf("overall status = %s, want error after resolution failure", rs.Overall)
 	}
-	fs := rs.Files["/src/api.go"]
+	fs := rs.Files["src/api.go"]
 	if fs.Status != StatusUnresolved {
 		t.Errorf("file status = %s, want unresolved", fs.Status)
 	}

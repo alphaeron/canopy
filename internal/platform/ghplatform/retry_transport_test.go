@@ -119,3 +119,32 @@ func TestRetryTransportStopsWhenCancelled(t *testing.T) {
 		t.Error("RoundTrip with a cancelled context succeeded, want the context's error")
 	}
 }
+
+// TestClientLeavesRateLimitsToTheTransport: after a response that spends
+// the primary limit, the platform's client still sends the next request,
+// so retryTransport (not go-github's local refusal) decides what a rate
+// limit means.
+func TestClientLeavesRateLimitsToTheTransport(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("X-RateLimit-Limit", "5000")
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+		_, _ = io.WriteString(w, `{"login":"alice"}`)
+	}))
+	t.Cleanup(srv.Close)
+	auth := &appAuth{baseURL: srv.URL + "/", transport: &retryTransport{base: http.DefaultTransport}, now: time.Now}
+	client, err := auth.client(http.DefaultTransport)
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	for range 2 {
+		if _, _, err := client.Users.Get(t.Context(), "alice"); err != nil {
+			t.Fatalf("Users.Get: %v", err)
+		}
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("requests reaching the API = %d, want 2", got)
+	}
+}

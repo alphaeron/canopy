@@ -25,7 +25,7 @@ func targetNames(targets ExecutableTargets) []string {
 
 func TestOverrideCombineReplacesAccumulatedTargets(t *testing.T) {
 	current, incoming := targetSet("a", "b"), targetSet("c")
-	result := OverrideCombineStrategy{}.apply(current, incoming)
+	result := overrideStrategy{}.apply(current, incoming)
 	if !reflect.DeepEqual(targetNames(result), []string{"c"}) {
 		t.Errorf("override should leave only incoming targets, got %v", targetNames(result))
 	}
@@ -33,13 +33,12 @@ func TestOverrideCombineReplacesAccumulatedTargets(t *testing.T) {
 
 func TestUnionCombinePreservesOccurrencesAndBackingArray(t *testing.T) {
 	current, incoming := targetSet("a", "b"), targetSet("b", "c")
-	result := UnionCombineStrategy{}.apply(current, incoming)
+	result := unionStrategy{}.apply(current, incoming)
 	if !reflect.DeepEqual(targetNames(result), []string{"a", "b", "b", "c"}) {
 		t.Fatalf("union should preserve every occurrence (incl. recurring b), got %v", targetNames(result))
 	}
 	// The result carries its own backing array: appending after the combine
 	// must not mutate the accumulated footprint.
-	// Appending after the combine must not mutate the footprint.
 	_ = append(result, ExecutableTarget{})
 	if len(current) != 2 {
 		t.Errorf("union must not write into the current backing array, current grew to %d", len(current))
@@ -48,36 +47,26 @@ func TestUnionCombinePreservesOccurrencesAndBackingArray(t *testing.T) {
 
 func TestIntersectCombineKeepsSharedTargetsOnly(t *testing.T) {
 	current, incoming := targetSet("a", "b"), targetSet("b", "c")
-	result := IntersectCombineStrategy{}.apply(current, incoming)
+	result := intersectStrategy{}.apply(current, incoming)
 	if !reflect.DeepEqual(targetNames(result), []string{"b"}) {
 		t.Errorf("intersect should leave only the shared target, got %v", targetNames(result))
 	}
 }
 
-func TestDefaultCombineStrategyMirrorsOverride(t *testing.T) {
-	current, incoming := targetSet("a"), targetSet("b")
-	result := DefaultCombineStrategy{}.apply(current, incoming)
-	if !reflect.DeepEqual(targetNames(result), []string{"b"}) {
-		t.Errorf("default strategy should behave like override, got %v", targetNames(result))
-	}
-}
-
 func TestNewCombineStrategyMapsConfigValues(t *testing.T) {
-	switch newCombineStrategy(rulesfile.RuleCombineStrategy(0)).(type) {
-	// the unknown / omitted sentinel
-	case DefaultCombineStrategy:
-	default:
-		t.Errorf("unknown config value should adapt to DefaultCombineStrategy")
+	tests := []struct {
+		s    rulesfile.RuleCombineStrategy
+		want combineStrategy
+	}{
+		{rulesfile.RuleCombineStrategy(0), overrideStrategy{}}, // omitted or unknown
+		{rulesfile.RuleCombineStrategyOverride, overrideStrategy{}},
+		{rulesfile.RuleCombineStrategyUnion, unionStrategy{}},
+		{rulesfile.RuleCombineStrategyIntersect, intersectStrategy{}},
 	}
-	switch newCombineStrategy(rulesfile.RuleCombineStrategyUnion).(type) {
-	case UnionCombineStrategy:
-	default:
-		t.Errorf("union config value should adapt to UnionCombineStrategy")
-	}
-	switch newCombineStrategy(rulesfile.RuleCombineStrategyIntersect).(type) {
-	case IntersectCombineStrategy:
-	default:
-		t.Errorf("intersect config value should adapt to IntersectCombineStrategy")
+	for _, tc := range tests {
+		if got := newCombineStrategy(tc.s); got != tc.want {
+			t.Errorf("newCombineStrategy(%v) = %T, want %T", tc.s, got, tc.want)
+		}
 	}
 }
 

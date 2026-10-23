@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"sort"
 
@@ -46,19 +47,19 @@ func (l *Source) Evaluator() *approval.Evaluator { return l.evaluator }
 func (l *Source) RepoRoot() string {
 	root, err := l.repo.Root()
 	if err != nil {
-		l.logger().Error("match: unable to resolve repository root",
-			"component", "match", "source", "local", "error", err)
+		l.logger().Error("unable to resolve repository root",
+			"component", "local", "error", err)
 	}
 	return root
 }
 
 // AllFiles lists the working tree's files, the file universe for matching,
 // coverage, and review: the files tracked at HEAD that still exist plus new
-// ones that are not ignored (gitrepo.Repository.WorktreeFiles), the same
-// files the rules are read from, so uncommitted additions count and
-// uncommitted deletions do not.
+// ones that are not ignored (gitrepo.Repository.WorktreeFiles). It is the
+// listing the rules are read from, shared with the evaluator's fetch, so
+// uncommitted additions count and uncommitted deletions do not.
 func (l *Source) AllFiles(ctx context.Context) ([]string, error) {
-	return l.repo.WorktreeFiles(ctx, func(string) bool { return true })
+	return l.repo.WorktreeFiles(ctx)
 }
 
 // ReadHead reads a file as the working tree has it, the head a local change
@@ -117,10 +118,10 @@ func (l *Source) DiffContent(ctx context.Context, path string) (string, error) {
 	}
 	info, err := fsys.Stat(path)
 	switch {
-	case osIsNotExist(err):
+	case errors.Is(err, fs.ErrNotExist):
 		info = nil
 	case err != nil:
-		return "", gitrepo.WrapReadError(path, err)
+		return "", fmt.Errorf("read %s: %w", path, err)
 	default:
 		newSize = info.Size()
 	}
@@ -164,7 +165,7 @@ func sameContent(old *object.File, open func() (io.ReadCloser, error), path stri
 	defer closeInto(&err, a, "blob for "+path)
 	b, err := open()
 	if err != nil {
-		return false, gitrepo.WrapReadError(path, err)
+		return false, fmt.Errorf("read %s: %w", path, err)
 	}
 	defer closeInto(&err, b, path)
 	bufA, bufB := make([]byte, 64<<10), make([]byte, 64<<10)
@@ -180,7 +181,7 @@ func sameContent(old *object.File, open func() (io.ReadCloser, error), path stri
 		case errA != nil && !endA:
 			return false, fmt.Errorf("read blob for %s: %w", path, errA)
 		case errB != nil && !endB:
-			return false, gitrepo.WrapReadError(path, errB)
+			return false, fmt.Errorf("read %s: %w", path, errB)
 		case endA || endB:
 			return endA && endB, nil
 		}
@@ -205,27 +206,20 @@ func (l *Source) worktreeContent(path string) (string, error) {
 	}
 	f, err := wt.Filesystem().Open(path)
 	if err != nil {
-		if osIsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return "", nil
 		}
-		return "", gitrepo.WrapReadError(path, err)
+		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	dat, err := io.ReadAll(f)
 	closeErr := f.Close()
 	if err != nil {
-		return "", gitrepo.WrapReadError(path, err)
+		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	if closeErr != nil {
 		return "", fmt.Errorf("close %s: %w", path, closeErr)
 	}
 	return string(dat), nil
-}
-
-// osIsNotExist reports whether err is the filesystem's not-exist error. The
-// check is against the OS package so the billy filesystem's wrapper errors
-// map cleanly.
-func osIsNotExist(err error) bool {
-	return gitrepo.IsNotExistErr(err)
 }
 
 func (l *Source) logger() *slog.Logger {

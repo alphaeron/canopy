@@ -40,7 +40,7 @@ func TestGitHubTruncatedTreeFailsClosed(t *testing.T) {
 	if _, err := src.Evaluator().Fetch.Execute(t.Context()); !errors.Is(err, approval.ErrTreeTruncated) {
 		t.Errorf("Fetch err = %v, want approval.ErrTreeTruncated", err)
 	}
-	state := review.New(src, testLogger()).Review(t.Context(), []string{"a.go"}, approval.ReviewInput{})
+	state := (&review.Engine{Source: src, Log: testLogger()}).Review(t.Context(), []string{"a.go"}, approval.ReviewInput{})
 	if state.Overall != approval.StatusError || !errors.Is(state.Err, approval.ErrTreeTruncated) {
 		t.Errorf("review = %s, %v; want an error wrapping approval.ErrTreeTruncated", state.Overall, state.Err)
 	}

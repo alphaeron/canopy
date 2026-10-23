@@ -67,19 +67,13 @@ func runReviewCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Other commands print only their result; the algorithm's trace is
-	// for --verbose, as it is in the TUI's Trace view.
-	log := quietLog
-	if verbose {
-		log = slog.Default()
-	}
-	res, err := runReview(cmd.Context(), opts, log)
+	res, err := runReview(cmd.Context(), opts, cliLog())
 	if err != nil {
 		return err
 	}
 	state := res.state
 	if mode == modeJSON {
-		if err := writeJSON(os.Stdout, state); err != nil {
+		if err := writeJSON(os.Stdout, approval.ReviewReport{State: state, Outcome: res.outcome}); err != nil {
 			return err
 		}
 	} else {
@@ -91,6 +85,7 @@ func runReviewCmd(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Printf("Overall: %s\n", statusLabel(state.Overall))
+		fmt.Printf("Outcome: %s: %s\n", res.outcome.Verdict, res.outcome.Description(0))
 	}
 	// The exit status is the review's verdict, as a hosted platform would
 	// report it, so a script can gate on it.

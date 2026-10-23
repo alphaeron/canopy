@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -54,11 +53,8 @@ func newRepo(t *testing.T, committed map[string]string) (string, *Repository) {
 	return dir, &Repository{Repository: *repo}
 }
 
-func isRulesFile(p string) bool { return path.Base(p) == "rules" }
-
 // TestWorktreeFiles pins the working-tree file set: committed files that
-// still exist, plus new files that are not ignored; deletions drop out and
-// the predicate matches whole names.
+// still exist, plus new files that are not ignored; deletions drop out.
 func TestWorktreeFiles(t *testing.T) {
 	dir, repo := newRepo(t, map[string]string{
 		"rules":       "a",
@@ -74,11 +70,11 @@ func TestWorktreeFiles(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "gone", "rules")); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	got, err := repo.WorktreeFiles(t.Context(), isRulesFile)
+	got, err := repo.WorktreeFiles(t.Context())
 	if err != nil {
 		t.Fatalf("WorktreeFiles: %v", err)
 	}
-	if want := []string{"rules", "svc/rules"}; !reflect.DeepEqual(got, want) {
+	if want := []string{".gitignore", "RULESET.md", "rules", "src/main.go", "svc/rules"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("WorktreeFiles = %v, want %v", got, want)
 	}
 }
@@ -86,7 +82,7 @@ func TestWorktreeFiles(t *testing.T) {
 func TestWorktreeFilesNoCommit(t *testing.T) {
 	dir, repo := newRepo(t, nil)
 	writeFiles(t, dir, map[string]string{"rules": "a"})
-	got, err := repo.WorktreeFiles(t.Context(), isRulesFile)
+	got, err := repo.WorktreeFiles(t.Context())
 	if err != nil {
 		t.Fatalf("WorktreeFiles: %v", err)
 	}
@@ -141,16 +137,16 @@ func TestHeadFilesIsASnapshot(t *testing.T) {
 	}
 }
 
-// TestFindFilesAtStopsWhenCancelled: a walk under a done context stops
-// with its error.
-func TestFindFilesAtStopsWhenCancelled(t *testing.T) {
+// TestHeadFilesStopsWhenCancelled: a walk under a done context stops with
+// its error, and the failed listing is not kept.
+func TestHeadFilesStopsWhenCancelled(t *testing.T) {
 	_, repo := newRepo(t, map[string]string{"a.txt": "a"})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := repo.FindFilesAt(ctx, ".*", "", false); !errors.Is(err, context.Canceled) {
-		t.Errorf("FindFilesAt with a done context: err = %v, want context.Canceled", err)
+	if _, err := repo.HeadFiles(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("HeadFiles with a done context: err = %v, want context.Canceled", err)
 	}
-	if got, err := repo.FindFilesAt(t.Context(), `\.txt$`, "", false); err != nil || !reflect.DeepEqual(got, []string{"a.txt"}) {
-		t.Errorf("FindFilesAt = %v, %v; want [a.txt]", got, err)
+	if got, err := repo.HeadFiles(t.Context()); err != nil || !reflect.DeepEqual(got, []string{"a.txt"}) {
+		t.Errorf("HeadFiles = %v, %v; want [a.txt]", got, err)
 	}
 }

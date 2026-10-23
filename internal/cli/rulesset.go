@@ -33,10 +33,11 @@ func openWorkspace(ctx context.Context, log *slog.Logger) (*rulesedit.Workspace,
 }
 
 // loadWorkspace is the rules files engine reads from repo, sharing the
-// engine's fetch. A rules file that cannot be read or parsed is kept in
-// Broken rather than failing the load, so the rules editors and views still
-// work and can report it (see warnBroken); only a fetch that read no rules
-// at all is an error.
+// engine's fetch, and validated as the engine's platform validates them. A
+// rules file that cannot be read or parsed is kept in Broken rather than
+// failing the load, so the rules editors and views still work and can
+// report it (see warnBroken); only a fetch that read no rules at all is an
+// error.
 func loadWorkspace(ctx context.Context, repo *gitRepo, engine *review.Engine) (*rulesedit.Workspace, error) {
 	root, err := repo.Root()
 	if err != nil {
@@ -51,7 +52,7 @@ func loadWorkspace(ctx context.Context, repo *gitRepo, engine *review.Engine) (*
 	for p, e := range failed {
 		broken[p] = e
 	}
-	return &rulesedit.Workspace{Root: root, Rules: rules, Broken: broken}, nil
+	return &rulesedit.Workspace{Root: root, Rules: rules, Broken: broken, Validator: engine.Source.Evaluator()}, nil
 }
 
 // warnBroken tells the user, on w (stderr, so stdout stays parseable), which

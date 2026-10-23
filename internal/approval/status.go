@@ -51,15 +51,7 @@ func (s Status) String() string {
 }
 
 // firstMatching returns the first element of items for which pred holds, or
-// the zero value and false when none do. It is a generic first-match
-// predicate over any state type the hierarchy holds (rules, layers, files,
-// approver targets), so the per-level status escalation and any other
-// "find the first item that matches this test" walk share one helper and
-// one definition of what "matching" means. The canonical unsatisfied test
-// across state levels is Status != StatusSatisfied; a site that looks for a
-// strictly-worse status (for example Unresolved, which beats
-// StatusMissingApprovers) is a severity query and passes its own predicate
-// instead of the canonical one.
+// the zero value and false when none do.
 func firstMatching[T any](items []T, pred func(T) bool) (T, bool) {
 	for _, item := range items {
 		if pred(item) {

@@ -23,9 +23,7 @@ type LayerState struct {
 	// target state travels through the layer state only.
 	Required   ExecutableTargets
 	ResolvedBy []string // active individuals/teams that contributed
-	Active     bool
 	Status     Status
-	Reason     string
 }
 
 // RuleState represents the state of a single rule in the review.
@@ -50,21 +48,19 @@ type RuleState struct {
 
 // ApproverTargetState represents the state of an approver target in the
 // review. It embeds the approver target's configuration by value,
-// preserving the historical snapshot semantics of RuleState.
-//
-// Satisfied is a convenience boolean for rendering and test assertions; the
-// canonical fact of satisfaction is Status == StatusSatisfied, and every
-// constructor of this type keeps the two in sync. All status escalation in
-// the hierarchy (rule, layer, file status) therefore reads Status, never the
-// boolean, so the algorithm has exactly one definition of "unsatisfied":
-// Status != StatusSatisfied.
+// preserving the historical snapshot semantics of RuleState. The target is
+// satisfied when Status is StatusSatisfied.
 type ApproverTargetState struct {
 	rulesfile.ApproverTarget
+	// SatisfiedCount is how many approvals count toward the target:
+	// len(ResolvedBy).
 	SatisfiedCount int
-	Satisfied      bool
 	ResolvedBy     []string // individuals/teams that contributed to satisfaction
 	Status         Status
 	Reason         string
+	// err is why a StatusUnresolved target could not be resolved, kept so
+	// the review's Err still matches it with errors.Is.
+	err error
 }
 
 // Ownership is who answers for a file when no approvals are simulated.
@@ -77,14 +73,14 @@ const (
 	// owners approve the file.
 	OwnedByFallback
 	// OwnershipBroken means the file's approvers cannot be determined,
-	// because a target does not resolve or its evaluation failed.
+	// because a target does not resolve.
 	OwnershipBroken
 )
 
 // Ownership classifies who answers for the file.
 func (fs FileState) Ownership() Ownership {
 	switch {
-	case fs.Status == StatusUnresolved || fs.Status == StatusError && !fs.UsedFallback:
+	case fs.Status == StatusUnresolved:
 		return OwnershipBroken
 	case fs.UsedFallback:
 		return OwnedByFallback

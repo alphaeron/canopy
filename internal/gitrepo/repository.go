@@ -8,9 +8,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
-	"path"
-	"regexp"
 	"slices"
 	"sync"
 
@@ -28,9 +25,9 @@ import (
 // universe is empty, because a repository with no commit has no tracked files
 // and no tracked rules.
 //
-// A Repository is a snapshot: it reads the worktree status and HEAD's file
-// list once, on first use, and reuses them, since each walks the whole
-// repository. Open a new Repository to see later changes. It is safe for
+// A Repository is a snapshot: it reads the worktree status, HEAD's file
+// list, and the working tree's file list once, on first use, and reuses
+// them, since each walks the whole repository. Open a new Repository to see later changes. It is safe for
 // concurrent use.
 type Repository struct {
 	git.Repository
@@ -38,6 +35,7 @@ type Repository struct {
 	mu        sync.Mutex
 	status    git.Status // nil until read
 	headPaths []string   // nil until listed
+	worktree  []string   // nil until listed
 }
 
 // HasCommits reports whether HEAD resolves: false means the repository has
@@ -53,14 +51,13 @@ func (r *Repository) HasCommits() bool {
 // or the storage directory for a bare repository. It errors when neither
 // filesystem exposes a local path, as with an in-memory repository.
 func (r *Repository) Root() (string, error) {
-	// 1. Check if the worktree filesystem exposes a Root path
 	if wt, err := r.Worktree(); err == nil {
 		if hasRoot, ok := wt.Filesystem().(interface{ Root() string }); ok {
 			return hasRoot.Root(), nil
 		}
 	}
 
-	// 2. Fallback for bare repositories (inspect storage filesystem)
+	// A bare repository has only its storage directory.
 	if s, ok := r.Storer.(*filesystem.Storage); ok {
 		if hasRoot, ok := s.Filesystem().(interface{ Root() string }); ok {
 			return hasRoot.Root(), nil
@@ -68,48 +65,6 @@ func (r *Repository) Root() (string, error) {
 	}
 
 	return "", errors.New("underlying filesystem does not expose a local disk root")
-}
-
-// FindFiles lists every file at the given reference whose path matches
-// pattern (a regular expression). It delegates to FindFilesAt with the
-// reference's name as the revision to resolve.
-func (r *Repository) FindFiles(ctx context.Context, pattern string, revision *plumbing.Reference, isAbsolute bool) ([]string, error) {
-	return r.FindFilesAt(ctx, pattern, plumbing.Revision(revision.Name()), isAbsolute)
-}
-
-// FindFilesAt lists every file at the commit that rev resolves to (empty
-// rev means HEAD) whose path matches pattern (a regular expression). It
-// resolves the revision before touching the tree, so a revision that does
-// not exist is an error, never a silently-empty file list.
-func (r *Repository) FindFilesAt(ctx context.Context, pattern string, rev plumbing.Revision, isAbsolute bool) ([]string, error) {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, err
-	}
-	repoRoot, err := r.Root()
-	if err != nil {
-		return nil, err
-	}
-	if rev == "" {
-		rev = "HEAD"
-	}
-	h, err := r.ResolveRevision(rev)
-	if err != nil {
-		return nil, err
-	}
-	var paths []string
-	if err := r.walkFiles(ctx, *h, func(name string) {
-		if !re.MatchString(name) {
-			return
-		}
-		if isAbsolute {
-			name = path.Join(repoRoot, name)
-		}
-		paths = append(paths, name)
-	}); err != nil {
-		return nil, err
-	}
-	return paths, nil
 }
 
 // HeadFiles lists every file in HEAD's tree, sorted, listing them on first
@@ -191,22 +146,18 @@ func (r *Repository) Status() (git.Status, error) {
 }
 
 // WorktreeFiles lists the repository-relative, slash-separated paths of the
-// files in the working tree that satisfy keep, sorted: files tracked at HEAD
-// that have not been deleted, plus new files (staged or untracked) that are
-// not ignored. It is the file set a local, pre-pull-request view should see:
-// uncommitted additions count and uncommitted deletions do not. A repository
-// with no commit yields only new files.
-func (r *Repository) WorktreeFiles(ctx context.Context, keep func(path string) bool) ([]string, error) {
-	set := map[string]bool{}
+// files in the working tree, sorted: files tracked at HEAD that have not
+// been deleted, plus new files (staged or untracked) that are not ignored.
+// It is the file set a local, pre-pull-request view should see: uncommitted
+// additions count and uncommitted deletions do not. A repository with no
+// commit yields only new files. The list is made on first use (see
+// Repository) and shared: callers must not modify it.
+func (r *Repository) WorktreeFiles(ctx context.Context) ([]string, error) {
+	head := []string{}
 	if r.HasCommits() {
-		head, err := r.HeadFiles(ctx)
-		if err != nil {
+		var err error
+		if head, err = r.HeadFiles(ctx); err != nil {
 			return nil, fmt.Errorf("list files at HEAD: %w", err)
-		}
-		for _, p := range head {
-			if keep(p) {
-				set[p] = true
-			}
 		}
 	}
 	// Status leaves out ignored files, so ignored rules files never appear.
@@ -214,10 +165,16 @@ func (r *Repository) WorktreeFiles(ctx context.Context, keep func(path string) b
 	if err != nil {
 		return nil, fmt.Errorf("worktree status: %w", err)
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.worktree != nil {
+		return r.worktree, nil
+	}
+	set := make(map[string]bool, len(head))
+	for _, p := range head {
+		set[p] = true
+	}
 	for p, st := range status {
-		if !keep(p) {
-			continue
-		}
 		switch {
 		case st.Worktree == git.Deleted || st.Staging == git.Deleted:
 			delete(set, p)
@@ -225,7 +182,8 @@ func (r *Repository) WorktreeFiles(ctx context.Context, keep func(path string) b
 			set[p] = true
 		}
 	}
-	return slices.Sorted(maps.Keys(set)), nil
+	r.worktree = slices.Sorted(maps.Keys(set))
+	return r.worktree, nil
 }
 
 // FileAt is the file at path in the commit that revision (typically
@@ -263,18 +221,4 @@ func (r *Repository) FileAt(path, revision string) (*object.File, error) {
 	}
 	f.Name = path
 	return f, nil
-}
-
-// WrapReadError wraps a filesystem read error with the file path so callers
-// can diagnose exactly which file failed to be read.
-func WrapReadError(path string, err error) error {
-	return fmt.Errorf("read %s: %w", path, err)
-}
-
-// IsNotExistErr reports whether err is the operating system's not-exist
-// error. Matching on os.ErrNotExist (not string equality) is correct even
-// when the error has been carried through a billy filesystem wrapper, which
-// wraps the underlying OS error.
-func IsNotExistErr(err error) bool {
-	return errors.Is(err, os.ErrNotExist)
 }

@@ -189,11 +189,9 @@ type ownership struct {
 	err   error
 }
 
-func ownershipOf(ctx context.Context, paths []string) ownership {
-	engine, err := openEngine(quietLog)
-	if err != nil {
-		return ownership{err: err}
-	}
+// ownershipOf is who must approve each of paths, read through engine, so
+// a page shares one read of the repository.
+func ownershipOf(ctx context.Context, engine *review.Engine, paths []string) ownership {
 	chain, err := engine.RuleChain(ctx, paths)
 	if err != nil {
 		return ownership{err: fmt.Errorf("evaluate approvers: %w", err)}

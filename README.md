@@ -35,18 +35,19 @@ The review rules for a pull request are read from its **base branch**, at the ba
 
 As with CODEOWNERS, a pull request cannot change its own requirements: `KIT` files it adds, modifies, or deletes take effect once it merges. The review server validates the ones it adds or modifies (as `kit validate` does) at the pull request's head, failing the review on any violation (its report names the invalid files), so a broken `KIT` file cannot be merged.
 
-The CLI does the opposite on purpose: it reads the working tree's `KIT` files, uncommitted changes included, to preview the rules a branch proposes. Otherwise `kit review` judges a change as the server does: it validates the `KIT` files the working tree changes, failing the review on any violation, and its exit status is the review's verdict, zero only when the review passes.
+The CLI does the opposite on purpose: it reads the working tree's `KIT` files, uncommitted changes included, to preview the rules a branch proposes. Otherwise `kit review` judges a change as the server does: it validates the `KIT` files the working tree changes, failing the review on any violation, and its exit status is the review's verdict, zero only when the review passes. `kit review --json` carries that verdict as its `outcome` (verdict, summary, items, and warnings) beside the review state. `kit validate` validates `KIT` files as the review's platform does.
 
 ### Repository Owner Fallback
 
-When a file falls back to the repository owners, each owner becomes a reviewer for that file, required once. On GitHub the repository owner is the repository's owner account (`owner` in `owner/repo`).
+When a file falls back to the repository owners, each owner becomes a reviewer for that file, required once. No rule covers the file, so no rule allows self-approval: authoring the change never counts as an owner's review, even when the author is an owner. A file that no rule covers at all is also reported as a warning (`N files covered by no rule; the repository owners review them`), which does not change the verdict. On GitHub the repository owner is the repository's owner account (`owner` in `owner/repo`).
 
 ## Configuration File Schema
 
 Each directory in the repository can host a `KIT` file to localize approval rules.
 
 ```yaml
-# RegEx matching relative to the CURRENT directory location
+# A regular expression matched against each file's full repository-relative
+# path (e.g. "svc/api/main.go"), whichever directory this KIT file is in.
 - ".*\.go":
     name: "Core Backend Review"
 
@@ -99,7 +100,7 @@ The approve phase is a chain of independent layers. Each layer consumes only the
 State flows upward in one direction only: chain status derives from file status, file status derives from per-target states, layer status derives from its rule states, and rule status derives from its approver target states. No layer reads a state "above" itself.
 
 ### Author Self-Approval (`self_approve`)
-The self-approval policy is a requirement of the rule and travels with every approver target that the rule produces. Every self-approval decision in the algorithm funnels through one predicate, `ExecutableTarget.contributes`, and only two edge cases exist:
+The self-approval policy is a requirement of the rule and travels with every approver target that the rule produces. Every self-approval decision a rule makes funnels through one predicate, `ExecutableTarget.contributes`, and only two edge cases exist (a file no rule covers has no rule to allow it, so the owner fallback never counts the author):
 
 * **The target is the author themselves.** If `self_approve: false` and a rule directly targets the PR author, the target is `inactive` and never satisfiable, even if the author has approved.
 * **The author is a member of a resolved group.** Inactive members are ignored. If `self_approve: false`, the author's approval is sliced out of the group's eligible members: the group can still be satisfied by every other member, and the author never appears in `ResolvedBy`. If the group's only active member is the author, the whole target prunes away with the rule.
@@ -131,7 +132,7 @@ The runtime application evaluates a change (a GitHub pull request, or the local 
    1. FETCH PHASE  ──► Walk tree from target files up to root (respecting ignore_parent_dirs)
           │
           ▼
-   2. SIFT PHASE   ──► Match target files against glob patterns; process configuration scoping
+   2. SIFT PHASE   ──► Match target files against rule patterns; process configuration scoping
           │
           ▼
    3. APPROVE PHASE ──► Compute final approval metrics, check self-approval rights, verify signatures
@@ -149,7 +150,7 @@ The runtime application evaluates a change (a GitHub pull request, or the local 
 1. Traverse the collected configurations chronologically from Top to Bottom (Root down to Leaf).
 2. Assess every localized rule block against the targeted file:
    * Skip the rule block completely if `current_directory_only: true` and the file is nested.
-   * Evaluate the target path against the glob `pattern` relative to the current file node.
+   * Match the rule's `pattern`, a regular expression, against the file's full repository-relative path.
 3. If a pattern matches, reference the file's `combine_strategy`:
    * If `override`, purge all rule criteria accumulated from higher ancestral folders for this pattern space and insert the current criteria.
    * If `union`, append the rule constraints directly into the active evaluation array.
@@ -163,7 +164,7 @@ The runtime application evaluates a change (a GitHub pull request, or the local 
    * Increment counts when an active approver matches a member identity target.
    * If a rule's targets have all been pruned away (inactive members, excluded author, or unresolvable targets), the rule is **skipped and the skip is recorded as an error**; it still falls back to the preceding rule's criteria, but the final overall state terminates `error` regardless of that fallback.
 3. Mark a rule block as **Satisfied** once each target's internal `actual_count >= required_count`.
-4. Report the result back on the platform — passing only if all rules across all files resolve to a **Satisfied** state. GitHub: a completed check run named `kit` on the pull request's head commit. Its title summarizes the outcome in one line, and its summary lists in full what the outcome is about (the approvers still needed, or the invalid `KIT` files) and any warnings, such as a very large pull request. Its conclusion is `success` when the review is satisfied, `action_required` while approvals are missing, and `failure` when the pull request proposes an invalid `KIT` file or the review could not produce a valid result: an internal `error` status (a GitHub failure, a listing too large to evaluate, a skipped or unsatisfiable rule) or a review that could not run or timed out; the title tells these apart. Each report is a new check run, and GitHub shows the latest. Require the `kit` check in branch protection to block merging until it succeeds. The review never comments on the pull request.
+4. Report the result back on the platform — passing only if all rules across all files resolve to a **Satisfied** state. GitHub: a completed check run named `kit` on the pull request's head commit. Its title summarizes the outcome in one line, and its summary lists in full what the outcome is about (the approvers still needed, or the invalid `KIT` files) and any warnings, such as files no rule covers or a very large pull request. Its conclusion is `success` when the review is satisfied, `action_required` while approvals are missing, and `failure` when the pull request proposes an invalid `KIT` file or the review could not produce a valid result: an internal `error` status (a GitHub failure, a listing too large to evaluate, a skipped or unsatisfiable rule) or a review that could not run or timed out; the title tells these apart. Each report is a new check run, and GitHub shows the latest. Require the `kit` check in branch protection to block merging until it succeeds. The review never comments on the pull request.
 
 On GitHub, approvals are each reviewer's latest decisive review: a later change request or dismissal cancels an approval, and comments change nothing. An approval made before the latest push still counts. The author's own reviews are ignored here: authoring the pull request is the author's approval, and `self_approve` decides whether it counts.
 

@@ -35,7 +35,7 @@ func runRulesList(cmd *cobra.Command, args []string) error {
 		return openTUI(cmd, rulesListRoute(valuesFrom(cmd, args)))
 	}
 	filePath, _ := cmd.Flags().GetString("file")
-	s, err := openWorkspace(cmd.Context(), nil)
+	s, err := openWorkspace(cmd.Context(), cliLog())
 	if err != nil {
 		return err
 	}
@@ -48,7 +48,7 @@ func runRulesList(cmd *cobra.Command, args []string) error {
 	}
 	entries := s.Entries(only)
 	if mode == modeJSON {
-		return writeJSON(os.Stdout, rulesJSON(entries))
+		return writeJSON(os.Stdout, entries)
 	}
 	if err := writeTable(os.Stdout, []string{"Rules File", "Position", "Pattern", "Name", "Strategy", "Approvers"}, ruleRows(entries)); err != nil {
 		return err
@@ -64,19 +64,6 @@ func narrowedNotice(w io.Writer, only string, total int) error {
 	}
 	_, err := fmt.Fprintf(w, "showing %s, 1 of %d rules files; omit --file to list all\n", only, total)
 	return err
-}
-
-// rulesJSON is rules as the rules list JSON: never null, and neither is a
-// rule's approver list.
-func rulesJSON(rules rulesfile.Rules) rulesfile.Rules {
-	out := make(rulesfile.Rules, 0, len(rules))
-	for _, r := range rules {
-		if r.Approvers == nil {
-			r.Approvers = rulesfile.ApproverTargets{}
-		}
-		out = append(out, r)
-	}
-	return out
 }
 
 // ruleRows are the table rows for entries.
@@ -119,34 +106,36 @@ func rulesListRoute(v tui.Values) tui.Route {
 			return nil, err
 		}
 		match, err := matchWith(ctx, engine, review.Options{})
-		return rulesPage(s, only, newRuleMatches(match, err)), nil
+		return rulesPage(s, only, ruleMatches{match: match, err: err}), nil
 	})
 }
 
 // ruleMatches is one match over the repository, from which the rules page
 // shows each rule's reach and its overlaps; err is why it is unavailable.
+// The zero value has no files.
 type ruleMatches struct {
 	match *review.Result
 	err   error
 }
 
-func newRuleMatches(match *review.Result, err error) ruleMatches {
-	return ruleMatches{match: match, err: err}
-}
-
 // files are the files the rule with key matched.
 func (m ruleMatches) files(key rulesfile.RuleKey) []string {
+	if m.match == nil {
+		return nil
+	}
 	return m.match.FilesOf(key)
 }
 
 // overlaps are the other rules matching any of the rule's files, with how
 // many files each shares, ordered by that count.
 func (m ruleMatches) overlaps(key rulesfile.RuleKey) []tui.Row {
+	if m.match == nil {
+		return nil
+	}
 	overlaps := m.match.Overlaps(key)
 	rows := make([]tui.Row, 0, len(overlaps))
 	for _, o := range overlaps {
-		r := rulesGetRoute(tui.Values{Args: []string{o.Pattern}})
-		rows = append(rows, tui.Row{Text: ruleLabel(o.Name, o.Pattern) + " in " + o.Location(), Note: countOf(o.Shared, "shared file"), Route: &r})
+		rows = append(rows, tui.Row{Text: ruleLabel(o.Name, o.Pattern) + " in " + o.Location(), Note: countOf(o.Shared, "shared file"), Route: ruleFilesRoute(o.Rule, m.files(o.Key()))})
 	}
 	return rows
 }
@@ -174,23 +163,38 @@ func rulesPage(s *rulesedit.Workspace, only string, matches ruleMatches) tui.Pag
 // ruleItem is a rule row: the detail shows the full rule, what its
 // strategy does, how many files it matches, and the other rules matching
 // the same files, with the files themselves in a tab. Enter drills into
-// `rules get <pattern>`, the files the pattern matches and their rule
-// chains.
+// the rule chains of the files this rule applies to (see ruleFilesRoute).
 func ruleItem(rule rulesfile.Rule, matches ruleMatches) tui.Item {
-	route := rulesGetRoute(tui.Values{Args: []string{rule.Pattern}})
 	fields := append(ruleFieldsDetail(rule),
 		tui.Field{Label: "Effect", Value: approval.CombineStrategyEffect(rule.CombineStrategy, false)},
 	)
 	desc := orNone(rule.Name) + " · " + rule.Location()
 	d := tui.Detail{Fields: fields}
+	it := tui.Item{Title: rule.Pattern, Value: rule}
 	if matches.err == nil {
 		files := matches.files(rule.Key())
+		it.Route = ruleFilesRoute(rule, files)
 		d.Fields = append(d.Fields, tui.Field{Label: "Matches", Value: countOf(len(files), "file")})
 		d.Sections = []tui.Section{{Title: "Overlaps · rules matching the same files", Rows: matches.overlaps(rule.Key())}}
 		d.Tabs = []tui.Tab{{Title: "Files", Sections: []tui.Section{fileLinks("Files", files)}}}
 		desc += " · " + countOf(len(files), "file")
 	}
-	return tui.Item{Title: rule.Pattern, Description: desc, Detail: d, Route: &route, Value: rule}
+	it.Description, it.Detail = desc, d
+	return it
+}
+
+// ruleFilesRoute is `rules get` for exactly the files rule applies to, so
+// opening a rule shows its own files' chains, not those of every file its
+// pattern matches (a pattern alone names neither where the rule applies nor
+// which of the rules sharing it this is). nil when the rule applies to no
+// file.
+func ruleFilesRoute(rule rulesfile.Rule, files []string) *tui.Route {
+	if len(files) == 0 {
+		return nil
+	}
+	r := rulesGetRoute(tui.Values{Args: []string{review.ExactPattern(files...)}})
+	r.Title = "files of " + rule.String()
+	return &r
 }
 
 // ruleFieldsDetail is r's definition as detail fields, with the rules file

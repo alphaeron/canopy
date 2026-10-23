@@ -1,6 +1,7 @@
 package rulesfile
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -93,6 +94,27 @@ func (r Rule) String() string {
 	return out
 }
 
+// MarshalJSON encodes the rules as a JSON list, empty rather than null when
+// there are none.
+func (rules Rules) MarshalJSON() ([]byte, error) {
+	if rules == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal([]Rule(rules))
+}
+
+// ruleFieldKeys are the YAML keys of Rule's fields; any other key of a
+// rule's mapping is its pattern.
+var ruleFieldKeys = func() map[string]bool {
+	keys := map[string]bool{}
+	for f := range reflect.TypeFor[Rule]().Fields() {
+		if name, _, _ := strings.Cut(f.Tag.Get("yaml"), ","); name != "" && name != "-" {
+			keys[name] = true
+		}
+	}
+	return keys
+}()
+
 // UnmarshalYAML implements yaml.Unmarshaler. It accepts the rule's fields
 // either nested under its pattern key or alongside it, and takes the one
 // key that is not a known field as the rule's Pattern.
@@ -100,93 +122,47 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
 		return fmt.Errorf("expected a mapping node block")
 	}
-
-	// 1. Dynamically collect all known YAML tags from the Rule struct fields
-	knownKeys := make(map[string]bool)
-	t := reflect.TypeOf(Rule{})
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		tag := field.Tag.Get("yaml")
-		if tag != "" && tag != "-" {
-			if idx := strings.Index(tag, ","); idx != -1 {
-				tag = tag[:idx]
-			}
-			knownKeys[tag] = true
-		}
-	}
-
-	// 2. Determine if the fields are flat or nested.
-	// If there is exactly one key-value pair (len == 2) and that key is NOT a known field,
-	// it means this is a single object root wrapper: `".*\\.go": { name: ... }`
-	targetNode := value
-	var dynamicKey string
-
-	if len(value.Content) == 2 && !knownKeys[value.Content[0].Value] {
-		dynamicKey = value.Content[0].Value
-		targetNode = value.Content[1] // Pivot down to the nested block where the fields actually live
+	fields := value
+	var pattern string
+	if len(value.Content) == 2 && !ruleFieldKeys[value.Content[0].Value] {
+		// `pattern: {fields}`
+		pattern, fields = value.Content[0].Value, value.Content[1]
 	} else {
-		// It's a flat structure (like inside the slice sequence). Loop to find the unknown key.
+		// `{pattern: ~, fields...}`
 		for i := 0; i < len(value.Content); i += 2 {
-			keyStr := value.Content[i].Value
-			if !knownKeys[keyStr] {
-				dynamicKey = keyStr
+			if key := value.Content[i].Value; !ruleFieldKeys[key] {
+				pattern = key
 				break
 			}
 		}
 	}
-
-	// 3. Decode the actual content fields from the target node
+	// alias drops the methods, so decoding does not recurse.
 	type alias Rule
-	var dummy alias
-	if err := targetNode.Decode(&dummy); err != nil {
+	var decoded alias
+	if err := fields.Decode(&decoded); err != nil {
 		return err
 	}
-
-	// 4. Cast and copy the parsed struct back
-	*r = Rule(dummy)
-	r.Pattern = dynamicKey // Assign the dynamic key to your field
-
+	*r = Rule(decoded)
+	r.Pattern = pattern
 	return nil
 }
 
-// MarshalYAML serializes the rule dynamically in the format {pattern: { name: ..., ... }}.
-// It automatically handles new fields added to the Rule struct without needing code updates.
-func (r Rule) MarshalYAML() (interface{}, error) {
-	// 1. Create a local type alias to bypass this custom MarshalYAML method
-	// and avoid infinite recursive calling loops.
-	type alias Rule
-
-	// 2. Marshal the aliased struct. The `yaml:"-"` on the Pattern field
-	// will automatically prevent it from leaking into the child node fields.
-	content, err := yaml.Marshal(alias(r))
-	if err != nil {
+// MarshalYAML implements yaml.Marshaler: the rule is written as
+// `pattern: {fields}`, the form UnmarshalYAML reads.
+func (r Rule) MarshalYAML() (any, error) {
+	type alias Rule // drops the methods, so encoding does not recurse
+	var fields yaml.Node
+	if err := fields.Encode(alias(r)); err != nil {
 		return nil, fmt.Errorf("marshal rule %q fields: %w", r.Pattern, err)
 	}
-
-	// 3. Unmarshal the generated YAML payload into a generic node tree
-	var docNode yaml.Node
-	if err := yaml.Unmarshal(content, &docNode); err != nil {
-		return nil, fmt.Errorf("decode rule %q fields node: %w", r.Pattern, err)
-	}
-
-	// 4. Pivot from the DocumentNode wrapper down to the underlying MappingNode
-	var fieldsNode *yaml.Node
-	if docNode.Kind == yaml.DocumentNode && len(docNode.Content) == 1 {
-		fieldsNode = docNode.Content[0]
-	} else {
-		fieldsNode = &docNode
-	}
-
-	if fieldsNode.Kind != yaml.MappingNode {
+	if fields.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("rule %q did not marshal to a mapping", r.Pattern)
 	}
-
-	// 5. Build and return the wrapper map mapping [Pattern -> Fields]
 	return &yaml.Node{
 		Kind: yaml.MappingNode,
 		Content: []*yaml.Node{
 			{Kind: yaml.ScalarNode, Tag: "!!str", Value: r.Pattern},
-			fieldsNode,
+			&fields,
 		},
 	}, nil
 }

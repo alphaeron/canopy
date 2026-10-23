@@ -249,10 +249,7 @@ func incomplete(reported, listed int) bool {
 
 // listFiles lists every file a pull request changes, with its patch.
 func listFiles(ctx context.Context, client *github.Client, pr *pullRequest) ([]prFile, error) {
-	opts := &github.ListOptions{PerPage: perPage}
-	page, err := paginate(opts, func() ([]*github.CommitFile, *github.Response, error) {
-		return client.PullRequests.ListFiles(ctx, pr.owner, pr.repo, pr.number, opts)
-	})
+	page, err := collect(client.PullRequests.ListFilesIter(ctx, pr.owner, pr.repo, pr.number, &github.ListOptions{PerPage: perPage}))
 	if err != nil {
 		return nil, fmt.Errorf("list files of %s: %w", pr, err)
 	}
@@ -382,10 +379,7 @@ func (r *Source) ReviewInput(ctx context.Context) (approval.ReviewInput, error) 
 // approvers lists the reviewers whose latest decisive review approves,
 // sorted and in canonical form.
 func (r *Source) approvers(ctx context.Context) ([]string, error) {
-	opts := &github.ListOptions{PerPage: perPage}
-	reviews, err := paginate(opts, func() ([]*github.PullRequestReview, *github.Response, error) {
-		return r.client.PullRequests.ListReviews(ctx, r.pr.owner, r.pr.repo, r.pr.number, opts)
-	})
+	reviews, err := collect(r.client.PullRequests.ListReviewsIter(ctx, r.pr.owner, r.pr.repo, r.pr.number, &github.ListOptions{PerPage: perPage}))
 	if err != nil {
 		return nil, fmt.Errorf("list reviews of %s: %w", r.pr, err)
 	}

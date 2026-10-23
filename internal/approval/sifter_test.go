@@ -32,7 +32,7 @@ func TestGetFileRuleChainLayersAndByRule(t *testing.T) {
 	}
 	// The broken pattern is compiled once but reported for the one file
 	// whose chain reaches its rules file.
-	if got := len(events.Build(nil).Errors); got != 1 {
+	if got := len(events.Build().Errors); got != 1 {
 		t.Errorf("sift errors = %d, want 1", got)
 	}
 

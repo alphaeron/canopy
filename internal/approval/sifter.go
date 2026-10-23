@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -112,7 +111,7 @@ func newSifter(repo rulesfile.Set) *sifter {
 // root down. The result is shared with every file that matches the same
 // rules, so it must not be modified.
 func (s *sifter) layers(fileName string, events *ReviewStateBuilder, log *slog.Logger) []RuleLayer {
-	subdir, _ := filepath.Split(fileName)
+	subdir, _ := path.Split(fileName)
 	cands := s.candidates(subdir)
 
 	s.matched = s.matched[:0]
@@ -120,7 +119,6 @@ func (s *sifter) layers(fileName string, events *ReviewStateBuilder, log *slog.L
 		truncateChain := false
 
 		for ri, rule := range c.rules {
-			// Check pattern matching against the file.
 			re, err := s.patterns.compile(rule.Pattern)
 			if err != nil {
 				patternErr := fmt.Errorf(
@@ -129,9 +127,8 @@ func (s *sifter) layers(fileName string, events *ReviewStateBuilder, log *slog.L
 				)
 				log.Error("sift: skipping rule with invalid pattern",
 					"component", "sifter", "phase", "sift",
-					"file", fileName, "rules_file", c.rulesFile,
-					"rule", rule.Name, "pattern", rule.Pattern, "error", err)
-				events.AddEvent("sift", fileName, c.dir, rule.Name, StatusError,
+					"file", fileName, "rule", rule.String(), "error", err)
+				events.AddEvent("sift", fileName, c.dir, rule.String(), StatusError,
 					fmt.Sprintf("invalid pattern %q: %v", rule.Pattern, err))
 				events.AddError(patternErr)
 				continue
@@ -140,26 +137,20 @@ func (s *sifter) layers(fileName string, events *ReviewStateBuilder, log *slog.L
 				continue
 			}
 
-			// Constraint: Scope Exclusion (current_directory_only)
-			// Discard the rule if it is scoped locally, but this current loop layer
-			// is a strict ancestor of the file's own directory — the layer for
-			// the file's immediate directory itself still applies.
+			// current_directory_only applies only in the file's own
+			// directory's layer.
 			if rule.CurrentDirectoryOnly && !c.own {
 				continue
 			}
 
-			// Constraint: The Break Signal (ignore_parent_dirs)
-			// Track if any valid matching rule explicitly orders us to throw away
-			// parent rules.
 			if rule.IgnoreParentDirs {
 				truncateChain = true
 			}
 			s.matched = append(s.matched, match{c: ci, r: ri})
 		}
 
-		// If a rule dictates truncation, discard all higher rules accumulated so far.
+		// ignore_parent_dirs discards every match above this layer.
 		if truncateChain {
-			// Wipes out all parent entries collected from root down to here
 			n := 0
 			for _, m := range s.matched {
 				if m.c == ci {
@@ -179,28 +170,18 @@ func (s *sifter) layers(fileName string, events *ReviewStateBuilder, log *slog.L
 }
 
 // candidates are the layers the files directly in subdir (a directory as
-// filepath.Split returns it) can match, from the root down.
+// path.Split returns it, "" for the root) can match, from the root down.
+// Splitting "a/b/" gives "a", "b", "": the parts up to each index name the
+// directories from the root ("") to the file's own ("a/b").
 func (s *sifter) candidates(subdir string) []candidate {
 	if cands, ok := s.dirs[subdir]; ok {
 		return cands
 	}
-	subdirParts := strings.Split(filepath.ToSlash(subdir), "/")
-	// A leading "/" (absolute input paths) would visit the root layer twice
-	// through path.Join's empty-element handling, duplicating the root
-	// requirements. Trailing empty segments are kept: they name the file's
-	// own directory layer. A relative root-level file (e.g. "main.go") would
-	// leave an empty part and skip every layer; keep its single empty
-	// element so the root layer is visited exactly once.
-	if len(subdirParts) > 1 && subdirParts[0] == "" {
-		subdirParts = subdirParts[1:]
-	}
-
-	// Loop down from the repo root to the target file's depth.
+	subdirParts := strings.Split(subdir, "/")
 	var cands []candidate
 	for i := range subdirParts {
 		dir := path.Join(subdirParts[:i]...)
 		rulesFile := rulesfile.PathInDir(dir)
-		// Pull out rules registered exactly at this configuration file node
 		if len(s.repo[rulesFile]) == 0 {
 			continue
 		}
@@ -215,13 +196,14 @@ func (s *sifter) candidates(subdir string) []candidate {
 	return cands
 }
 
-// wrapped is the rules file's rules, wrapped at the sifter boundary: from
-// this point on the pipeline only sees the algorithm-level Rule type.
+// wrapped is the rules file's rules as the algorithm runs them, each with
+// its location set (Rule.RulesFile), so states and events name it.
 func (s *sifter) wrapped(rulesFile string) []ExecutableRule {
 	rules, ok := s.rules[rulesFile]
 	if !ok {
 		for _, rule := range s.repo[rulesFile] {
-			rules = append(rules, newExecutableRule(rule))
+			rule.RulesFile = rulesFile
+			rules = append(rules, ExecutableRule{Rule: rule})
 		}
 		s.rules[rulesFile] = rules
 	}

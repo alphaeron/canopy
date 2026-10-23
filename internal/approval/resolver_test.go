@@ -49,7 +49,7 @@ func (f *fakeResolver) Canonical(name string) string { return strings.ToLower(na
 func singleRuleChain(file string, selfApprove bool, targets ...rulesfile.ApproverTarget) RuleChain {
 	return RuleChain{FileChains: map[string][]RuleLayer{file: {{
 		DirectoryPath: "",
-		Rules:         []ExecutableRule{newExecutableRule(rulesfile.Rule{Name: "root", SelfApprove: selfApprove, Approvers: targets})},
+		Rules:         []ExecutableRule{{Rule: rulesfile.Rule{Name: "root", SelfApprove: selfApprove, Approvers: targets}}},
 	}}}}
 }
 
@@ -75,9 +75,9 @@ func TestNamesCompareInCanonicalForm(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rc := singleRuleChain("/x.go", false, approver(tt.target, 1))
+			rc := singleRuleChain("x.go", false, approver(tt.target, 1))
 			state := rc.Execute(t.Context(), tt.in, resolver, NewReviewStateBuilder(), testLogger())
-			if got := state.Files["/x.go"].Status; got != tt.want {
+			if got := state.Files["x.go"].Status; got != tt.want {
 				t.Errorf("status = %s, want %s", got, tt.want)
 			}
 		})
@@ -90,10 +90,10 @@ func TestNamesCompareInCanonicalForm(t *testing.T) {
 func TestOperationalResolveErrorFailsReview(t *testing.T) {
 	outage := errors.New("rate limited")
 	resolver := &fakeResolver{failing: map[string]error{"org/team": outage}}
-	rc := singleRuleChain("/x.go", false, approver("org/team", 1))
+	rc := singleRuleChain("x.go", false, approver("org/team", 1))
 
 	state := rc.Execute(t.Context(), ReviewInput{Owners: []string{"zowner"}, Approvers: []string{"zowner"}}, resolver, NewReviewStateBuilder(), testLogger())
-	fs := state.Files["/x.go"]
+	fs := state.Files["x.go"]
 	if fs.UsedFallback {
 		t.Error("an operational failure must not prune the target and fall back to the owners")
 	}
@@ -109,10 +109,10 @@ func TestOperationalResolveErrorFailsReview(t *testing.T) {
 // platform does not know: the rule is skipped, and the review errors.
 func TestUnknownTargetIsPruned(t *testing.T) {
 	resolver := &fakeResolver{}
-	rc := singleRuleChain("/x.go", false, approver("org/ghosts", 1))
+	rc := singleRuleChain("x.go", false, approver("org/ghosts", 1))
 
 	state := rc.Execute(t.Context(), ReviewInput{Owners: []string{"zowner"}, Approvers: []string{"zowner"}}, resolver, NewReviewStateBuilder(), testLogger())
-	if !state.Files["/x.go"].UsedFallback {
+	if !state.Files["x.go"].UsedFallback {
 		t.Error("an unknown target must be pruned, falling back to the owners")
 	}
 	if state.Overall != StatusError {
@@ -124,10 +124,10 @@ func TestUnknownTargetIsPruned(t *testing.T) {
 // many files, rules, and phases use it, so platforms need not cache.
 func TestReviewResolvesEachTargetOnce(t *testing.T) {
 	resolver := &fakeResolver{groups: map[string][]string{"org/team": {"bo"}}}
-	rule := []ExecutableRule{newExecutableRule(rulesfile.Rule{Name: "root", Approvers: []rulesfile.ApproverTarget{approver("org/team", 1)}})}
+	rule := []ExecutableRule{{Rule: rulesfile.Rule{Name: "root", Approvers: []rulesfile.ApproverTarget{approver("org/team", 1)}}}}
 	rc := RuleChain{FileChains: map[string][]RuleLayer{
-		"/a.go": {{Rules: rule}},
-		"/b.go": {{Rules: rule}},
+		"a.go": {{Rules: rule}},
+		"b.go": {{Rules: rule}},
 	}}
 
 	rc.Execute(t.Context(), ReviewInput{Approvers: []string{"bo"}}, resolver, NewReviewStateBuilder(), testLogger())
@@ -145,7 +145,7 @@ func TestPrefetchChecksOnlyWhatEvaluationChecks(t *testing.T) {
 		groups:  map[string][]string{"org/team": {"Author", "Al", "Bo"}, "org/down": {"Cy"}},
 		failing: map[string]error{"org/down": errors.New("platform down")},
 	}
-	rc := singleRuleChain("/a.go", false, approver("org/team", 1), approver("org/down", 1))
+	rc := singleRuleChain("a.go", false, approver("org/team", 1), approver("org/down", 1))
 
 	var mu sync.Mutex
 	asked := map[string]bool{}
@@ -164,5 +164,20 @@ func TestPrefetchChecksOnlyWhatEvaluationChecks(t *testing.T) {
 		if n != 1 {
 			t.Errorf("resolved %s %d times, want 1", target, n)
 		}
+	}
+}
+
+// TestResolveFailureCauseReachesErr: the platform error behind an
+// unresolved target stays matchable on the review's Err, so a rate limit
+// is reported as one.
+func TestResolveFailureCauseReachesErr(t *testing.T) {
+	resolver := &fakeResolver{failing: map[string]error{"org/team": fmt.Errorf("list members: %w", ErrRateLimited)}}
+	rc := singleRuleChain("x.go", false, approver("org/team", 1))
+	state := rc.Execute(t.Context(), ReviewInput{Owners: []string{"zowner"}}, resolver, NewReviewStateBuilder(), testLogger())
+	if !errors.Is(state.Err, ErrRateLimited) {
+		t.Fatalf("Err = %v, want it to wrap ErrRateLimited", state.Err)
+	}
+	if got, want := state.Outcome().Summary, LimitSummary(ErrRateLimited); got != want {
+		t.Errorf("summary = %q, want %q", got, want)
 	}
 }

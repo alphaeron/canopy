@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -101,7 +102,7 @@ func TestMatchReturnsAllFilesInUniverse(t *testing.T) {
 		rules:    fixtureRules,
 		allFiles: []string{"main.go", "src/api.go", "docs/readme.md"},
 	}
-	e := New(src, nil)
+	e := &Engine{Source: src}
 	res, err := e.Match(t.Context(), Options{})
 	if err != nil {
 		t.Fatalf("Match: %v", err)
@@ -134,7 +135,7 @@ func TestMatchChangesOnlyFilesWhenOptionSet(t *testing.T) {
 		allFiles:   []string{"main.go", "src/api.go"},
 		changedSet: []string{"src/api.go"},
 	}
-	e := New(src, nil)
+	e := &Engine{Source: src}
 	res, err := e.Match(t.Context(), Options{ChangedOnly: true})
 	if err != nil {
 		t.Fatalf("Match changed-only: %v", err)
@@ -166,7 +167,7 @@ func TestMatchScopeNameFilter(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			src := &stubSource{root: "/repo", rules: fixtureRules, allFiles: universe, changedSet: tc.changed}
-			res, err := New(src, nil).Match(t.Context(), Options{ScopeName: tc.scope, ChangedOnly: tc.changed != nil})
+			res, err := (&Engine{Source: src}).Match(t.Context(), Options{ScopeName: tc.scope, ChangedOnly: tc.changed != nil})
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Match error = %v, want %v", err, tc.wantErr)
 			}
@@ -192,7 +193,7 @@ func TestMatchScopeNameFilter(t *testing.T) {
 // ErrUnknownScope rather than an empty report.
 func TestCoverageScopeName(t *testing.T) {
 	src := &stubSource{root: "/repo", rules: fixtureRules, allFiles: []string{"main.go", "src/api.go", "docs/readme.md"}}
-	e := New(src, nil)
+	e := &Engine{Source: src}
 	full, _, err := e.Coverage(t.Context(), Options{})
 	if err != nil {
 		t.Fatalf("Coverage: %v", err)
@@ -221,7 +222,7 @@ func TestMatchDiffOnlyForReportedFiles(t *testing.T) {
 		allFiles: []string{"main.go", "src/api.go", "docs/readme.md"},
 		diffs:    map[string]string{"src/api.go": "+x\n"},
 	}
-	res, err := New(src, nil).Match(t.Context(), Options{ScopeName: "src go rules", IncludeDiff: true})
+	res, err := (&Engine{Source: src}).Match(t.Context(), Options{ScopeName: "src go rules", IncludeDiff: true})
 	if err != nil {
 		t.Fatalf("Match: %v", err)
 	}
@@ -240,7 +241,7 @@ func TestMatchIncludeDiffAttachesDiff(t *testing.T) {
 		allFiles: []string{"main.go"},
 		diffs:    map[string]string{"main.go": "--- a/main.go\n+++ b/main.go\n"},
 	}
-	e := New(src, nil)
+	e := &Engine{Source: src}
 	res, err := e.Match(t.Context(), Options{IncludeDiff: true})
 	if err != nil {
 		t.Fatalf("Match IncludeDiff: %v", err)
@@ -263,7 +264,7 @@ func TestMatchRuleLoadingErrorPropagates(t *testing.T) {
 		allFiles: []string{"a.go"},
 		err:      errRules,
 	}
-	e := New(src, nil)
+	e := &Engine{Source: src}
 	if _, err := e.Match(t.Context(), Options{}); err != errRules {
 		t.Errorf("Match must surface the rule-loading error, got %v", err)
 	}
@@ -274,7 +275,7 @@ func TestCoverageUnmatchedFilesAndUnmatchedSet(t *testing.T) {
 		rules:    fixtureRules,
 		allFiles: []string{"main.go", "src/api.go", "docs/readme.md"},
 	}
-	e := New(src, nil)
+	e := &Engine{Source: src}
 	report, _, err := e.Coverage(t.Context(), Options{})
 	if err != nil {
 		t.Fatalf("Coverage: %v", err)
@@ -305,7 +306,7 @@ func TestCoverageChangedOnly(t *testing.T) {
 		allFiles:   []string{"a.go", "b.go"},
 		changedSet: []string{"a.go"},
 	}
-	e := New(src, nil)
+	e := &Engine{Source: src}
 	report, _, err := e.Coverage(t.Context(), Options{ChangedOnly: true})
 	if err != nil {
 		t.Fatalf("Coverage changed-only: %v", err)
@@ -322,8 +323,8 @@ type err string
 func (e err) Error() string { return string(e) }
 
 func TestFilesNarrowsByPatterns(t *testing.T) {
-	src := &stubSource{allFiles: []string{"src/api.go", "main.go", "docs/readme.md"}}
-	e := New(src, nil)
+	src := &stubSource{allFiles: []string{"docs/readme.md", "main.go", "src/api.go"}}
+	e := &Engine{Source: src}
 	got, err := e.Files(t.Context(), Options{Patterns: []string{`\.md$`, `^main`}})
 	if err != nil {
 		t.Fatal(err)
@@ -331,7 +332,7 @@ func TestFilesNarrowsByPatterns(t *testing.T) {
 	if want := []string{"docs/readme.md", "main.go"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Files = %v, want %v", got, want)
 	}
-	if !reflect.DeepEqual(src.allFiles, []string{"src/api.go", "main.go", "docs/readme.md"}) {
+	if !reflect.DeepEqual(src.allFiles, []string{"docs/readme.md", "main.go", "src/api.go"}) {
 		t.Errorf("Files must not modify the source's slice: %v", src.allFiles)
 	}
 	if _, err := e.Files(t.Context(), Options{Patterns: []string{"("}}); err == nil {
@@ -343,7 +344,7 @@ func TestFilesNarrowsByPatterns(t *testing.T) {
 // files given: only those files are in the state, and a file whose rule an
 // approver satisfies is satisfied.
 func TestReviewEvaluatesFiles(t *testing.T) {
-	e := New(&stubSource{rules: fixtureRules}, slog.New(slog.DiscardHandler))
+	e := &Engine{Source: &stubSource{rules: fixtureRules}, Log: slog.New(slog.DiscardHandler)}
 	state := e.Review(t.Context(), []string{"main.go"}, approval.ReviewInput{Approvers: []string{"team-a"}})
 	if len(state.Files) != 1 || state.Files["main.go"].Status != approval.StatusSatisfied || state.Overall != approval.StatusSatisfied {
 		t.Errorf("Review = %+v, want main.go alone, satisfied", state)
@@ -352,7 +353,7 @@ func TestReviewEvaluatesFiles(t *testing.T) {
 
 func TestRequirementsReportsRequiredTargetsAndFallback(t *testing.T) {
 	src := &stubSource{rules: fixtureRules}
-	e := New(src, slog.New(slog.DiscardHandler))
+	e := &Engine{Source: src, Log: slog.New(slog.DiscardHandler)}
 	chain, err := e.RuleChain(t.Context(), []string{"src/api.go", "docs/readme.md"})
 	if err != nil {
 		t.Fatal(err)
@@ -369,7 +370,7 @@ func TestRequirementsReportsRequiredTargetsAndFallback(t *testing.T) {
 
 func TestCoverageKeepsTheFullMatch(t *testing.T) {
 	src := &stubSource{rules: fixtureRules, allFiles: []string{"main.go", "src/api.go", "docs/readme.md"}}
-	report, match, err := New(src, nil).Coverage(t.Context(), Options{ScopeName: "src go rules"})
+	report, match, err := (&Engine{Source: src}).Coverage(t.Context(), Options{ScopeName: "src go rules"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +400,7 @@ func TestRepoRootOnlyFromRootedSources(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.src, nil)
+			e := &Engine{Source: tt.src}
 			res, err := e.Match(t.Context(), Options{})
 			if err != nil {
 				t.Fatalf("Match: %v", err)
@@ -428,6 +429,12 @@ func TestExactPattern(t *testing.T) {
 			t.Errorf("match %q = %v, want %v", path, got, want)
 		}
 	}
+	several := regexp.MustCompile(ExactPattern("a.go", "b+.go"))
+	for path, want := range map[string]bool{"a.go": true, "b+.go": true, "bb.go": false, "a.go/x": false} {
+		if got := several.MatchString(path); got != want {
+			t.Errorf("match %q of several = %v, want %v", path, got, want)
+		}
+	}
 }
 
 // TestValidateProposed pins the check of the rules files a change proposes,
@@ -446,7 +453,7 @@ func TestValidateProposed(t *testing.T) {
 	// main.go is not a rules file, so it is not validated.
 	pending := []string{"ok/KIT", "broken/KIT", "badre/KIT", "nocount/KIT", "deleted/KIT", "main.go"}
 
-	got, err := New(pr, nil).ValidateProposed(t.Context(), pending)
+	got, err := (&Engine{Source: pr}).ValidateProposed(t.Context(), pending)
 	if err != nil {
 		t.Fatalf("ValidateProposed: %v", err)
 	}
@@ -463,13 +470,13 @@ func TestValidateProposed(t *testing.T) {
 
 	tooLarge := fmt.Errorf("read big/KIT: %w", rulesfile.ErrTooLarge)
 	pr.headErr = tooLarge
-	if got, err := New(pr, nil).ValidateProposed(t.Context(), []string{"big/KIT"}); err != nil || !errors.Is(got["big/KIT"][0], rulesfile.ErrTooLarge) {
+	if got, err := (&Engine{Source: pr}).ValidateProposed(t.Context(), []string{"big/KIT"}); err != nil || !errors.Is(got["big/KIT"][0], rulesfile.ErrTooLarge) {
 		t.Errorf("ValidateProposed with an oversized file = %v, %v; want it as a violation", got, err)
 	}
 
 	unreadable := errors.New("unreadable")
 	pr.headErr = unreadable
-	if _, err := New(pr, nil).ValidateProposed(t.Context(), pending[:1]); !errors.Is(err, unreadable) {
+	if _, err := (&Engine{Source: pr}).ValidateProposed(t.Context(), pending[:1]); !errors.Is(err, unreadable) {
 		t.Errorf("ValidateProposed with an unreadable file err = %v, want the read error", err)
 	}
 }
@@ -495,11 +502,38 @@ func TestValidateProposedChecksTargetSyntax(t *testing.T) {
 	pr.head = map[string]string{
 		"svc/KIT": "- \".*\":\n  approvers:\n    - target: bad!name\n      required_count: 1\n    - target: lead\n      required_count: 1\n",
 	}
-	got, err := New(pr, nil).ValidateProposed(t.Context(), []string{"svc/KIT"})
+	got, err := (&Engine{Source: pr}).ValidateProposed(t.Context(), []string{"svc/KIT"})
 	if err != nil {
 		t.Fatalf("ValidateProposed: %v", err)
 	}
 	if errs := got["svc/KIT"]; len(errs) != 1 || !errors.Is(errs[0], approval.ErrInvalidTarget) {
 		t.Errorf("violations = %v, want the one invalid target", errs)
+	}
+}
+
+// TestMatchAndCoverageListsAreNeverNull: an empty universe, a file no rule
+// matches, and a report with nothing uncovered all encode as [].
+func TestMatchAndCoverageListsAreNeverNull(t *testing.T) {
+	e := &Engine{Source: &stubSource{rules: fixtureRules, allFiles: []string{"x.unmatched"}}}
+	res, err := e.Match(t.Context(), Options{})
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	if data, _ := json.Marshal(res); !strings.Contains(string(data), `"rules":[]`) {
+		t.Errorf("match json = %s, want an uncovered file's rules as []", data)
+	}
+	empty := &Engine{Source: &stubSource{rules: fixtureRules, changedSet: []string{}}}
+	res, err = empty.Match(t.Context(), Options{ChangedOnly: true})
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	report, _, err := empty.Coverage(t.Context(), Options{ChangedOnly: true})
+	if err != nil {
+		t.Fatalf("Coverage: %v", err)
+	}
+	for name, v := range map[string]any{"match": res, "coverage": report} {
+		if data, _ := json.Marshal(v); strings.Contains(string(data), "null") {
+			t.Errorf("%s json = %s, want no null lists", name, data)
+		}
 	}
 }

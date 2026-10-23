@@ -8,7 +8,7 @@ import (
 // TestBuilderKeepsEventOrderAcrossBlocks: the trace keeps every event in
 // order however many blocks it spans, and an empty trace is empty, not nil.
 func TestBuilderKeepsEventOrderAcrossBlocks(t *testing.T) {
-	if got := NewReviewStateBuilder().Build(nil).Events; got == nil || len(got) != 0 {
+	if got := NewReviewStateBuilder().Build().Events; got == nil || len(got) != 0 {
 		t.Errorf("empty trace = %#v, want an empty, non-nil slice", got)
 	}
 	b := NewReviewStateBuilder()
@@ -16,7 +16,7 @@ func TestBuilderKeepsEventOrderAcrossBlocks(t *testing.T) {
 	for i := range n {
 		b.AddEvent("sift", strconv.Itoa(i), "", "", StatusDone, "")
 	}
-	events := b.Build(nil).Events
+	events := b.Build().Events
 	if len(events) != n {
 		t.Fatalf("events = %d, want %d", len(events), n)
 	}

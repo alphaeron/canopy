@@ -72,7 +72,7 @@ func printRow(tw *tabwriter.Writer, cells []string) error {
 
 // isTerminal reports whether w is attached to a real terminal. The CLI
 // uses this to pick between the TUI (bubbletea) and a scripted table when
-// neither --json nor --table is specified: no TTY means no TUI. The check
+// --json is not given: no TTY means no TUI. The check
 // is against the true TTY bit of the descriptor (x/term.IsTerminal), not
 // merely "does it have a file descriptor", since a piped stdout has an fd
 // but is not a terminal and must not receive a bubbletea program. Since the

@@ -1,5 +1,5 @@
 # deadcode.allow — functions `make deadcode` may report as unreachable from
-# cmd/kit without failing. One extended regular expression per line,
+# the commands without failing. One extended regular expression per line,
 # matched against "<package path>.<func>" or "<package path>.<Type>.<method>".
 # Lines starting with # are comments.
 
