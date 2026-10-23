@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/alphaeron/canopy/internal/approval"
 	"github.com/alphaeron/canopy/internal/server"
 )
 
@@ -73,6 +74,20 @@ const recordAfterReportTimeout = 5 * time.Second
 // When report succeeds but recording it fails, err says so: the report was
 // published, but a review requested earlier may still report after it.
 func (s *Store) ReportInOrder(ctx context.Context, pr server.PullRequestInfo, order int64, report func(context.Context) error) (bool, error) {
+	return s.inOrder(ctx, pr, order, report, true)
+}
+
+// StartInOrder calls start unless a review of pr at order or later has
+// reported, under the lock ReportInOrder holds, so no report of pr is
+// published while start runs. It records nothing.
+func (s *Store) StartInOrder(ctx context.Context, pr server.PullRequestInfo, order int64, start func(context.Context) error) (bool, error) {
+	return s.inOrder(ctx, pr, order, start, false)
+}
+
+// inOrder calls publish unless a review of pr at order or later has
+// reported, holding pr's advisory lock until it returns, and, with record,
+// records order as reported once publish succeeds.
+func (s *Store) inOrder(ctx context.Context, pr server.PullRequestInfo, order int64, publish func(context.Context) error, record bool) (bool, error) {
 	name := fmt.Sprintf("%s#%d", pr.Repo, pr.Number)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -92,7 +107,7 @@ func (s *Store) ReportInOrder(ctx context.Context, pr server.PullRequestInfo, or
 	if reported >= order {
 		return false, nil
 	}
-	if err := report(ctx); err != nil {
+	if err := publish(ctx); err != nil || !record {
 		return true, err
 	}
 	// The report is published: record it even if ctx ends now (the review
@@ -113,6 +128,36 @@ func (s *Store) ReportInOrder(ctx context.Context, pr server.PullRequestInfo, or
 		return true, fmt.Errorf("reported, but recording the report of %s failed: %w", name, err)
 	}
 	return true, nil
+}
+
+// LatestReview is the latest review recorded of head commit headSHA of
+// pull request number of repo, or nil when none is.
+func (s *Store) LatestReview(ctx context.Context, repo string, number int, headSHA string) (*server.ReviewRecord, error) {
+	var (
+		r                server.ReviewRecord
+		verdict, summary *string
+		finishedAt       *time.Time
+	)
+	err := s.pool.QueryRow(ctx, `SELECT status, verdict, summary, items, warnings, state, queued_at, started_at, finished_at
+		FROM reviews WHERE repo = $1 AND pr_number = $2 AND head_sha = $3
+		ORDER BY started_at DESC, id DESC LIMIT 1`, repo, number, headSHA).Scan(
+		&r.Status, &verdict, &summary, &r.Outcome.Items, &r.Outcome.Warnings, &r.State, &r.QueuedAt, &r.StartedAt, &finishedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read latest review of %s#%d: %w", repo, number, err)
+	}
+	if verdict != nil {
+		r.Outcome.Verdict = approval.Verdict(*verdict)
+	}
+	if summary != nil {
+		r.Outcome.Summary = *summary
+	}
+	if finishedAt != nil {
+		r.FinishedAt = *finishedAt
+	}
+	return &r, nil
 }
 
 // reviewInput is the JSON of a review input as recorded.
@@ -166,4 +211,7 @@ func millis(d time.Duration) int32 {
 	return int32(min(max(d.Milliseconds(), 0), 1<<31-1))
 }
 
-var _ server.Recorder = (*Store)(nil)
+var (
+	_ server.Recorder      = (*Store)(nil)
+	_ server.ReviewHistory = (*Store)(nil)
+)

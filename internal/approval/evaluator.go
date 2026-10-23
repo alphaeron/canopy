@@ -48,6 +48,7 @@ func (s *Evaluator) Execute(ctx context.Context, in ReviewInput, files []string)
 	events := NewReviewStateBuilder()
 
 	// Fetch phase: retrieve all rules.
+	ReportProgress(ctx, Progress{Phase: "fetch"})
 	log.Info("review starting", "component", "approval", "phase", "fetch", "files", len(files))
 	repoRules, err := s.Fetch.Execute(ctx)
 	if err != nil {
@@ -68,6 +69,7 @@ func (s *Evaluator) Execute(ctx context.Context, in ReviewInput, files []string)
 		"component", "approval", "phase", "fetch", "rules_files", len(repoRules))
 
 	// Sift phase: build the per-file rule chains from the fetched rules.
+	ReportProgress(ctx, Progress{Phase: "sift"})
 	log.Info("review: sifting rules for files",
 		"component", "approval", "phase", "sift", "files", len(files))
 	ruleChain, err := GetFileRuleChain(ctx, repoRules, files, events, log)

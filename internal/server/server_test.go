@@ -87,6 +87,7 @@ type stubPullRequest struct {
 	changedErr error
 	input      approval.ReviewInput
 	key        string // Key; "" for every stub that does not set it
+	headSHA    string // Info's HeadSHA
 	// block makes ChangedFiles wait until its context is done, or release
 	// is closed when it is set.
 	block   bool
@@ -99,6 +100,8 @@ type stubPullRequest struct {
 	startOnce sync.Once
 	mu        sync.Mutex
 	reports   []approval.Outcome
+	starts    int           // Start calls
+	links     []string      // the details URL of each Start and Report, in order
 	done      chan struct{} // closed on the first report
 }
 
@@ -146,7 +149,7 @@ func (c *stubPullRequest) Warnings() []string { return c.warnings }
 func (c *stubPullRequest) Key() string { return c.key }
 
 func (c *stubPullRequest) Info() PullRequestInfo {
-	return PullRequestInfo{Scope: "stub", Repo: "o/r", Number: 1, Author: c.input.Author, Action: "pr"}
+	return PullRequestInfo{Scope: "stub", Repo: "o/r", Number: 1, HeadSHA: c.headSHA, Author: c.input.Author, Action: "pr"}
 }
 
 func (c *stubPullRequest) ReviewInput(context.Context) (approval.ReviewInput, error) {
@@ -164,10 +167,19 @@ func (c *stubPullRequest) ReadHead(_ context.Context, path string) ([]byte, erro
 	return []byte(data), nil
 }
 
-func (c *stubPullRequest) Report(_ context.Context, o approval.Outcome) error {
+func (c *stubPullRequest) Start(_ context.Context, detailsURL string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.starts++
+	c.links = append(c.links, detailsURL)
+	return nil
+}
+
+func (c *stubPullRequest) Report(_ context.Context, o approval.Outcome, detailsURL string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reports = append(c.reports, o)
+	c.links = append(c.links, detailsURL)
 	if len(c.reports) == 1 {
 		close(c.done)
 	}

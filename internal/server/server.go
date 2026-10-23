@@ -57,6 +57,18 @@ type Options struct {
 	// replicas of the server; nil records nothing, and only this process's
 	// reports are ordered.
 	Recorder Recorder
+	// History reads recorded reviews back for review pages; nil shows only
+	// the reviews this server queued or ran recently.
+	History ReviewHistory
+	// PublicURL is the server's URL as the platform's users reach it, e.g.
+	// "https://canopy.example.com". With LinkKey, it serves review pages
+	// (ReviewPagePath), and each pull request's status links to its own.
+	// Both empty serve none.
+	PublicURL string
+	// LinkKey signs the links to review pages: at least MinLinkKeyBytes
+	// long and the same on every replica. Changing it breaks every link
+	// published before.
+	LinkKey []byte
 }
 
 // Bounds on recording: how long the calls a webhook or a review waits for
@@ -89,6 +101,8 @@ type Server struct {
 	handler http.Handler
 	reviews *reviews
 	records *parallel.Background // nil without a Recorder
+	links   *links               // nil without review pages
+	live    *tracker
 }
 
 // New builds the server over the deployment's one platform webhook and
@@ -102,7 +116,11 @@ func New(ctx context.Context, opts Options, webhook PRWebhook) (*Server, error) 
 		return nil, fmt.Errorf("workers, queue, review timeout, report timeout, and shutdown timeout must be positive, got %d, %d, %s, %s, %s",
 			opts.Workers, opts.Queue, opts.ReviewTimeout, opts.ReportTimeout, opts.ShutdownTimeout)
 	}
-	s := &Server{opts: opts, log: logx.OrDefault(opts.Log)}
+	s := &Server{opts: opts, log: logx.OrDefault(opts.Log), live: newTracker(opts.History == nil)}
+	var err error
+	if s.links, err = newLinks(opts.PublicURL, opts.LinkKey); err != nil {
+		return nil, err
+	}
 
 	router := chi.NewMux()
 	cfg := huma.DefaultConfig(brand.Name+" review server", opts.Version)
@@ -118,18 +136,22 @@ func New(ctx context.Context, opts Options, webhook PRWebhook) (*Server, error) 
 		return nil, errors.New("platform name is empty")
 	}
 	served := map[string]bool{OpenAPIPath + ".json": true, OpenAPIPath + ".yaml": true, DocsPath: true}
-	if !strings.HasPrefix(path, "/") || served[path] {
+	if !strings.HasPrefix(path, "/") || served[path] || strings.HasPrefix(path, "/reviews/") {
 		return nil, fmt.Errorf("platform %s: webhook path %q must start with / and not be one of the server's own", name, path)
 	}
 	if webhook.WebhookMaxBytes() <= 0 || len(webhook.WebhookContentTypes()) == 0 {
 		return nil, fmt.Errorf("platform %s: webhook body limit and content types are required", name)
 	}
 	s.registerWebhook(api, webhook)
+	if s.links != nil {
+		s.registerReviewPages(api)
+	}
 	s.handler = router
 	if opts.Recorder != nil {
 		s.records = parallel.NewBackground(maxRecordWrites, recordWriteTimeout)
 	}
 	s.reviews = newReviews(ctx, opts.Workers, opts.Queue, opts.ReviewTimeout, s.review)
+	s.reviews.dropped = func(j job) { s.live.forget(pageRefOf(j.pr.Info()), j.live) }
 	return s, nil
 }
 
@@ -273,7 +295,9 @@ func (s *Server) accept(ctx context.Context, p PRWebhook) (*webhookOutput, error
 	info := pr.Info()
 	delivery.PullRequest = &info
 	j := job{platform: p.Name(), pr: pr, deliveryID: wh.deliveryID, queuedAt: time.Now(), order: s.requestOrder(ctx, info, log)}
+	j.live = s.live.queue(pageRefOf(info), j.queuedAt)
 	if !s.reviews.submit(j) {
+		s.live.forget(pageRefOf(info), j.live)
 		log.Error("review queue full; webhook dropped")
 		s.recordDelivery(delivery, DeliveryQueueFull)
 		return nil, huma.Error503ServiceUnavailable("review queue is full")
@@ -317,14 +341,20 @@ func (s *Server) recordDelivery(d DeliveryRecord, disposition string) {
 // review runs one queued review and reports its outcome as the pull
 // request's status, unless a newer review of its key superseded it
 // (current reports false; see reviews), or, with a Recorder, a newer
-// review on any replica reported first. A review that ran out of time
-// still reports, under a fresh deadline; one cancelled because the server
-// is stopping does not. With a Recorder, the review is recorded as it
-// starts and ends.
+// review on any replica reported first. Before it evaluates, it publishes
+// the pull request's status as running (see start). A review that ran out
+// of time still reports, under a fresh deadline; one cancelled because the
+// server is stopping does not, and leaves the status running. With a
+// Recorder, the review is recorded as it starts and ends. Its review page
+// follows it throughout.
 func (s *Server) review(ctx context.Context, j job, current func() bool) {
 	log := s.log.With("component", "server", "platform", j.platform, "key", j.pr.Key())
 	started := time.Now()
+	s.live.start(j.live, started)
+	link := s.links.reviewURL(j.pr.Info())
 	id := s.startRecord(ctx, j, log)
+	s.start(ctx, j, link, log)
+	ctx = approval.WithProgress(ctx, func(p approval.Progress) { s.live.progress(j.live, p) })
 	ev := review.Evaluate(ctx, j.pr, log)
 	end := ReviewEnd{
 		Outcome:  ev.Outcome,
@@ -337,7 +367,10 @@ func (s *Server) review(ctx context.Context, j job, current func() bool) {
 	if ev.Err != nil {
 		end.Err = ev.Err.Error()
 	}
-	defer func() { s.finishRecord(ctx, id, end, log) }()
+	defer func() {
+		s.finishRecord(ctx, id, end, log)
+		s.live.finish(pageRefOf(j.pr.Info()), j.live, end, time.Now())
+	}()
 
 	if !current() {
 		end.Status = ReviewSuperseded
@@ -355,7 +388,8 @@ func (s *Server) review(ctx context.Context, j job, current func() bool) {
 		return
 	}
 	reportStart := time.Now()
-	sent, superseded, err := s.report(reportCtx, j, ev.Outcome, log)
+	s.live.reporting(j.live)
+	sent, superseded, err := s.report(reportCtx, j, ev.Outcome, link, log)
 	end.Report = time.Since(reportStart)
 	end.Outcome = sent
 	switch {
@@ -379,14 +413,15 @@ func (s *Server) review(ctx context.Context, j job, current func() bool) {
 // When the order cannot be checked, an older review may be publishing over
 // a newer one, so it publishes anything but a pass as is, and a pass as
 // Errored: it never lets a review that may be stale pass a pull request.
-// It returns the outcome it published.
-func (s *Server) report(ctx context.Context, j job, o approval.Outcome, log *slog.Logger) (approval.Outcome, bool, error) {
+// It returns the outcome it published. The status links to link, j's
+// review page, when it is not empty.
+func (s *Server) report(ctx context.Context, j job, o approval.Outcome, link string, log *slog.Logger) (approval.Outcome, bool, error) {
 	if s.opts.Recorder == nil {
-		return o, false, j.pr.Report(ctx, o)
+		return o, false, j.pr.Report(ctx, o, link)
 	}
 	if j.order > 0 {
 		called, err := s.opts.Recorder.ReportInOrder(ctx, j.pr.Info(), j.order, func(ctx context.Context) error {
-			return j.pr.Report(ctx, o)
+			return j.pr.Report(ctx, o, link)
 		})
 		switch {
 		case called:
@@ -399,7 +434,31 @@ func (s *Server) report(ctx context.Context, j job, o approval.Outcome, log *slo
 	if o.Verdict == approval.Passed {
 		o = approval.Outcome{Verdict: approval.Errored, Summary: unorderedSummary, Warnings: o.Warnings}
 	}
-	return o, false, j.pr.Report(ctx, o)
+	return o, false, j.pr.Report(ctx, o, link)
+}
+
+// start publishes j's pull request's status as running, linking link. With
+// a Recorder, it publishes in order with every replica's reports of the
+// pull request (Recorder.StartInOrder), and not at all when j's order is
+// unknown: a review that may be stale must never replace a newer review's
+// report with a running status that nothing would then end. Without one,
+// this process's reviews of a key run one at a time, newest last, so none
+// starts after a newer one reported. A status that is not published is
+// logged; the review runs regardless.
+func (s *Server) start(ctx context.Context, j job, link string, log *slog.Logger) {
+	publish := func(ctx context.Context) error { return j.pr.Start(ctx, link) }
+	var err error
+	switch {
+	case s.opts.Recorder == nil:
+		err = publish(ctx)
+	case j.order > 0:
+		_, err = s.opts.Recorder.StartInOrder(ctx, j.pr.Info(), j.order, publish)
+	default:
+		return
+	}
+	if err != nil {
+		log.Warn("publishing the review as running failed", "error", err)
+	}
 }
 
 // startRecord records j's review starting, returning its record's ID, or

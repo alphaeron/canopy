@@ -43,7 +43,10 @@ func (rc *RuleChain) Execute(
 ) *ReviewState {
 	resolver = newCachedReviewResolver(resolver)
 	p := newParticipants(in, resolver.Canonical)
+	ReportProgress(ctx, Progress{Phase: "resolve"})
 	rc.prefetch(ctx, p, resolver)
+	total := len(rc.FileChains)
+	ReportProgress(ctx, Progress{Phase: "approve", Total: total})
 	log.Info("approve: evaluating rule chain",
 		"component", "rule_chain", "phase", "approve", "files", len(rc.FileChains))
 
@@ -69,6 +72,7 @@ func (rc *RuleChain) Execute(
 			"component", "rule_chain", "phase", "approve",
 			"file", file, "status", fs.Status, "required", len(fs.Required))
 		files[file] = fs
+		ReportProgress(ctx, Progress{Phase: "approve", Done: len(files), Total: total})
 	}
 
 	// Determine overall status across all files.

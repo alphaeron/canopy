@@ -58,6 +58,7 @@ func evaluate(ctx context.Context, pr Change, log *slog.Logger) Evaluation {
 		}
 	}
 
+	approval.ReportProgress(ctx, approval.Progress{Phase: "change"})
 	engine := &Engine{Source: pr, Log: log}
 	var (
 		wg         sync.WaitGroup

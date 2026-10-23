@@ -79,6 +79,7 @@ func run() error {
 	var (
 		repoStore server.RepoStore
 		recorder  server.Recorder
+		history   server.ReviewHistory
 	)
 	if cfg.DatabaseURL != "" {
 		db, err := store.Open(ctx, store.Options{
@@ -93,7 +94,7 @@ func run() error {
 		if err := db.ApplySchema(ctx); err != nil {
 			return err
 		}
-		repoStore, recorder = db, db
+		repoStore, recorder, history = db, db, db
 		log.Info("database ready", "component", "store")
 
 		// Stopped and waited for before the database closes, also when
@@ -124,6 +125,9 @@ func run() error {
 		Version:         version(),
 		Log:             log,
 		Recorder:        recorder,
+		History:         history,
+		PublicURL:       cfg.PublicURL,
+		LinkKey:         []byte(cfg.LinkKey),
 	}, platform)
 	if err != nil {
 		return err

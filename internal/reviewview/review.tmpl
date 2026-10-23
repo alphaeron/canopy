@@ -1,0 +1,861 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="no-referrer">
+  {{- if .Live }}
+  <noscript><meta http-equiv="refresh" content="5"></noscript>
+  {{- end }}
+  <title>{{ .Repo }}#{{ .Number }} · {{ shortSHA .HeadSHA }} · Canopy review</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1312;
+      --panel: #121b19;
+      --panel-raised: #182320;
+      --panel-soft: #101816;
+      --line: #2b3b35;
+      --line-bright: #496056;
+      --ink: #edf4ed;
+      --muted: #9aaca1;
+      --faint: #687a70;
+      --mint: #a8efb9;
+      --mint-deep: #153a2b;
+      --acid: #d9ff70;
+      --amber: #ffc078;
+      --amber-deep: #412c1c;
+      --red: #ff8f85;
+      --red-deep: #431f20;
+      --blue: #92d5e7;
+      /* Deliberately local-only stacks: the report makes no font/network requests. */
+      --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+      --sans: 'Avenir Next', Avenir, 'Segoe UI', 'Liberation Sans', sans-serif;
+      --display: 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+      --radius: 9px;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); scroll-behavior: smooth; }
+    body {
+      margin: 0; color: var(--ink); font: 14px/1.5 var(--sans);
+      background:
+        radial-gradient(ellipse at 83% -10%, rgba(102, 157, 106, .13), transparent 40rem),
+        linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px), var(--bg);
+      background-size: auto, 36px 36px, 36px 36px, auto;
+    }
+    button, input, select { font: inherit; }
+    .sr-only { position:absolute !important; width:1px !important; height:1px !important; padding:0 !important; margin:-1px !important; overflow:hidden !important; clip:rect(0,0,0,0) !important; white-space:nowrap !important; border:0 !important; }
+    button, select, input { color: var(--ink); }
+    button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible {
+      outline: 2px solid var(--acid); outline-offset: 3px;
+    }
+    a { color: var(--acid); }
+    .shell { width: min(1440px, calc(100% - 48px)); margin: 0 auto; padding: 30px 0 64px; }
+    .topline { display:flex; align-items:center; justify-content:space-between; gap:18px; padding-bottom:18px; border-bottom:1px solid var(--line); }
+    .brand { display:flex; align-items:center; gap:10px; font:600 11px/1 var(--mono); letter-spacing:.13em; text-transform:uppercase; color:var(--muted); }
+    .brand-mark { display:grid; place-items:center; width:26px; height:26px; border:1px solid var(--acid); color:var(--acid); border-radius:6px 6px 6px 1px; font-size:14px; }
+    .run-tag { color:var(--faint); font:11px var(--mono); text-transform:uppercase; letter-spacing:.1em; }
+    .hero { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:24px; padding:37px 0 28px; }
+    .eyebrow { margin:0 0 9px; color:var(--acid); font:500 10px var(--mono); text-transform:uppercase; letter-spacing:.17em; }
+    h1 { margin:0; max-width:900px; font:500 clamp(30px,4.4vw,53px)/1.03 var(--display); letter-spacing:-.025em; overflow-wrap:anywhere; }
+    .repo-line { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:15px; color:var(--muted); font-size:12px; }
+    .repo-line code, .commit-ref { font:11px var(--mono); }
+    .repo-line code { padding:5px 8px; border:1px solid var(--line); border-radius:5px; background:#0a100e; color:#d4e6d8; overflow-wrap:anywhere; }
+    .slash { color:var(--faint); }
+    .hero-status { min-width:190px; max-width:270px; padding:17px 19px 16px; border:1px solid var(--line-bright); border-top:2px solid var(--status-color,var(--muted)); background:rgba(18,27,25,.88); border-radius:var(--radius); animation: lift .45s ease-out both; }
+    .hero-status .label { display:flex; align-items:center; gap:6px; color:var(--muted); font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+    .hero-status .value { display:flex; align-items:center; gap:9px; margin-top:8px; font-size:18px; font-weight:600; text-transform:capitalize; }
+    .hero-status .dot { width:9px; height:9px; flex:0 0 auto; background:var(--status-color,var(--muted)); border-radius:50%; box-shadow:0 0 13px color-mix(in srgb, var(--status-color,var(--muted)) 35%, transparent); }
+    .status-unknown { --status-color:#a2b0a7; }
+    .status-unresolved, .status-missing_approvers { --status-color:var(--amber); }
+    .status-error { --status-color:var(--red); }
+    .status-satisfied, .status-done { --status-color:var(--mint); }
+    .status-active { --status-color:var(--blue); }
+    .status-inactive { --status-color:#77877d; }
+    .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:rgba(18,27,25,.86); }
+    .metric { display:block; padding:15px 19px 16px; min-width:0; color:inherit; text-decoration:none; transition:background .16s ease; }
+    .metric + .metric { border-left:1px solid var(--line); }
+    .metric-link:hover { background:rgba(217,255,112,.045); }
+    .metric-link:hover .metric-label { color:var(--acid); }
+    .metric-link:focus-visible { outline-offset:-4px; z-index:1; }
+    .metric-label { color:var(--muted); font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase; }
+    .metric-number { margin-top:4px; color:var(--ink); font:500 27px/1.1 var(--display); }
+    .metric-note { margin-top:4px; color:var(--faint); font-size:11px; }
+    .help-wrap { position:relative; display:inline-flex; vertical-align:middle; margin-left:2px; text-transform:none; letter-spacing:normal; }
+    .help-trigger { display:inline-grid; place-items:center; width:15px; height:15px; padding:0; border:1px solid var(--line-bright); border-radius:50%; background:transparent; color:var(--muted); font:10px/1 var(--mono); cursor:help; }
+    .help-trigger:hover, .help-trigger:focus-visible { border-color:var(--acid); color:var(--acid); }
+    .tooltip-box { position:absolute; z-index:30; left:50%; bottom:calc(100% + 8px); width:min(260px,70vw); padding:9px 10px; border:1px solid var(--line-bright); border-radius:5px; background:#202b27; color:var(--ink); box-shadow:0 10px 28px rgba(0,0,0,.35); font:11px/1.5 var(--sans); letter-spacing:normal; text-transform:none; opacity:0; visibility:hidden; transform:translate(-50%,4px); transition:opacity .13s ease, transform .13s ease, visibility .13s ease; pointer-events:none; }
+    .help-wrap:hover .tooltip-box, .help-wrap:focus-within .tooltip-box, .help-wrap.is-open .tooltip-box { opacity:1; visibility:visible; transform:translate(-50%,0); }
+    .problem-banner { display:flex; align-items:flex-start; gap:11px; margin-top:15px; padding:13px 15px; border:1px solid rgba(255,143,133,.4); border-left:3px solid var(--red); border-radius:6px; background:rgba(67,31,32,.48); }
+    .problem-icon { display:grid; place-items:center; flex:0 0 22px; width:22px; height:22px; margin-top:1px; border:1px solid rgba(255,143,133,.5); border-radius:50%; color:var(--red); font:600 12px var(--mono); }
+    .problem-title { margin:0 0 3px; color:var(--red); font-size:12px; font-weight:600; }
+    .problem-text { margin:0; color:#f2d4d0; overflow-wrap:anywhere; white-space:pre-wrap; }
+    .workspace { display:grid; grid-template-columns:minmax(260px,340px) minmax(0,1fr); gap:22px; align-items:start; margin-top:32px; }
+    .file-rail { position:sticky; top:16px; min-width:0; }
+    .section-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px; }
+    .section-head h2 { margin:0; font:500 22px/1.15 var(--display); letter-spacing:-.01em; }
+    .count { color:var(--faint); font:11px var(--mono); white-space:nowrap; }
+    .filters { display:grid; gap:8px; margin-bottom:12px; }
+    .search-wrap { position:relative; }
+    .search-mark { position:absolute; left:11px; top:9px; color:var(--faint); font:14px var(--mono); pointer-events:none; }
+    .search { width:100%; padding:9px 11px 9px 32px; border:1px solid var(--line); border-radius:6px; background:#0a100e; font-size:12px; }
+    .filter-select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--panel); font-size:12px; }
+    .file-list { display:grid; gap:8px; }
+    .file-card-item { min-width:0; }
+    .file-card { border:1px solid var(--line); border-radius:7px; background:rgba(18,27,25,.88); overflow:hidden; animation: lift .35s ease-out both; animation-delay:calc(min(var(--i,0),12) * 22ms); }
+    .file-card[hidden] { display:none; }
+    .file-card-item[hidden] { display:none; }
+    .file-card-links { display:flex; flex-wrap:wrap; align-items:center; gap:5px; padding:5px 5px 0; }
+    .linked-label { color:var(--faint); font:9px var(--mono); letter-spacing:.08em; text-transform:uppercase; }
+    .error-link, .event-link { display:inline-flex; align-items:center; gap:4px; padding:3px 6px; border:1px solid rgba(255,143,133,.28); border-radius:4px; color:#ffc0b8; background:rgba(67,31,32,.22); font:9px var(--mono); text-decoration:none; }
+    .error-link:hover, .event-link:hover { border-color:var(--red); background:rgba(67,31,32,.45); color:#fff0ed; }
+    .file-card summary { list-style:none; display:block; cursor:pointer; padding:11px 11px 10px; }
+    .file-card-hint { padding:0 11px 10px; color:var(--muted); font-size:11px; }
+    .file-card summary::-webkit-details-marker, .node summary::-webkit-details-marker, .sub-disclosure summary::-webkit-details-marker { display:none; }
+    .file-card summary:after { content:'＋'; float:right; color:var(--faint); font:12px var(--mono); margin-left:7px; }
+    .file-card[open] summary:after { content:'−'; color:var(--acid); }
+    .file-top { display:flex; align-items:center; justify-content:space-between; gap:7px; padding-right:17px; }
+    .file-index { color:var(--faint); font:10px var(--mono); }
+    .pill { display:inline-flex; align-items:center; gap:5px; max-width:100%; padding:3px 7px; border:1px solid color-mix(in srgb,var(--status-color,var(--muted)) 36%,transparent); border-radius:4px; color:var(--status-color,var(--muted)); background:color-mix(in srgb,var(--status-color,var(--muted)) 8%,transparent); font:10px var(--mono); text-transform:lowercase; overflow-wrap:anywhere; }
+    .pill:before { content:''; width:5px; height:5px; background:currentColor; border-radius:50%; flex:0 0 auto; }
+    .file-path { display:block; margin-top:7px; color:#dfece1; font:11px/1.5 var(--mono); overflow-wrap:anywhere; }
+    .file-meta { display:flex; flex-wrap:wrap; gap:9px; margin-top:7px; color:var(--faint); font-size:10px; }
+    .file-meta span + span:before { content:'·'; margin-right:9px; color:var(--line-bright); }
+    .empty-filter { display:none; padding:22px 12px; border:1px dashed var(--line-bright); border-radius:7px; color:var(--muted); text-align:center; font-size:12px; }
+    .empty-filter.visible { display:block; }
+    .detail-pane { min-width:0; }
+    .detail-toolbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-bottom:13px; padding:0 0 12px; border-bottom:1px solid var(--line); }
+    .detail-toolbar p { margin:0; color:var(--muted); font-size:11px; }
+    .toolbar-actions { display:flex; flex-wrap:wrap; gap:6px; }
+    .detail-file-title { min-width:0; }
+    .file-head-actions { display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+    .file-crosslinks { display:flex; flex-wrap:wrap; gap:6px; padding:8px 17px; border-bottom:1px solid var(--line); background:rgba(0,0,0,.08); }
+    .file-crosslinks:empty { display:none; }
+    .icon-action { padding:4px 7px; border:1px solid var(--line-bright); border-radius:4px; background:#0b120f; color:var(--muted); font:9px var(--mono); cursor:pointer; }
+    .icon-action:hover { border-color:var(--acid); color:var(--acid); }
+    .quiet-button { padding:6px 9px; border:1px solid var(--line-bright); border-radius:5px; background:#121b19; color:#c6d5c9; font:10px var(--mono); cursor:pointer; }
+    .quiet-button:hover { border-color:var(--acid); color:var(--acid); }
+    .file-detail { margin:0 0 13px; border:1px solid var(--line); border-radius:var(--radius); background:rgba(18,27,25,.88); overflow:hidden; transition:border-color .18s ease, box-shadow .18s ease; }
+    .file-detail.selected { border-color:var(--acid); box-shadow:0 0 0 1px rgba(217,255,112,.08), 0 10px 36px rgba(0,0,0,.16); }
+    .file-detail:target, .event:target, .error-item:target { scroll-margin-top:18px; outline:2px solid var(--acid); outline-offset:3px; }
+    .file-detail[hidden] { display:none; }
+    .detail-file-head { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:12px; padding:15px 17px; background:linear-gradient(100deg,rgba(217,255,112,.045),transparent 55%); border-bottom:1px solid var(--line); }
+    .detail-file-title { min-width:0; }
+    .detail-file-title .overline { margin:0 0 5px; color:var(--acid); font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+    .detail-file-title h3 { margin:0; font:500 20px/1.3 var(--display); overflow-wrap:anywhere; }
+    .file-facts { display:flex; flex-wrap:wrap; gap:6px; padding:11px 17px; border-bottom:1px solid var(--line); background:rgba(0,0,0,.12); }
+    .fact { display:inline-flex; align-items:center; gap:6px; padding:4px 7px; border:1px solid var(--line); border-radius:4px; color:var(--muted); font-size:10px; }
+    .fact strong { color:var(--ink); font-weight:500; }
+    .fact.fallback { color:var(--amber); border-color:rgba(255,192,120,.35); }
+    .hierarchy { padding:6px 15px 13px 17px; }
+    .node { margin-top:8px; border:1px solid var(--line); border-radius:7px; background:#111a17; overflow:hidden; }
+    .node > summary { display:flex; align-items:center; gap:10px; list-style:none; padding:11px 12px; cursor:pointer; }
+    .chevron { display:inline-block; color:var(--faint); font:12px var(--mono); transition:transform .18s ease; }
+    details[open] > summary .chevron { transform:rotate(90deg); color:var(--acid); }
+    .node-title { flex:1; min-width:0; }
+    .node-kicker { display:block; color:var(--faint); font:9px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+    .node-name { display:block; margin-top:2px; color:#e5eee6; font-size:12px; font-weight:600; overflow-wrap:anywhere; }
+    .node-tail { display:flex; align-items:center; gap:8px; margin-left:auto; }
+    .node-body { padding:0 12px 12px 31px; }
+    .node-description { margin:0 0 10px; color:var(--muted); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .contributors { display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin:0 0 10px; }
+    .contributors-label { margin-right:3px; color:var(--faint); font:9px var(--mono); letter-spacing:.08em; text-transform:uppercase; }
+    .person-chip { padding:3px 6px; border:1px solid #30463b; border-radius:4px; color:#c2d6c6; background:#17231d; font:10px var(--mono); overflow-wrap:anywhere; }
+    .subheading { display:flex; align-items:center; gap:8px; margin:11px 0 7px; color:var(--muted); font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase; }
+    .subheading:after { content:''; height:1px; flex:1; background:var(--line); }
+    .rule-config { display:grid; grid-template-columns:minmax(0,1.6fr) repeat(2,minmax(120px,.7fr)); gap:6px; margin:2px 0 10px; }
+    .config-cell { min-width:0; padding:8px 9px; border:1px solid #293a32; border-radius:5px; background:rgba(7,13,10,.44); }
+    .config-label { display:block; margin-bottom:4px; color:var(--faint); font:9px var(--mono); letter-spacing:.08em; text-transform:uppercase; }
+    .config-value { display:block; color:#dce8de; font:10px/1.5 var(--mono); overflow-wrap:anywhere; }
+    .config-value.pattern { color:var(--blue); white-space:pre-wrap; }
+    .config-value.strategy { color:var(--acid); }
+    .config-flags { display:flex; flex-wrap:wrap; gap:5px; margin:0 0 9px; }
+    .flag-chip { display:inline-flex; align-items:center; gap:6px; padding:4px 7px; border:1px solid var(--line); border-radius:4px; color:var(--muted); background:#0c1310; font:9px var(--mono); }
+    .flag-chip .flag-value { color:var(--faint); }
+    .flag-chip.yes { border-color:rgba(168,239,185,.35); color:#bbdfc3; }
+    .flag-chip.yes .flag-value { color:var(--mint); }
+    .configured-targets { display:grid; gap:4px; margin:0 0 10px; }
+    .configured-target { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; padding:7px 9px; border:1px dashed #314239; border-radius:4px; background:rgba(7,13,10,.26); }
+    .configured-target code { color:#c6dccb; font:10px var(--mono); overflow-wrap:anywhere; }
+    .requirement-count { color:var(--muted); font:10px var(--mono); white-space:nowrap; }
+    .requirement-count strong { color:var(--acid); font-weight:500; }
+    .target-list { display:grid; gap:6px; }
+    .target-card { padding:9px 10px; border:1px solid var(--line); border-radius:6px; background:#0e1512; }
+    .issue-focus { outline:2px solid var(--amber) !important; outline-offset:3px; }
+    .target-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+    .target-name { color:#dce8de; font:11px var(--mono); overflow-wrap:anywhere; }
+    .target-facts { display:flex; flex-wrap:wrap; gap:10px; margin-top:6px; color:var(--faint); font-size:10px; }
+    .target-facts strong { color:var(--muted); font-weight:500; }
+    .sub-disclosure { margin-top:7px; border-top:1px dashed #304038; padding-top:6px; }
+    .sub-disclosure summary { cursor:pointer; color:var(--muted); font:10px var(--mono); list-style:none; }
+    .sub-disclosure summary:before { content:'▸ '; color:var(--acid); }
+    .sub-disclosure[open] summary:before { content:'▾ '; }
+    pre.snapshot { max-width:100%; margin:8px 0 0; padding:10px; border:1px solid #26362e; border-radius:5px; background:#080d0b; color:#b8d4bf; font:10px/1.6 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere; tab-size:2; }
+    .no-data { padding:18px; border:1px dashed var(--line-bright); border-radius:7px; color:var(--muted); text-align:center; }
+    .support-grid { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:22px; margin-top:34px; }
+    .support-panel { min-width:0; border:1px solid var(--line); border-radius:var(--radius); background:rgba(18,27,25,.83); overflow:hidden; }
+    .support-panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 16px; border-bottom:1px solid var(--line); }
+    .support-panel-head h2 { margin:0; font:500 21px/1.1 var(--display); }
+    .support-panel-head .count { color:var(--acid); }
+    .support-content { padding:13px 15px 15px; }
+    .error-list { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+    .error-item { display:flex; align-items:flex-start; gap:9px; padding:9px 10px; border:1px solid rgba(255,143,133,.23); border-radius:5px; background:rgba(67,31,32,.2); color:#f0c9c4; font:11px/1.55 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+    .error-item:before { content:'!'; display:grid; place-items:center; flex:0 0 15px; width:15px; height:15px; border:1px solid rgba(255,143,133,.5); border-radius:50%; color:var(--red); font-size:9px; }
+    .error-item-main { min-width:0; flex:1; }
+    .error-item-text { display:block; }
+    .error-actions { display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin-top:7px; }
+    .error-file-links { display:flex; flex-wrap:wrap; gap:5px; }
+    .error-file-links a { color:#f3c3bb; font:10px var(--mono); text-decoration:underline; text-underline-offset:2px; }
+    .muted-empty { color:var(--faint); font-size:12px; }
+    .event-list { display:grid; gap:0; }
+    .event { display:grid; grid-template-columns:42px minmax(0,1fr); gap:10px; padding:11px 0; border-bottom:1px solid rgba(43,59,53,.72); }
+    .event:last-child { border-bottom:0; }
+    .event-index { padding-top:2px; color:var(--faint); font:10px var(--mono); }
+    .event-main { min-width:0; }
+    .event-top { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+    .event-phase { color:var(--acid); font:10px var(--mono); text-transform:uppercase; letter-spacing:.06em; }
+    .event-note { margin:5px 0 0; color:#cad8cd; font:11px/1.6 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+    .event-loc { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+    .event-loc span, .event-loc a { padding:2px 5px; border:1px solid #2b3a33; border-radius:3px; color:var(--muted); font:9px var(--mono); overflow-wrap:anywhere; }
+    .event-loc a { text-decoration:none; }
+    .event-loc a:hover { border-color:var(--acid); color:var(--acid); }
+    .event-filters { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(100px,.8fr) minmax(120px,.9fr); gap:7px; margin-bottom:12px; }
+    .event-filter-field { display:grid; gap:4px; min-width:0; color:var(--faint); font:9px var(--mono); text-transform:uppercase; letter-spacing:.07em; }
+    .event-search, .event-select { width:100%; min-width:0; padding:7px 8px; border:1px solid var(--line); border-radius:5px; background:#0a100e; color:var(--ink); font:11px var(--sans); text-transform:none; letter-spacing:normal; }
+    .event[hidden] { display:none; }
+    .event-filter-empty { display:none; padding:15px 0; color:var(--muted); font-size:12px; }
+    .event-filter-empty.visible { display:block; }
+    .sr-status { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+    .footer { display:flex; align-items:center; justify-content:space-between; gap:15px; margin-top:28px; padding-top:14px; border-top:1px solid var(--line); color:var(--faint); font:10px var(--mono); }
+    .footer-mark { color:var(--acid); }
+    @keyframes lift { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
+    @media (max-width: 900px) {
+      .metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .metric:nth-child(3) { border-left:0; border-top:1px solid var(--line); }
+      .metric:nth-child(4) { border-top:1px solid var(--line); }
+      .workspace { grid-template-columns:minmax(0,1fr); }
+      .file-rail { position:static; }
+      .file-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .support-grid { grid-template-columns:1fr; }
+    }
+    @media (max-width: 600px) {
+      .shell { width:calc(100% - 26px); padding-top:16px; }
+      .hero { grid-template-columns:1fr; padding-top:28px; }
+      .hero-status { max-width:none; }
+      .metrics { grid-template-columns:1fr; }
+      .metric + .metric, .metric:nth-child(3), .metric:nth-child(4) { border-left:0; border-top:1px solid var(--line); }
+      .file-list { grid-template-columns:1fr; }
+      .detail-toolbar { align-items:flex-start; flex-direction:column; }
+      .detail-file-head { padding:12px; }
+      .hierarchy { padding:5px 8px 10px; }
+      .node > summary { align-items:flex-start; padding:10px 8px; }
+      .node-tail { flex-direction:column; align-items:flex-end; gap:4px; }
+      .node-body { padding:0 8px 10px 20px; }
+      .footer { align-items:flex-start; flex-direction:column; }
+      .event-filters { grid-template-columns:1fr; }
+      .file-crosslinks { padding-left:12px; padding-right:12px; }
+    }
+    @media print {
+      :root { color-scheme:light; --bg:#fff; --panel:#fff; --panel-raised:#f5f7f5; --panel-soft:#f8faf8; --line:#cbd4ce; --line-bright:#7f8f84; --ink:#17211b; --muted:#45554a; --faint:#5f7064; --acid:#315b13; --red:#8d211b; --amber:#7a4a05; --blue:#145c70; }
+      html, body { background:#fff !important; color:#17211b !important; }
+      .shell { width:100%; padding:0; }
+      .file-rail { position:static; }
+      .workspace { display:block; }
+      .detail-pane, .support-grid { margin-top:18px; }
+      .topline, .footer, .filters, .toolbar-actions, .icon-action, .help-trigger, .event-filters, .file-card-links { display:none !important; }
+      .hero-status, .metrics, .file-detail, .support-panel, .file-card, .node, .target-card { background:#fff !important; box-shadow:none !important; break-inside:avoid; }
+      .file-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .file-path, .node-name, .target-name, .event-note, pre.snapshot, .config-value { color:#17211b !important; }
+      a { color:#244e13 !important; text-decoration:underline; }
+      .file-detail[hidden], .file-card-item[hidden], .event[hidden] { display:block !important; }
+      * { animation:none !important; transition:none !important; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; scroll-behavior:auto !important; transition-duration:.01ms !important; }
+    }
+    .live-panel { margin-top:28px; padding:20px 22px; border:1px solid var(--line); border-radius:var(--radius); background:rgba(18,27,25,.86); }
+    .live-panel h2 { margin:0 0 4px; font:500 22px/1.15 var(--display); }
+    .live-panel p { margin:0 0 14px; color:var(--muted); }
+    .stages { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
+    .stage { display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; color:var(--faint); font-size:13px; }
+    .stage-mark { display:grid; place-items:center; width:18px; height:18px; flex:0 0 auto; border:1px solid currentColor; border-radius:50%; font:10px var(--mono); }
+    .stage-note { margin-left:auto; color:var(--muted); font:11px var(--mono); }
+    .stage.done { color:var(--mint); }
+    .stage.current { color:var(--acid); border-color:var(--acid); background:rgba(217,255,112,.045); }
+    .stage.current .stage-mark { animation:pulse 1.2s ease-in-out infinite; }
+    .stage-bar { height:3px; margin-top:6px; border-radius:2px; background:var(--line); overflow:hidden; }
+    .stage-bar span { display:block; height:100%; background:var(--acid); }
+    @keyframes pulse { 50% { opacity:.35; } }
+    .outcome { margin-top:15px; padding:13px 15px; border:1px solid var(--line); border-left:3px solid var(--status-color,var(--muted)); border-radius:6px; background:rgba(18,27,25,.86); }
+    .outcome-summary { margin:0; font-weight:600; }
+    .outcome ul { margin:8px 0 0; padding-left:18px; }
+    .outcome-meta { margin:6px 0 0; color:var(--faint); font:11px var(--mono); }
+    .warning-list { margin:8px 0 0; padding-left:18px; color:var(--amber); }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topline">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">↳</span><span>Canopy review</span></div>
+      <div class="run-tag">{{ if .Live }}Live · updates itself{{ else }}Rule evaluation / full trace{{ end }}</div>
+    </div>
+
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Pull request review</p>
+        <h1>{{ .Repo }} #{{ .Number }}</h1>
+        <div class="repo-line">
+          <span>HEAD</span><code title="{{ .HeadSHA }}">{{ shortSHA .HeadSHA }}</code>
+          {{- if .QueuedAt.IsZero | not }}<span class="slash">/</span><span>QUEUED</span><code>{{ timestamp .QueuedAt }}</code>{{ end }}
+          {{- if .FinishedAt.IsZero | not }}<span class="slash">/</span><span>FINISHED</span><code>{{ timestamp .FinishedAt }}</code>{{ end }}
+        </div>
+      </div>
+      {{- if .Live }}
+      <div class="hero-status status-active">
+        <div class="label">Review</div>
+        <div class="value"><span class="dot" aria-hidden="true"></span><span id="live-state">{{ .State }}</span></div>
+      </div>
+      {{- else }}
+      <div class="hero-status status-{{ verdictClass .Outcome.Verdict }}">
+        <div class="label">Verdict <span class="help-wrap"><button class="help-trigger" type="button" aria-label="Explain the verdict" aria-describedby="tip-status" aria-expanded="false">i</button><span class="tooltip-box" role="tooltip" id="tip-status">The verdict the review published as the pull request's check. Only “passed” lets the pull request merge.</span></span></div>
+        <div class="value"><span class="dot" aria-hidden="true"></span>{{ if .Outcome.Verdict }}{{ .Outcome.Verdict }}{{ else }}unknown{{ end }}</div>
+      </div>
+      {{- end }}
+    </header>
+
+    {{- if .Live }}
+    <section class="live-panel" aria-labelledby="live-title" data-live data-state="{{ .State }}" data-progress-url="{{ .ProgressURL }}">
+      {{- if eq .State "pending" }}
+      <h2 id="live-title">No review yet</h2>
+      <p>Canopy has not recorded a review of this commit yet. It starts when the pull request's webhook arrives; this page follows it.</p>
+      {{- else if eq .State "queued" }}
+      <h2 id="live-title">Review queued</h2>
+      <p>The review waits for a worker. This page follows it and shows the full report when it finishes.</p>
+      {{- else }}
+      <h2 id="live-title">Review running</h2>
+      <p>{{ if .Stage }}This page follows the review and shows the full report when it finishes.{{ else }}Another Canopy server runs this review; this page shows the full report when it finishes.{{ end }}</p>
+      {{- end }}
+      {{- if ne .State "pending" }}
+      <ol class="stages" id="live-stages">
+        {{- range .Stages }}
+        <li class="stage {{ .State }}"><span class="stage-mark" aria-hidden="true">{{ if eq .State "done" }}✓{{ else if eq .State "current" }}●{{ else }}·{{ end }}</span><span>{{ .Label }}</span><span class="stage-note">{{ .Note }}</span></li>
+        {{- end }}
+      </ol>
+      {{- end }}
+      <div class="sr-status" id="live-status" role="status" aria-live="polite"></div>
+    </section>
+    {{- else }}
+    <section class="outcome status-{{ verdictClass .Outcome.Verdict }}" aria-label="Outcome">
+      <p class="outcome-summary">{{ if .Outcome.Summary }}{{ .Outcome.Summary }}{{ else }}No outcome was recorded.{{ end }}</p>
+      {{- if .Outcome.Items }}<ul>{{ range .Outcome.Items }}<li><code>{{ . }}</code></li>{{ end }}</ul>{{ end }}
+      {{- if .Outcome.Warnings }}<ul class="warning-list">{{ range .Outcome.Warnings }}<li>{{ . }}</li>{{ end }}</ul>{{ end }}
+      <p class="outcome-meta">Review {{ if .Status }}{{ .Status }}{{ else }}finished{{ end }}{{ if eq .Status "superseded" }}: a newer review replaced it before it reported{{ end }}.</p>
+    </section>
+    {{- end }}
+
+    {{- with .Report }}
+    <section class="metrics" aria-label="Review summary" style="margin-top:22px">
+      <a class="metric metric-link" href="#files-title" data-activate-filter="attention">
+        <div class="metric-label">Files needing attention</div>
+        <div class="metric-number">{{ .FilesNeedingAttention }}</div>
+        <div class="metric-note">Any file status other than satisfied · view files</div>
+      </a>
+      <a class="metric metric-link" href="#files-title" data-activate-filter="attention">
+        <div class="metric-label">Final targets needing attention</div>
+        <div class="metric-number">{{ .TargetsNeedingAttention }}</div>
+        <div class="metric-note">Final per-file target states · view files</div>
+      </a>
+      <a class="metric metric-link" href="#collected-errors">
+        <div class="metric-label">Collected errors</div>
+        <div class="metric-number">{{ len .Errors }}</div>
+        <div class="metric-note">Every error the review met</div>
+      </a>
+      <a class="metric metric-link" href="#events-title" data-activate-events="all">
+        <div class="metric-label">Trace events</div>
+        <div class="metric-number">{{ .EventCount }}</div>
+        <div class="metric-note">Chronological execution record · view trace</div>
+      </a>
+    </section>
+
+    {{- if .Errors }}
+    <section class="problem-banner" role="alert" aria-labelledby="review-error-title">
+      <div class="problem-icon" aria-hidden="true">!</div>
+      <div><h2 class="problem-title" id="review-error-title">The review met {{ len .Errors }} {{ if eq (len .Errors) 1 }}error{{ else }}errors{{ end }}</h2><p class="metric-note"><a href="#collected-errors">Jump to the collected errors ↓</a></p></div>
+    </section>
+    {{- end }}
+    {{- if .Warnings }}
+    <section class="outcome status-missing_approvers" aria-label="Warnings"><p class="outcome-summary">Warnings</p><ul class="warning-list">{{ range .Warnings }}<li>{{ . }}</li>{{ end }}</ul></section>
+    {{- end }}
+
+    <div class="workspace">
+      <aside class="file-rail" aria-labelledby="files-title">
+        <div class="section-head"><h2 id="files-title">Files in scope</h2><span class="count">{{ len .Files }} total</span></div>
+        <div class="filters">
+          <label class="search-wrap"><span class="search-mark" aria-hidden="true">⌕</span><input id="file-search" class="search" type="search" placeholder="Find a path…" aria-label="Search files by path" aria-controls="file-list"></label>
+          <label><span class="sr-only">Filter files by status</span>
+            <select id="status-filter" class="filter-select" aria-label="Filter files by status">
+              <option value="all">All file statuses</option>
+              <option value="attention">Not satisfied</option>
+              <option value="satisfied">Satisfied only</option>
+            </select>
+          </label>
+        </div>
+        <div class="file-list" id="file-list">
+          {{- range .Files }}
+          <div class="file-card-item" data-file-row data-file-key="{{ .Path }}">
+            <details class="file-card" data-file-card data-search="{{ .Path }}" data-status="{{ statusClass .Status }}" style="--i:{{ .Index }}" data-file-key="{{ .Path }}">
+              <summary>
+                <div class="file-top"><span class="file-index">FILE / {{ printf "%02d" .Index }}</span><span class="pill status-{{ statusClass .Status }}">{{ statusLabel .Status }}</span></div>
+                <span class="file-path">{{ .Path }}</span>
+                <span class="file-meta"><span>{{ len .Layers }} {{ if eq (len .Layers) 1 }}layer{{ else }}layers{{ end }}</span><span>{{ len .Required }} {{ if eq (len .Required) 1 }}target{{ else }}targets{{ end }}</span>{{ if .UsedFallback }}<span>fallback</span>{{ end }}{{ if .Errors }}<span>{{ len .Errors }} linked {{ if eq (len .Errors) 1 }}error{{ else }}errors{{ end }}</span>{{ end }}</span>
+              </summary>
+              <div class="file-card-hint">Details open in the decision path →</div>
+            </details>
+            {{- if .Errors }}<div class="file-card-links" aria-label="Error details for {{ .Path }}"><span class="linked-label">Linked errors</span>{{ range .Errors }}<a class="error-link" href="#{{ .ID }}">ERR {{ printf "%02d" .Index }} ↓</a>{{ end }}</div>{{ end }}
+          </div>
+          {{- else }}
+          <div class="no-data">The review covered no files.</div>
+          {{- end }}
+          <div class="empty-filter" id="empty-filter" role="status">No files match these filters.</div>
+        </div>
+      </aside>
+
+      <section class="detail-pane" aria-labelledby="details-title">
+        <div class="detail-toolbar">
+          <div><div class="section-head" style="margin:0"><h2 id="details-title">Decision path</h2></div><p>File → rules file → rule → approver target</p></div>
+          <div class="toolbar-actions"><button class="quiet-button" type="button" id="next-issue">Next issue ↓</button><button class="quiet-button" type="button" id="expand-all">Expand all</button><button class="quiet-button" type="button" id="collapse-all">Collapse all</button></div>
+        </div>
+
+        {{- range $file := .Files }}
+        <article class="file-detail" id="{{ .ID }}" data-detail-path="{{ .Path }}" data-file-key="{{ .Path }}" tabindex="-1">
+          <header class="detail-file-head">
+            <div class="detail-file-title"><p class="overline">FILE / {{ printf "%02d" .Index }}</p><h3>{{ .Path }}</h3></div>
+            <div class="file-head-actions"><span class="pill status-{{ statusClass .Status }}">{{ statusLabel .Status }}</span><button class="icon-action" type="button" data-copy-text="{{ .Path }}" data-copy-label="Copy path" aria-label="Copy file path">Copy path</button></div>
+          </header>
+          <div class="file-facts">
+            <span class="fact"><strong>{{ len .Layers }}</strong> layers</span>
+            <span class="fact"><strong>{{ len .Required }}</strong> final targets</span>
+            {{ if .UsedFallback }}<span class="fact fallback">Falls back to the repository owners</span>{{ else }}<span class="fact">No fallback</span>{{ end }}
+          </div>
+          <div class="file-crosslinks" aria-label="Related diagnostics for this file">
+            {{- range .Errors }}<a class="error-link" href="#{{ .ID }}">Error {{ printf "%02d" .Index }} ↓</a>{{ end }}
+            {{- if .FirstEvent }}<a class="event-link" href="#{{ .FirstEvent }}" data-event-link>Jump to {{ .EventCount }} trace events ↗</a>{{ end }}
+          </div>
+          <div class="hierarchy">
+            {{- range $layerIndex, $layer := .Layers }}
+            <details class="node" data-expandable data-issue="{{ isIssue .Status }}" {{ if openStatus .Status }}open{{ end }}>
+              <summary><span class="chevron" aria-hidden="true">›</span><div class="node-title"><span class="node-kicker">Layer {{ printf "%02d" (add $layerIndex 1) }}</span><span class="node-name">{{ .RulesFile }}</span></div><span class="node-tail"><span class="pill status-{{ statusClass .Status }}">{{ statusLabel .Status }}</span></span></summary>
+              <div class="node-body">
+                <div class="file-facts" style="padding:0 0 9px;background:none;border:0"><span class="fact"><strong>{{ len .Rules }}</strong> rules</span><span class="fact"><strong>{{ len .Requires }}</strong> required targets</span></div>
+                {{- if .Requires }}
+                <div class="subheading">Requires after this layer · {{ len .Requires }}</div>
+                <div class="configured-targets">{{ range .Requires }}<div class="configured-target"><code>{{ .Target }}</code><span class="requirement-count"><strong>{{ .RequiredCount }}</strong> required</span></div>{{ end }}</div>
+                {{- end }}
+                <div class="subheading">Rules · {{ len .Rules }}</div>
+                {{- range $ruleIndex, $rule := .Rules }}
+                <details class="node" data-expandable data-issue="{{ isIssue .Status }}" {{ if openStatus .Status }}open{{ end }}>
+                  <summary><span class="chevron" aria-hidden="true">›</span><div class="node-title"><span class="node-kicker">Rule {{ printf "%02d" (add $ruleIndex 1) }}</span><span class="node-name">{{ if .Name }}{{ .Name }}{{ else }}{{ .Pattern }}{{ end }}</span></div><span class="node-tail"><span class="pill status-{{ statusClass .Status }}">{{ statusLabel .Status }}</span></span></summary>
+                  <div class="node-body">
+                    {{- if .Reason }}<p class="node-description">{{ .Reason }}</p>{{ end }}
+                    <div class="rule-config">
+                      <div class="config-cell"><span class="config-label">Pattern</span><code class="config-value pattern">{{ if .Pattern }}{{ .Pattern }}{{ else }}(empty pattern){{ end }}</code></div>
+                      <div class="config-cell"><span class="config-label">Combine strategy <span class="help-wrap"><button class="help-trigger" type="button" aria-label="Explain combine strategies" aria-describedby="tip-strategy-{{ $file.ID }}-{{ $layerIndex }}-{{ $ruleIndex }}" aria-expanded="false">i</button><span class="tooltip-box" role="tooltip" id="tip-strategy-{{ $file.ID }}-{{ $layerIndex }}-{{ $ruleIndex }}">Union adds this rule’s targets to the incoming requirements. Override replaces them with this rule’s targets. Intersect keeps the targets both name.</span></span></span><span class="config-value strategy">{{ .Strategy }}</span></div>
+                      <div class="config-cell"><span class="config-label">Rule name</span><span class="config-value">{{ if .Name }}{{ .Name }}{{ else }}(unnamed){{ end }}</span></div>
+                    </div>
+                    <div class="subheading">Evaluated targets · {{ len .Approvers }}</div>
+                    {{- if .Approvers }}
+                    <div class="target-list">{{ range .Approvers }}{{ template "target" . }}{{ end }}</div>
+                    {{- else }}<p class="muted-empty">The rule evaluated no approver targets.</p>{{ end }}
+                  </div>
+                </details>
+                {{- else }}<p class="muted-empty">No rules were recorded for this layer.</p>{{ end }}
+              </div>
+            </details>
+            {{- else }}<p class="muted-empty" style="padding:8px 0">No rules file covers this file.</p>{{ end }}
+          </div>
+          <div class="subheading">Final required targets · {{ len .Required }}</div>
+          {{- if .Required }}
+          <div class="target-list">{{ range .Required }}{{ template "target" . }}{{ end }}</div>
+          {{- else }}<p class="muted-empty">No approver targets are required.</p>{{ end }}
+        </article>
+        {{- else }}<div class="no-data">No file decision paths to display.</div>{{ end }}
+      </section>
+    </div>
+
+    <section class="support-grid" aria-label="Diagnostics and audit trace">
+      <section class="support-panel" id="collected-errors" aria-labelledby="errors-title">
+        <header class="support-panel-head"><h2 id="errors-title">Collected errors</h2><span class="count">{{ len .Errors }} recorded</span></header>
+        <div class="support-content">
+          {{- if .Errors }}
+          <ol class="error-list">
+            {{- range .Errors }}
+            <li class="error-item" id="{{ .ID }}" tabindex="-1" data-error-item>
+              <div class="error-item-main">
+                <span class="error-item-text"><span style="color:var(--faint)">ERR {{ printf "%02d" .Index }}</span><br>{{ .Text }}</span>
+                <div class="error-actions">
+                  <button class="icon-action" type="button" data-copy-text="{{ .Text }}" data-copy-label="Copy error" aria-label="Copy error {{ printf "%02d" .Index }}">Copy error</button>
+                  {{- if .Files }}<span class="linked-label">Related files</span><span class="error-file-links">{{ range .Files }}<a href="#{{ .ID }}" data-file-link data-target-id="{{ .ID }}">{{ .Label }} ↗</a>{{ end }}</span>{{ end }}
+                </div>
+              </div>
+            </li>
+            {{- end }}
+          </ol>
+          {{- else }}<p class="muted-empty">The review met no errors.</p>{{ end }}
+        </div>
+      </section>
+
+      <section class="support-panel" aria-labelledby="events-title">
+        <header class="support-panel-head"><h2 id="events-title">Execution trace</h2><span class="count">{{ .EventCount }} events{{ if .HiddenEvents }}, first {{ len .Events }} shown{{ end }}</span></header>
+        <div class="support-content">
+          <div class="event-filters" role="group" aria-label="Filter execution events">
+            <label class="event-filter-field">Search trace<input id="event-search" class="event-search" type="search" placeholder="Path, rule, note…" aria-label="Search trace events"></label>
+            <label class="event-filter-field">Phase<select id="event-phase-filter" class="event-select" aria-label="Filter events by phase"><option value="all">All phases</option><option value="fetch">Fetch</option><option value="sift">Sift</option><option value="approve">Approve</option><option value="other">Other</option></select></label>
+            <label class="event-filter-field">Status<select id="event-status-filter" class="event-select" aria-label="Filter events by status"><option value="all">All statuses</option><option value="error">Error</option><option value="unresolved">Unresolved</option><option value="missing_approvers">Missing approvers</option><option value="satisfied">Satisfied</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="done">Done</option><option value="unknown">Unknown</option><option value="problems">Any status except satisfied</option></select></label>
+          </div>
+          {{- if .Events }}
+          <div class="event-list" id="event-list">
+            {{- range .Events }}
+            <article class="event" id="{{ .ID }}" tabindex="-1" data-event-item data-event-phase="{{ if .Phase }}{{ .Phase }}{{ else }}unknown{{ end }}" data-event-status="{{ statusClass .Status }}" data-event-search="{{ .Path }} {{ .RulesFile }} {{ .Rule }} {{ .Note }}">
+              <div class="event-index">{{ printf "%03d" .Index }}</div>
+              <div class="event-main">
+                <div class="event-top"><span class="event-phase">{{ if .Phase }}{{ .Phase }}{{ else }}phase unknown{{ end }}</span><span class="pill status-{{ statusClass .Status }}">{{ statusLabel .Status }}</span>{{ if .Note }}<button class="icon-action" type="button" data-copy-text="{{ .Note }}" data-copy-label="Copy event note" aria-label="Copy event {{ printf "%03d" .Index }} note">Copy note</button>{{ end }}</div>
+                {{- if .Note }}<p class="event-note">{{ .Note }}</p>{{ end }}
+                {{- if or .Path .RulesFile .Rule }}
+                <div class="event-loc">
+                  {{- if .Path }}{{ if .FileID }}<a href="#{{ .FileID }}" data-file-link data-target-id="{{ .FileID }}">path: {{ .Path }} ↗</a>{{ else }}<span>path: {{ .Path }}</span>{{ end }}{{ end }}
+                  {{- if .RulesFile }}<span>rules file: {{ .RulesFile }}</span>{{ end }}
+                  {{- if .Rule }}<span>rule: {{ .Rule }}</span>{{ end }}
+                </div>
+                {{- end }}
+              </div>
+            </article>
+            {{- end }}
+          </div>
+          {{- if .HiddenEvents }}<p class="muted-empty">{{ .HiddenEvents }} later events are not shown.</p>{{ end }}
+          <p class="event-filter-empty" id="event-filter-empty" role="status">No events match these filters.</p>
+          {{- else }}<p class="muted-empty">No events were recorded.</p>{{ end }}
+        </div>
+      </section>
+    </section>
+    {{- else }}
+    {{- if not .Live }}
+    <p class="muted-empty" style="margin-top:22px">The review's full state is not available{{ if eq .Status "superseded" "cancelled" }}: it did not finish{{ end }}.</p>
+    {{- end }}
+    {{- end }}
+
+    <div class="sr-status" id="interaction-status" role="status" aria-live="polite" aria-atomic="true"></div>
+    <footer class="footer"><span><span class="footer-mark">◆</span> Canopy review</span><span>{{ .Repo }} #{{ .Number }} @ {{ shortSHA .HeadSHA }}</span></footer>
+  </main>
+  {{- if .Report }}
+  <script>
+    (() => {
+      'use strict';
+      const search = document.getElementById('file-search');
+      const filter = document.getElementById('status-filter');
+      const fileRows = Array.from(document.querySelectorAll('[data-file-row]'));
+      const emptyFiles = document.getElementById('empty-filter');
+      const cardByKey = new Map();
+      const detailByKey = new Map();
+      document.querySelectorAll('[data-detail-path]').forEach((detail) => detailByKey.set(detail.dataset.detailPath, detail));
+      fileRows.forEach((row) => {
+        const key = row.dataset.fileKey;
+        cardByKey.set(key, row.querySelector('[data-file-card]'));
+      });
+      const eventSearch = document.getElementById('event-search');
+      const eventPhase = document.getElementById('event-phase-filter');
+      const eventStatus = document.getElementById('event-status-filter');
+      const eventItems = Array.from(document.querySelectorAll('[data-event-item]'));
+      const emptyEvents = document.getElementById('event-filter-empty');
+      const liveStatus = document.getElementById('interaction-status');
+      const allDetails = Array.from(document.querySelectorAll('details[data-expandable], details.sub-disclosure, details.file-card'));
+      const reducedMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const scrollBehavior = () => reducedMotion() ? 'auto' : 'smooth';
+
+      function applyFileFilters() {
+        const query = (search.value || '').trim().toLocaleLowerCase();
+        const mode = filter.value;
+        let visible = 0;
+        fileRows.forEach((row) => {
+          const card = cardByKey.get(row.dataset.fileKey);
+          const detail = detailByKey.get(row.dataset.fileKey);
+          if (!card || !detail) return;
+          const textMatch = (card.dataset.search || '').toLocaleLowerCase().includes(query);
+          const status = card.dataset.status || 'unknown';
+          const statusMatch = mode === 'all' ||
+            (mode === 'attention' && status !== 'satisfied') ||
+            (mode === 'satisfied' && status === 'satisfied');
+          const show = textMatch && statusMatch;
+          row.hidden = !show;
+          detail.hidden = !show;
+          if (show) visible++;
+        });
+        emptyFiles.classList.toggle('visible', fileRows.length > 0 && visible === 0);
+        liveStatus.textContent = `Showing ${visible} of ${fileRows.length} files.`;
+      }
+
+      function phaseFor(value) {
+        const phase = (value || '').toLocaleLowerCase();
+        return ['fetch', 'sift', 'approve'].includes(phase) ? phase : 'other';
+      }
+
+      function applyEventFilters() {
+        const query = (eventSearch && eventSearch.value || '').trim().toLocaleLowerCase();
+        const phase = eventPhase ? eventPhase.value : 'all';
+        const status = eventStatus ? eventStatus.value : 'all';
+        let visible = 0;
+        eventItems.forEach((item) => {
+          const textMatch = (item.dataset.eventSearch || '').toLocaleLowerCase().includes(query);
+          const phaseMatch = phase === 'all' || phaseFor(item.dataset.eventPhase) === phase;
+          const eventState = item.dataset.eventStatus || 'unknown';
+          const statusMatch = status === 'all' ||
+            (status === 'problems' && eventState !== 'satisfied') || eventState === status;
+          const show = textMatch && phaseMatch && statusMatch;
+          item.hidden = !show;
+          if (show) visible++;
+        });
+        if (emptyEvents) emptyEvents.classList.toggle('visible', eventItems.length > 0 && visible === 0);
+        liveStatus.textContent = `Showing ${visible} of ${eventItems.length} trace events.`;
+      }
+
+      function markSelected(detail) {
+        document.querySelectorAll('[data-detail-path].selected').forEach((item) => item.classList.remove('selected'));
+        if (detail) detail.classList.add('selected');
+      }
+
+      function showAllFiles() {
+        if (search) search.value = '';
+        if (filter) filter.value = 'all';
+        applyFileFilters();
+      }
+
+      function showAllEvents() {
+        if (eventSearch) eventSearch.value = '';
+        if (eventPhase) eventPhase.value = 'all';
+        if (eventStatus) eventStatus.value = 'all';
+        applyEventFilters();
+      }
+
+      function prepareFileLink(link) {
+        const id = link.dataset.targetId;
+        const detail = id ? document.getElementById(id) : null;
+        if (!detail) return;
+        if (detail.hidden) showAllFiles();
+        const key = detail.dataset.fileKey;
+        const card = cardByKey.get(key);
+        if (card) card.open = true;
+        markSelected(detail);
+      }
+
+      if (search) search.addEventListener('input', applyFileFilters);
+      if (filter) filter.addEventListener('change', applyFileFilters);
+      if (eventSearch) eventSearch.addEventListener('input', applyEventFilters);
+      if (eventPhase) eventPhase.addEventListener('change', applyEventFilters);
+      if (eventStatus) eventStatus.addEventListener('change', applyEventFilters);
+
+      document.querySelectorAll('.help-trigger').forEach((button) => {
+        button.addEventListener('click', () => {
+          const wrap = button.closest('.help-wrap');
+          const open = wrap.classList.toggle('is-open');
+          button.setAttribute('aria-expanded', String(open));
+        });
+      });
+      document.addEventListener('click', (event) => {
+        document.querySelectorAll('.help-wrap.is-open').forEach((wrap) => {
+          if (wrap.contains(event.target)) return;
+          wrap.classList.remove('is-open');
+          const trigger = wrap.querySelector('.help-trigger');
+          if (trigger) trigger.setAttribute('aria-expanded', 'false');
+        });
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        document.querySelectorAll('.help-wrap.is-open').forEach((wrap) => {
+          wrap.classList.remove('is-open');
+          const trigger = wrap.querySelector('.help-trigger');
+          if (trigger) { trigger.setAttribute('aria-expanded', 'false'); trigger.focus(); }
+        });
+      });
+
+      document.querySelectorAll('a[data-activate-filter]').forEach((link) => {
+        link.addEventListener('click', () => {
+          if (search) search.value = '';
+          if (filter) filter.value = link.dataset.activateFilter || 'all';
+          applyFileFilters();
+        });
+      });
+      document.querySelectorAll('a[data-activate-events]').forEach((link) => {
+        link.addEventListener('click', () => {
+          showAllEvents();
+        });
+      });
+      document.querySelectorAll('a[data-file-link]').forEach((link) => {
+        link.addEventListener('click', () => prepareFileLink(link));
+      });
+      document.querySelectorAll('a[data-event-link]').forEach((link) => {
+        link.addEventListener('click', () => showAllEvents());
+      });
+
+      fileRows.forEach((row) => {
+        const card = cardByKey.get(row.dataset.fileKey);
+        const detail = detailByKey.get(row.dataset.fileKey);
+        if (!card || !detail) return;
+        const summary = card.querySelector('summary');
+        if (summary) summary.addEventListener('click', () => {
+          markSelected(detail);
+          detail.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+        });
+      });
+
+      document.getElementById('expand-all').addEventListener('click', () => allDetails.forEach((item) => { item.open = true; }));
+      document.getElementById('collapse-all').addEventListener('click', () => allDetails.forEach((item) => { item.open = false; }));
+
+      const nextIssue = document.getElementById('next-issue');
+      let issueIndex = -1;
+      if (nextIssue) nextIssue.addEventListener('click', () => {
+        const targets = Array.from(document.querySelectorAll('.target-card[data-issue="true"]')).filter((item) => !item.closest('[hidden]'));
+        const nodes = Array.from(document.querySelectorAll('details.node[data-issue="true"]')).filter((item) => !item.closest('[hidden]'));
+        const issues = targets.length ? targets : nodes;
+        if (!issues.length) {
+          liveStatus.textContent = 'No unsatisfied target or rule details were found.';
+          return;
+        }
+        issueIndex = (issueIndex + 1) % issues.length;
+        const issue = issues[issueIndex];
+        let parent = issue.parentElement;
+        while (parent) {
+          if (parent.tagName === 'DETAILS') parent.open = true;
+          parent = parent.parentElement;
+        }
+        document.querySelectorAll('.issue-focus').forEach((item) => item.classList.remove('issue-focus'));
+        issue.classList.add('issue-focus');
+        if (typeof issue.focus === 'function') issue.focus({ preventScroll: true });
+        issue.scrollIntoView({ behavior: scrollBehavior(), block: 'center' });
+        liveStatus.textContent = `Issue ${issueIndex + 1} of ${issues.length}.`;
+      });
+
+      function fallbackCopy(text) {
+        const field = document.createElement('textarea');
+        field.value = text;
+        field.setAttribute('readonly', '');
+        field.setAttribute('aria-hidden', 'true');
+        field.style.position = 'fixed';
+        field.style.opacity = '0';
+        field.style.pointerEvents = 'none';
+        document.body.appendChild(field);
+        field.select();
+        let copied = false;
+        try { copied = document.execCommand('copy'); } catch (_) { copied = false; }
+        field.remove();
+        return copied;
+      }
+
+      document.querySelectorAll('button[data-copy-text]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const text = button.dataset.copyText || '';
+          let copied = false;
+          if (navigator.clipboard && window.isSecureContext) {
+            try { await navigator.clipboard.writeText(text); copied = true; } catch (_) { copied = false; }
+          }
+          if (!copied) copied = fallbackCopy(text);
+          const original = button.dataset.copyLabel || button.textContent.trim();
+          button.textContent = copied ? 'Copied ✓' : 'Copy unavailable';
+          liveStatus.textContent = copied ? 'Copied to clipboard.' : 'Clipboard access failed. Select the displayed text and copy it manually.';
+          window.setTimeout(() => { button.textContent = original; }, 1500);
+        });
+      });
+
+      // Opening a saved HTML report at a deep link should reveal filtered targets.
+      function followCurrentHash() {
+        let id = (window.location.hash || '').slice(1);
+        try { id = decodeURIComponent(id); } catch (_) { return; }
+        if (!id) return;
+        const target = document.getElementById(id);
+        if (!target) return;
+        if (target.matches('[data-file-link]')) return;
+        const detail = target.matches('[data-detail-path]') ? target : target.closest('[data-detail-path]');
+        if (detail) {
+          if (detail.hidden) showAllFiles();
+          const card = cardByKey.get(detail.dataset.fileKey);
+          if (card) card.open = true;
+          markSelected(detail);
+        }
+        if (target.matches('[data-event-item]') || target.closest('[data-event-item]')) showAllEvents();
+      }
+      window.addEventListener('hashchange', followCurrentHash);
+      followCurrentHash();
+
+      // Expand disclosures during print/PDF export, then restore the user's state.
+      let printState = [];
+      window.addEventListener('beforeprint', () => {
+        printState = allDetails.map((item) => item.open);
+        allDetails.forEach((item) => { item.open = true; });
+      });
+      window.addEventListener('afterprint', () => {
+        allDetails.forEach((item, index) => { item.open = Boolean(printState[index]); });
+        printState = [];
+      });
+
+      applyFileFilters();
+      applyEventFilters();
+    })();
+  </script>
+  {{- end }}
+  {{- if .Live }}
+  <script>
+    (() => {
+      'use strict';
+      // Poll the review's progress; reload into the next state (queued,
+      // running, then the full report) when it changes.
+      const panel = document.querySelector('[data-live]');
+      if (!panel || !window.fetch) return;
+      const url = panel.dataset.progressUrl;
+      const initial = panel.dataset.state;
+      const stages = Array.from(document.querySelectorAll('#live-stages .stage'));
+      const order = ['queued', 'change', 'fetch', 'sift', 'resolve', 'approve', 'report'];
+      const status = document.getElementById('live-status');
+      const interval = initial === 'pending' ? 5000 : 1500;
+      const deadline = Date.now() + 30 * 60 * 1000;
+      let lastStage = '';
+
+      function show(p) {
+        const current = order.indexOf(p.stage);
+        stages.forEach((item, i) => {
+          const state = current < 0 ? 'todo' : i < current ? 'done' : i === current ? 'current' : 'todo';
+          item.className = 'stage ' + state;
+          item.querySelector('.stage-mark').textContent = state === 'done' ? '✓' : state === 'current' ? '●' : '·';
+          item.querySelector('.stage-note').textContent =
+            state === 'current' && p.stage === 'approve' && p.total > 0 ? `${p.done} of ${p.total} files` : '';
+        });
+        if (p.stage && p.stage !== lastStage && current >= 0) {
+          lastStage = p.stage;
+          status.textContent = stages[current].textContent.replace(/[✓●·]/g, '').trim();
+        }
+      }
+
+      async function poll() {
+        if (Date.now() > deadline) return;
+        try {
+          const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+          if (res.ok) {
+            const p = await res.json();
+            if (p.state !== initial) { window.location.reload(); return; }
+            show(p);
+          }
+        } catch (_) { /* retry on the next tick */ }
+        window.setTimeout(poll, interval);
+      }
+      window.setTimeout(poll, interval);
+    })();
+  </script>
+  {{- end }}
+</body>
+</html>
+{{- define "target" }}
+<div class="target-card" data-issue="{{ isIssue .Status }}" tabindex="-1">
+  <div class="target-heading"><span class="target-name">{{ if .Target }}{{ .Target }}{{ else }}(empty target){{ end }}</span><span class="requirement-count"><strong>{{ .RequiredCount }}</strong> required</span><span class="pill status-{{ statusClass .Status }}">{{ statusLabel .Status }}</span></div>
+  <div class="target-facts"><span><strong>Approved by:</strong> {{ if .ApprovedBy }}{{ join .ApprovedBy ", " }}{{ else }}—{{ end }}</span><span><strong>Approvals:</strong> {{ len .ApprovedBy }} / {{ .RequiredCount }}</span></div>
+  {{- if .Reason }}<p class="node-description" style="margin-top:7px;margin-bottom:0">{{ .Reason }}</p>{{ end }}
+</div>
+{{- end }}

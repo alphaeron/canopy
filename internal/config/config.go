@@ -65,6 +65,16 @@ type Config struct {
 	// on every replica, and never stored in the database. Required with
 	// DatabaseURL. It is a secret, so it is never logged.
 	DatabaseKey string `mapstructure:"database_key"`
+	// PublicURL is the review server's URL as the platform's users reach
+	// it, e.g. "https://canopy.example.com"; with LinkKey it serves review
+	// pages, and each pull request's status links to its own. Empty
+	// serves none.
+	PublicURL string `mapstructure:"public_url"`
+	// LinkKey signs the links to review pages (see
+	// server.Options.LinkKey): at least 32 bytes and the same on every
+	// replica. Required with PublicURL. It is a secret, so it is never
+	// logged.
+	LinkKey string `mapstructure:"link_key"`
 	// GitHub configures the GitHub platform for the review server.
 	GitHub GitHub `mapstructure:"github"`
 	// Path is the file the configuration was read from, when one existed.

@@ -90,6 +90,21 @@ func (f *fakeRecorder) ReportInOrder(ctx context.Context, pr PullRequestInfo, or
 	return true, nil
 }
 
+func (f *fakeRecorder) StartInOrder(ctx context.Context, pr PullRequestInfo, order int64, start func(context.Context) error) (bool, error) {
+	if f.failOrder {
+		return false, errRecorderDown
+	}
+	f.order.Lock()
+	defer f.order.Unlock()
+	f.mu.Lock()
+	newer := f.reported[keyOf(pr)] >= order
+	f.mu.Unlock()
+	if newer {
+		return false, nil
+	}
+	return true, start(ctx)
+}
+
 func (f *fakeRecorder) FinishReview(_ context.Context, id int64, r ReviewEnd) error {
 	f.mu.Lock()
 	f.ends[id] = r
@@ -165,7 +180,8 @@ func TestServerRecordsDeliveriesAndReviews(t *testing.T) {
 }
 
 // TestReviewSupersededOnAnotherReplicaDoesNotReport: a review whose key a
-// newer review, on another replica, already reported publishes nothing.
+// newer review, on another replica, already reported publishes nothing:
+// neither that it runs nor its outcome.
 func TestReviewSupersededOnAnotherReplicaDoesNotReport(t *testing.T) {
 	rec := newFakeRecorder()
 	rec.reported[prKey{"stub", "o/r", 1}] = 100
@@ -181,8 +197,8 @@ func TestReviewSupersededOnAnotherReplicaDoesNotReport(t *testing.T) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.reports) != 0 {
-		t.Errorf("reports = %+v, want none", c.reports)
+	if len(c.reports) != 0 || c.starts != 0 {
+		t.Errorf("reports = %+v and %d starts, want none", c.reports, c.starts)
 	}
 }
 

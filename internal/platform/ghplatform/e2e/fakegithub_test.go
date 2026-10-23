@@ -195,13 +195,14 @@ func (f *fakeGitHub) deliveries() []delivery {
 	return slices.Clone(f.delivered)
 }
 
-// waitCheckRuns waits until repo has at least n check runs, or ctx is done,
-// and returns them.
+// waitCheckRuns waits until repo has at least n completed check runs, or
+// ctx is done, and returns the completed ones.
 func (f *fakeGitHub) waitCheckRuns(ctx context.Context, repo string, n int) ([]github.CreateCheckRunOptions, error) {
 	for {
 		f.mu.Lock()
 		runs, notify := slices.Clone(f.repos[repo].checkRuns), f.notify
 		f.mu.Unlock()
+		runs = slices.DeleteFunc(runs, func(r github.CreateCheckRunOptions) bool { return r.GetStatus() != "completed" })
 		if len(runs) >= n {
 			return runs, nil
 		}

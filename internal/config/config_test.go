@@ -88,6 +88,7 @@ func TestLoadPlatformSectionFromEnv(t *testing.T) {
 	}
 	if !reflect.DeepEqual(configKeys(reflect.TypeFor[Config](), ""), []string{
 		"verbose", "serve_addr", "review_timeout", "report_timeout", "review_workers", "review_queue_per_worker", "shutdown_timeout", "database_url", "database_key",
+		"public_url", "link_key",
 		"github.app_id", "github.private_key", "github.webhook_secret", "github.api_url", "github.request_timeout",
 	}) {
 		t.Errorf("configKeys = %v, want every tagged field, sections dotted", configKeys(reflect.TypeFor[Config](), ""))

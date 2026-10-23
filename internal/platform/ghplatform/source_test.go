@@ -319,7 +319,7 @@ func TestGitHubReviewInput(t *testing.T) {
 
 func TestGitHubReportsOnTheHeadRevision(t *testing.T) {
 	fake := &fakeGitHub{}
-	if err := testSource(fake.client(t)).Report(t.Context(), approval.Outcome{Verdict: approval.Passed, Summary: "ok"}); err != nil {
+	if err := testSource(fake.client(t)).Report(t.Context(), approval.Outcome{Verdict: approval.Passed, Summary: "ok"}, ""); err != nil {
 		t.Fatalf("Report: %v", err)
 	}
 	if len(fake.checkRuns) != 1 {

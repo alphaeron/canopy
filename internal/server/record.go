@@ -31,9 +31,43 @@ type Recorder interface {
 	// reports whether report was called; if it was, err is report's.
 	// Otherwise err means the order could not be checked.
 	ReportInOrder(ctx context.Context, pr PullRequestInfo, order int64, report func(context.Context) error) (called bool, err error)
+	// StartInOrder calls start unless a review of pr requested at order
+	// or later has already reported, holding off every report of pr until
+	// start returns, as ReportInOrder does, but records nothing: the
+	// review's own report still follows. So a review that starts after a
+	// newer one reported never marks the pull request as running again.
+	StartInOrder(ctx context.Context, pr PullRequestInfo, order int64, start func(context.Context) error) (called bool, err error)
 	// FinishReview records how review id ended.
 	FinishReview(ctx context.Context, id int64, r ReviewEnd) error
 }
+
+// ReviewHistory reads the record of reviews back, for people to see on the
+// review page. Like the record itself it is never read for a decision.
+type ReviewHistory interface {
+	// LatestReview is the latest review recorded of head commit headSHA
+	// of pull request number of repo ("owner/name", lower-cased), or nil
+	// when none is.
+	LatestReview(ctx context.Context, repo string, number int, headSHA string) (*ReviewRecord, error)
+}
+
+// ReviewRecord is a review as recorded, for the review page.
+type ReviewRecord struct {
+	// Status is "running" until the review ends, then one of the Review*
+	// constants.
+	Status string
+	// Outcome is empty while the review runs.
+	Outcome approval.Outcome
+	// State is the review's state as ReviewState.MarshalJSON encodes it;
+	// nil while the review runs, or when it did not run.
+	State      []byte
+	QueuedAt   time.Time
+	StartedAt  time.Time
+	FinishedAt time.Time // zero while the review runs
+}
+
+// ReviewRunning is the status of a review recorded as started that has not
+// ended.
+const ReviewRunning = "running"
 
 // What became of a verified webhook delivery.
 const (

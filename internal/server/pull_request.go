@@ -23,11 +23,17 @@ type PullRequest interface {
 	// Recorder). It must not call the platform's API.
 	Info() PullRequestInfo
 
+	// Start publishes that a review of the pull request is running, as
+	// its status, replacing the earlier one until Report replaces it in
+	// turn. detailsURL, when not empty, is the page showing the review,
+	// which the status links to.
+	Start(ctx context.Context, detailsURL string) error
+
 	// Report publishes the review's outcome as the pull request's status,
 	// replacing the earlier one. The platform maps each verdict to its own
 	// status states and carries the outcome's Description as the status's
-	// description.
-	Report(ctx context.Context, o approval.Outcome) error
+	// description. detailsURL is as for Start.
+	Report(ctx context.Context, o approval.Outcome, detailsURL string) error
 }
 
 // PullRequestInfo describes a pull request for the server's record. Every

@@ -20,6 +20,9 @@ type reviews struct {
 	pool    *pool
 	timeout time.Duration
 	review  func(ctx context.Context, j job, current func() bool)
+	// dropped, when set, is told of each job replaced while it waited,
+	// which never runs. It is called with the scheduler's lock held.
+	dropped func(j job)
 
 	mu    sync.Mutex
 	slots map[string]*slot // keys queued or running
@@ -39,7 +42,8 @@ type job struct {
 	gen        uint64 // its generation within its key, on this server
 	deliveryID string // the delivery that requested it
 	queuedAt   time.Time
-	order      int64 // its order among every replica's requests for its key (Recorder); 0 when unknown
+	order      int64       // its order among every replica's requests for its key (Recorder); 0 when unknown
+	live       *liveReview // its progress, for its review page
 }
 
 // newReviews schedules reviews on workers, each bounded by timeout, until
@@ -64,6 +68,9 @@ func (r *reviews) submit(j job) bool {
 	if s, ok := r.slots[key]; ok {
 		s.gen++
 		j.gen = s.gen
+		if s.next != nil && r.dropped != nil {
+			r.dropped(*s.next)
+		}
 		s.next = &j
 		if s.cancel != nil {
 			s.cancel()

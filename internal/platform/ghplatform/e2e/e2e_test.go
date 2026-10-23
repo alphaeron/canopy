@@ -5,9 +5,12 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -68,6 +71,7 @@ type env struct {
 	t      *testing.T
 	github *fakeGitHub
 	db     *pgx.Conn // the server's database; nil when it runs without one
+	web    *httptest.Server
 	pr     int
 	stop   func()
 }
@@ -88,8 +92,9 @@ type check struct {
 
 // TestGitHubEndToEnd runs each case in a fresh world: it stages the fake
 // GitHub with the case's branch, starts the review server as the app,
-// takes the case's steps, checks the check run each step reports, and
-// tears everything down, checking nothing else was reported.
+// takes the case's steps, checks the check run each step reports and the
+// review page it links to, and tears everything down, checking nothing
+// else was reported.
 func TestGitHubEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("end-to-end test")
@@ -159,17 +164,26 @@ func TestGitHubEndToEnd(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), stepTimeout)
 				s.do(ctx, e)
 				runs, err := e.github.waitCheckRuns(ctx, repo, i+1)
-				cancel()
 				if err != nil {
+					cancel()
 					t.Fatalf("step %q: %v", s.name, err)
 				}
 				e.assertCheck(s.name, runs[i], s.want)
+				e.assertReviewPage(ctx, s.name, runs[i], s.want)
+				cancel()
 			}
 
 			e.waitRecorded(len(tt.steps))
 			e.stop()
-			if runs := e.github.checkRuns(repo); len(runs) != len(tt.steps) {
-				t.Errorf("check runs = %d after teardown, want %d (one per step)", len(runs), len(tt.steps))
+			// Each review marks its check running, then reports.
+			runs := e.github.checkRuns(repo)
+			if len(runs) != 2*len(tt.steps) {
+				t.Errorf("check runs = %d after teardown, want %d (a start and a report per step)", len(runs), 2*len(tt.steps))
+			}
+			for i, run := range runs {
+				if want := []string{"in_progress", "completed"}[i%2]; run.GetStatus() != want {
+					t.Errorf("check run %d is %s, want %s", i, run.GetStatus(), want)
+				}
 			}
 			for _, d := range e.github.deliveries() {
 				if d.status != 202 {
@@ -202,6 +216,10 @@ func newEnv(t *testing.T, feature map[string]string) *env {
 	if db != nil {
 		repoStore, recorder = db, db
 	}
+	var history server.ReviewHistory
+	if db != nil {
+		history = db
+	}
 	cache := server.NewRepoCache(repoStore, discardLogger())
 	platform, err := ghplatform.NewPRWebhook(config.GitHub{
 		AppID:         strconv.Itoa(appID),
@@ -212,6 +230,9 @@ func newEnv(t *testing.T, feature map[string]string) *env {
 	if err != nil {
 		t.Fatalf("NewPRWebhook: %v", err)
 	}
+	// The server's public URL is the test server's, which must exist first.
+	var handler http.Handler
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.ServeHTTP(w, r) }))
 	ctx, cancel := context.WithCancel(context.Background())
 	srv, err := server.New(ctx, server.Options{
 		Workers:         2,
@@ -222,12 +243,16 @@ func newEnv(t *testing.T, feature map[string]string) *env {
 		Version:         "e2e",
 		Log:             discardLogger(),
 		Recorder:        recorder,
+		History:         history,
+		PublicURL:       web.URL,
+		LinkKey:         []byte(strings.Repeat("l", server.MinLinkKeyBytes)),
 	}, platform)
 	if err != nil {
 		cancel()
+		web.Close()
 		t.Fatalf("server.New: %v", err)
 	}
-	web := httptest.NewServer(srv.Handler())
+	handler = srv.Handler()
 
 	// Stop the webhook endpoint first, then the reviews, before the fake
 	// GitHub (whose cleanup newFakeGitHub registered earlier) closes.
@@ -246,7 +271,7 @@ func newEnv(t *testing.T, feature map[string]string) *env {
 		webhookURL:   web.URL + platform.WebhookPath(),
 		secret:       webhookSecret,
 	})
-	return &env{t: t, github: gh, db: conn, stop: stop}
+	return &env{t: t, github: gh, db: conn, web: web, stop: stop}
 }
 
 // assertCheck checks run is the app's check on the pull request's current
@@ -265,6 +290,80 @@ func (e *env) assertCheck(step string, run github.CreateCheckRunOptions, want ch
 	if title := run.GetOutput().GetTitle(); !strings.Contains(title, want.title) {
 		e.t.Errorf("step %q: check run title = %q, want it to contain %q", step, title, want.title)
 	}
+}
+
+// assertReviewPage follows run's details link to its review page, waits
+// for the page to show the review finished, and checks it shows the title
+// the check reported.
+func (e *env) assertReviewPage(ctx context.Context, step string, run github.CreateCheckRunOptions, want check) {
+	e.t.Helper()
+	link := run.GetDetailsURL()
+	if !strings.HasPrefix(link, e.web.URL+"/reviews/") {
+		e.t.Errorf("step %q: check run links %q, want a review page on the server", step, link)
+		return
+	}
+	if summary := run.GetOutput().GetSummary(); !strings.Contains(summary, link) {
+		e.t.Errorf("step %q: check run summary does not link the review page", step)
+	}
+	progress := strings.Replace(link, "?", "/progress?", 1)
+	for {
+		var p struct{ State string }
+		if err := getJSON(ctx, progress, &p); err != nil {
+			e.t.Errorf("step %q: review progress: %v", step, err)
+			return
+		}
+		if p.State == "finished" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			e.t.Errorf("step %q: review page shows %s, never finished", step, p.State)
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	body, err := getBody(ctx, link)
+	if err != nil {
+		e.t.Errorf("step %q: review page: %v", step, err)
+		return
+	}
+	if !strings.Contains(body, want.title) || strings.Contains(body, "data-live") {
+		e.t.Errorf("step %q: review page does not show the finished review's outcome %q", step, want.title)
+	}
+	tampered := strings.Replace(link, "sig=", "sig=A", 1)
+	if resp, err := http.Get(tampered); err == nil {
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			e.t.Errorf("step %q: tampered review page link = %d, want 404", step, resp.StatusCode)
+		}
+	}
+}
+
+// getBody is the body of a successful GET of url.
+func getBody(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err == nil && resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("GET %s: %s", url, resp.Status)
+	}
+	return string(body), err
+}
+
+// getJSON decodes the body of a successful GET of url into v.
+func getJSON(ctx context.Context, url string, v any) error {
+	body, err := getBody(ctx, url)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(body), v)
 }
 
 // openPR opens the pull request from "feature" into "main" as the author.

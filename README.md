@@ -182,6 +182,8 @@ The CLI and the review server read the same configuration, in decreasing precede
 | `review_queue_per_worker` | `CANOPY_REVIEW_QUEUE_PER_WORKER` | `16` | Pull requests that may wait per worker; beyond that the server answers 503. More webhooks for a pull request already waiting or under review take no more room. `review_workers` × `review_queue_per_worker` may be at most 4096 |
 | `shutdown_timeout` | `CANOPY_SHUTDOWN_TIMEOUT` | `10s` | Longest the server waits for open requests when stopping |
 | `database_url` | `CANOPY_DATABASE_URL` | | Review server's PostgreSQL connection string; unset runs without a database (see [Database](#database)). The server creates its tables at startup. Never logged |
+| `public_url` | `CANOPY_PUBLIC_URL` | | Review server's URL as users reach it, e.g. `https://canopy.example.com`; with `link_key`, serves review pages and links each check run to its own (see [Review pages](#review-pages)) |
+| `link_key` | `CANOPY_LINK_KEY` | | Required with `public_url`: at least 32 bytes (e.g. `openssl rand -hex 32`), the same on every replica. Signs review page links; changing it breaks every link already published. Never logged |
 | `database_key` | `CANOPY_DATABASE_KEY` | | Required with `database_url`: at least 32 bytes (e.g. `openssl rand -hex 32`), the same on every replica, never stored in the database. Authenticates the GitHub data cached there; changing it discards that cache. Never logged |
 | `github.app_id` | `CANOPY_GITHUB_APP_ID` | | GitHub App ID |
 | `github.private_key` | `CANOPY_GITHUB_PRIVATE_KEY` | | GitHub App private key (PEM, PKCS #1 or #8) |
@@ -210,12 +212,24 @@ The platform is deployment configuration: a repository under review has no say i
 | `POST /webhooks/github` | The GitHub App's webhook; each platform chooses its own webhook path. The signature is verified before anything else; unsigned or mis-signed requests get 401. A reviewable event is acknowledged with 202 and reviewed in the background; a full queue gets 503. Only the newest review of a pull request's head commit reports (see below). |
 | `GET /openapi.json`, `GET /openapi.yaml` | The OpenAPI 3.1 document, generated from the routes |
 | `GET /swagger` | Interactive API documentation |
+| `GET /reviews/{owner}/{name}/{number}/{sha}?sig=…` | The review page of a pull request's head commit (with `public_url` and `link_key`; see [Review pages](#review-pages)) |
+| `GET /reviews/{owner}/{name}/{number}/{sha}/progress?sig=…` | How far that commit's newest review has come, as JSON, which the review page polls |
 
 On GitHub, the server runs as a GitHub App. It needs these repository permissions: *Contents* (read), *Pull requests* (read), *Checks* (read and write), and *Members* (organization, read) to expand `org/team` targets. It reviews on `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`, and `edited` when the base branch changes) and `pull_request_review` (`submitted`, `dismissed`) events, except those of a closed or merged pull request (a reopened one is reviewed again). Requests that GitHub rate-limits are retried after the delay it asks for: up to a minute for a secondary limit (`Retry-After`), and for an exhausted primary limit until it resets, within the review's deadline (at most 10 minutes). A review still rate-limited reports `rate limited by the platform; try again later`; other errors are not retried.
 
 Each review runs with a timeout (`review_timeout`); a review that times out reports `review timed out`, allowing up to `report_timeout` to post it. Stopping the server (SIGINT or SIGTERM) cancels reviews in flight and waits up to `shutdown_timeout` for open requests.
 
 Webhooks can arrive in bursts (several reviews submitted at once, pushes in a row), and GitHub does not order them. The server reviews one pull request's head commit at a time, and only its newest review reports: a webhook for a head commit already waiting for a worker replaces the waiting review, one for a head commit under review cancels that review and is reviewed next, and a review that a newer one supersedes after it ran does not report. Each review reads the approvals when it runs, so the last review to report has seen the latest. Without a database this holds within one server process, and replicas behind a load balancer do not coordinate. With a database (`database_url`), replicas order their reports through it: a review reports only if no review of its pull request requested later has reported (for any head commit), one at a time per pull request. A review whose order cannot be recorded (the database is unavailable) reports anything but a pass as is, and a pass as `review could not be recorded; see the server logs`, so a review that may be stale never passes a pull request.
+
+### Review pages
+
+With `public_url` and `link_key` set, every review has a page, and the check runs the server creates link to it (as the check's details URL, and at the end of its summary). The page follows the newest review of the pull request's head commit: before any review it says none has been recorded yet; while the review is queued or running it shows its stage (waiting for a worker, reading the pull request, fetching rules files, matching rules to files, resolving approver targets, evaluating approvals file by file, publishing the check) and updates itself; once the review finishes it shows the verdict and the full decision path of every file (rules file → rule → approver target), the errors, and the event trace (the first 2,000 events). The page is self-contained (inline styles and scripts, nothing loaded from elsewhere) and readable without JavaScript, which only adds search, filters, and the live updates.
+
+Live progress comes from the server running the review; another replica's page shows the review as running, from the database, until it finishes. Without a database a server shows only the reviews it queued or ran recently (its 32 most recently finished).
+
+A page shows a repository's paths, approvers, and review errors, so it is served only for a link the server signed with `link_key`: anyone who can see the check run can open its page, and a link for any other pull request or commit is not found. A link does not expire; treat it like the check run it came from.
+
+Each review also marks its check run in progress before it evaluates, so a pull request shows the review running rather than the previous result. With a database this is ordered like reports: a review never marks its pull request running after a newer review reported, and a review whose order is unknown does not mark it at all. A review cancelled because the server is stopping leaves its check in progress until the next review of the pull request.
 
 ### Database
 

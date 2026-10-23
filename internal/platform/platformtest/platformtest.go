@@ -461,11 +461,12 @@ func RunReviewInputContract(t *testing.T, newReader ReviewInputFactory) {
 
 // StatusReport is one status a platform recorded: the name it is reported
 // under (later reports under the same name replace earlier ones), the
-// platform's state, and the summary as published.
+// platform's state, the summary as published, and the page it links to.
 type StatusReport struct {
 	Name    string
 	State   string
 	Summary string
+	Link    string
 }
 
 // StatusReporterFactory builds the platform's server.PullRequest, and a
@@ -478,8 +479,9 @@ type StatusReporterFactory func(t *testing.T) (server.PullRequest, func() []Stat
 // a pending, and a failed review are each in a distinct platform state, and
 // an errored one is in a state other than passed or pending (a platform
 // may report it as failed, told apart by its summary); a later report
-// replaces the earlier one; and an oversized summary is cut rather than
-// rejected.
+// replaces the earlier one; a start is a running status, in a state of its
+// own, that a report replaces, and both link the review page; and an
+// oversized summary is cut rather than rejected.
 func RunStatusReporterContract(t *testing.T, newReporter StatusReporterFactory) {
 	t.Helper()
 
@@ -487,7 +489,7 @@ func RunStatusReporterContract(t *testing.T, newReporter StatusReporterFactory) 
 		r, observe := newReporter(t)
 		verdicts := []approval.Verdict{approval.Passed, approval.Pending, approval.Failed, approval.Errored}
 		for _, v := range verdicts {
-			if err := r.Report(t.Context(), approval.Outcome{Verdict: v, Summary: string(v)}); err != nil {
+			if err := r.Report(t.Context(), approval.Outcome{Verdict: v, Summary: string(v)}, ""); err != nil {
 				t.Fatalf("Report(%s): %v", v, err)
 			}
 		}
@@ -512,7 +514,7 @@ func RunStatusReporterContract(t *testing.T, newReporter StatusReporterFactory) 
 	t.Run("a later report replaces the earlier one", func(t *testing.T) {
 		r, observe := newReporter(t)
 		for _, v := range []approval.Verdict{approval.Pending, approval.Passed} {
-			if err := r.Report(t.Context(), approval.Outcome{Verdict: v, Summary: "s"}); err != nil {
+			if err := r.Report(t.Context(), approval.Outcome{Verdict: v, Summary: "s"}, ""); err != nil {
 				t.Fatalf("Report(%s): %v", v, err)
 			}
 		}
@@ -522,10 +524,30 @@ func RunStatusReporterContract(t *testing.T, newReporter StatusReporterFactory) 
 		}
 	})
 
+	t.Run("a start runs until a report replaces it, both linking the review", func(t *testing.T) {
+		r, observe := newReporter(t)
+		const link = "https://canopy.example.com/reviews/o/r/1/abc?sig=x"
+		if err := r.Start(t.Context(), link); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		if err := r.Report(t.Context(), approval.Outcome{Verdict: approval.Passed, Summary: "s"}, link); err != nil {
+			t.Fatalf("Report: %v", err)
+		}
+		got := observe()
+		if len(got) != 2 || got[0].Name == "" || got[0].Name != got[1].Name || got[0].State == got[1].State {
+			t.Fatalf("statuses = %+v, want a start and a report under the same name, in different states", got)
+		}
+		for i, s := range got {
+			if s.Link != link {
+				t.Errorf("status %d links %q, want %q", i, s.Link, link)
+			}
+		}
+	})
+
 	t.Run("an oversized summary is cut, not rejected", func(t *testing.T) {
 		r, observe := newReporter(t)
 		long := strings.Repeat("ü", 100_000)
-		if err := r.Report(t.Context(), approval.Outcome{Verdict: approval.Failed, Summary: long}); err != nil {
+		if err := r.Report(t.Context(), approval.Outcome{Verdict: approval.Failed, Summary: long}, ""); err != nil {
 			t.Fatalf("Report: %v", err)
 		}
 		got := observe()

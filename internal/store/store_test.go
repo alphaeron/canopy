@@ -411,6 +411,84 @@ func TestRecordsDeliveriesAndReviews(t *testing.T) {
 	}
 }
 
+// TestStartInOrder: a review starts only if no newer review of its pull
+// request reported, and starting records nothing, so its own report still
+// follows.
+func TestStartInOrder(t *testing.T) {
+	s := openTest(t, testKey)
+	ctx := t.Context()
+	pr := server.PullRequestInfo{Scope: "a", Repo: "o/r", Number: 7, HeadSHA: sha1}
+	for range 2 {
+		if _, err := s.RequestReview(ctx, pr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	started := 0
+	start := func(context.Context) error { started++; return nil }
+	if called, err := s.StartInOrder(ctx, pr, 1, start); !called || err != nil {
+		t.Fatalf("first start = %v, %v; want called", called, err)
+	}
+	if called, err := s.ReportInOrder(ctx, pr, 1, start); !called || err != nil {
+		t.Fatalf("report after its start = %v, %v; want called", called, err)
+	}
+	if called, err := s.ReportInOrder(ctx, pr, 2, start); !called || err != nil {
+		t.Fatalf("newer report = %v, %v; want called", called, err)
+	}
+	if called, err := s.StartInOrder(ctx, pr, 1, start); called || err != nil {
+		t.Errorf("start after a newer report = %v, %v; want skipped", called, err)
+	}
+	if started != 3 {
+		t.Errorf("published %d times, want 3", started)
+	}
+}
+
+// TestLatestReview: the latest review of a head commit reads back, running
+// or finished, and none is nil.
+func TestLatestReview(t *testing.T) {
+	s := openTest(t, testKey)
+	ctx := t.Context()
+	if r, err := s.LatestReview(ctx, "o/r", 7, sha2); r != nil || err != nil {
+		t.Fatalf("LatestReview before any = %+v, %v; want nil", r, err)
+	}
+	pr := server.PullRequestInfo{Scope: "a", Repo: "o/r", Number: 7, BaseSHA: sha1, HeadSHA: sha2, Author: "dev", Action: "pull_request.opened"}
+	queued := time.Now().Add(-time.Second)
+	start := func() int64 {
+		id, err := s.StartReview(ctx, server.ReviewStart{Platform: "github", DeliveryID: "d", PullRequest: pr, Key: "o/r@" + sha2, Order: 1, QueuedAt: queued})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	first := start()
+	r, err := s.LatestReview(ctx, "o/r", 7, sha2)
+	if err != nil || r == nil || r.Status != server.ReviewRunning || r.State != nil || !r.FinishedAt.IsZero() {
+		t.Fatalf("running review = %+v, %v; want running with no state", r, err)
+	}
+	if d := r.QueuedAt.Sub(queued).Abs(); d >= time.Millisecond {
+		t.Errorf("queued at %s, want %s", r.QueuedAt, queued)
+	}
+	end := server.ReviewEnd{
+		Status:  server.ReviewReported,
+		Outcome: approval.Outcome{Verdict: approval.Pending, Summary: "1 file awaits approval", Items: []string{"acme/core"}},
+		State:   &approval.ReviewState{Files: map[string]approval.FileState{}},
+	}
+	if err := s.FinishReview(ctx, first, end); err != nil {
+		t.Fatal(err)
+	}
+	r, err = s.LatestReview(ctx, "o/r", 7, sha2)
+	if err != nil || r.Status != server.ReviewReported || r.Outcome.Verdict != approval.Pending ||
+		!reflect.DeepEqual(r.Outcome.Items, end.Outcome.Items) || len(r.State) == 0 || r.FinishedAt.IsZero() {
+		t.Fatalf("finished review = %+v, %v; want reported, pending, with its state", r, err)
+	}
+	start()
+	if r, err := s.LatestReview(ctx, "o/r", 7, sha2); err != nil || r.Status != server.ReviewRunning {
+		t.Errorf("after a newer review started = %+v, %v; want it, running", r, err)
+	}
+	if r, err := s.LatestReview(ctx, "o/r", 7, sha1); r != nil || err != nil {
+		t.Errorf("another head = %+v, %v; want nil", r, err)
+	}
+}
+
 // TestPruneRemovesRowsPastTheirRetention: cached rows and idle pull
 // request rows past their retention are removed, in batches, and newer
 // ones and the review history are kept.

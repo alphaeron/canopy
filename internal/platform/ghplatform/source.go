@@ -431,9 +431,10 @@ func (r *Source) isActive(ctx context.Context, login string) bool {
 	return user.SuspendedAt == nil
 }
 
-// checkName is the check run the review reports as. Each report creates a
-// new check run under this name on the head commit; GitHub shows the
-// latest, and branch protection can require it by this name. The server
+// checkName is the check run the review reports as. Each start and each
+// report creates a new check run under this name on the head commit;
+// GitHub shows the latest, and branch protection can require it by this
+// name. The server
 // reports a pull request's reviews one at a time, newest last (see
 // server.PullRequest.Key), so the latest run is the newest review's.
 const checkName = brand.Command
@@ -478,11 +479,35 @@ func (r *Source) Key() string {
 	return strings.ToLower(r.pr.owner+"/"+r.pr.repo) + "@" + r.pr.headSHA
 }
 
+// runningTitle is the title of the check run Start creates.
+const runningTitle = "Review running"
+
+// Start publishes an in-progress check run named checkName on the pull
+// request's head revision, superseding the earlier report until Report
+// supersedes it in turn. It links detailsURL when it is not empty.
+func (r *Source) Start(ctx context.Context, detailsURL string) error {
+	run := github.CreateCheckRunOptions{
+		Name:       checkName,
+		HeadSHA:    r.pr.headSHA,
+		Status:     new("in_progress"),
+		StartedAt:  &github.Timestamp{Time: time.Now()},
+		DetailsURL: optional(detailsURL),
+		Output: &github.CheckRunOutput{
+			Title:   new(runningTitle),
+			Summary: new("The review is running" + detailsNote(detailsURL) + "."),
+		},
+	}
+	if _, _, err := r.client.Checks.CreateCheckRun(ctx, r.pr.owner, r.pr.repo, run); err != nil {
+		return fmt.Errorf("start check run on %s: %w", r.pr, err)
+	}
+	return nil
+}
+
 // Report publishes o as a completed check run named checkName on the pull
 // request's head revision, superseding the earlier report. The title is
 // o.Description fitted to maxCheckTitle; the summary lists the outcome in
-// full (see checkSummary).
-func (r *Source) Report(ctx context.Context, o approval.Outcome) error {
+// full (see checkSummary). It links detailsURL when it is not empty.
+func (r *Source) Report(ctx context.Context, o approval.Outcome, detailsURL string) error {
 	conclusion, ok := checkConclusions[o.Verdict]
 	if !ok {
 		return fmt.Errorf("report on %s: unknown verdict %q", r.pr, o.Verdict)
@@ -493,15 +518,35 @@ func (r *Source) Report(ctx context.Context, o approval.Outcome) error {
 		Status:      new("completed"),
 		Conclusion:  new(conclusion),
 		CompletedAt: &github.Timestamp{Time: time.Now()},
+		DetailsURL:  optional(detailsURL),
 		Output: &github.CheckRunOutput{
 			Title:   new(o.Description(maxCheckTitle)),
-			Summary: new(checkSummary(o, maxCheckSummary)),
+			Summary: new(checkSummary(o, maxCheckSummary-len(detailsNote(detailsURL))) + detailsNote(detailsURL)),
 		},
 	}
 	if _, _, err := r.client.Checks.CreateCheckRun(ctx, r.pr.owner, r.pr.repo, run); err != nil {
 		return fmt.Errorf("report check run on %s: %w", r.pr, err)
 	}
 	return nil
+}
+
+// optional is s, or nil when it is empty: GitHub rejects an empty URL.
+func optional(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// detailsNote is the line a check run's summary ends with to link the
+// review page at detailsURL, or "" without one. GitHub shows details_url
+// as the check's "Details" link only in some views, so the summary links
+// it too.
+func detailsNote(detailsURL string) string {
+	if detailsURL == "" {
+		return ""
+	}
+	return "\n\n[See the full review](" + detailsURL + ")"
 }
 
 // checkSummary is o as a check run's Markdown summary, in at most limit

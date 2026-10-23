@@ -71,7 +71,7 @@ func TestGitHubMeetsTheStatusReporterContract(t *testing.T) {
 			defer fake.mu.Unlock()
 			out := make([]platformtest.StatusReport, len(fake.checkRuns))
 			for i, run := range fake.checkRuns {
-				out[i] = platformtest.StatusReport{Name: run.Name, State: run.GetConclusion(), Summary: run.GetOutput().GetTitle()}
+				out[i] = platformtest.StatusReport{Name: run.Name, State: run.GetStatus() + "/" + run.GetConclusion(), Summary: run.GetOutput().GetTitle(), Link: run.GetDetailsURL()}
 			}
 			return out
 		}
