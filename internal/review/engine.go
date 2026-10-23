@@ -80,7 +80,7 @@ func (e *Engine) RuleChain(ctx context.Context, files []string) (approval.RuleCh
 	if err != nil {
 		return approval.RuleChain{}, err
 	}
-	return approval.GetFileRuleChain(rules, files, nil, logx.OrDefault(e.Log)), nil
+	return approval.GetFileRuleChain(ctx, rules, files, nil, logx.OrDefault(e.Log))
 }
 
 // Requirements runs the approve phase over chain with no approvals
@@ -135,6 +135,9 @@ func (e *Engine) Match(ctx context.Context, opts Options) (*Result, error) {
 	if opts.IncludeDiff {
 		log := logx.OrDefault(e.Log)
 		for i := range res.Files {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			path := res.Files[i].Path
 			if diff, derr := e.Source.DiffContent(ctx, path); derr == nil {
 				res.Files[i].Diff = diff
@@ -163,7 +166,10 @@ func (e *Engine) match(ctx context.Context, opts Options) (*Result, error) {
 	if opts.ScopeName != "" && !slices.Contains(rules.Names(), opts.ScopeName) {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownScope, opts.ScopeName)
 	}
-	chain := approval.GetFileRuleChain(rules, universe, nil, logx.OrDefault(e.Log))
+	chain, err := approval.GetFileRuleChain(ctx, rules, universe, nil, logx.OrDefault(e.Log))
+	if err != nil {
+		return nil, err
+	}
 	res := &Result{RepoRoot: e.repoRoot()}
 	for _, file := range universe {
 		fm := FileMatch{Path: file}

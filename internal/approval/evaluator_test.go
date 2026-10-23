@@ -170,3 +170,44 @@ func (failingResolver) Resolve(_ context.Context, target string) ([]string, erro
 }
 
 func (failingResolver) Canonical(name string) string { return name }
+
+// TestBrokenRulesFileErrorsButReviewContinues: an unusable rules file
+// errors the review, yet the review still runs over the rules that loaded,
+// so it also reports every other error (here an unresolvable target), and
+// each file still has its state.
+func TestBrokenRulesFileErrorsButReviewContinues(t *testing.T) {
+	broken := errors.New("parse rules file svc/KIT: bad yaml")
+	ev := &Evaluator{
+		Fetch: &stubFetcher{
+			rules: rulesfile.Set{rulesfile.FileName: {{Pattern: ".*", Name: "root", Approvers: []rulesfile.ApproverTarget{{Target: "org/down", RequiredCount: 1}}}}},
+			err:   broken,
+		},
+		Resolver: &fakeResolver{failing: map[string]error{"org/down": errors.New("platform down")}},
+		Log:      testLogger(),
+	}
+	state := ev.Execute(t.Context(), ReviewInput{}, []string{"a.go"})
+
+	if state.Overall != StatusError {
+		t.Errorf("overall = %s, want %s", state.Overall, StatusError)
+	}
+	if !errors.Is(state.Err, broken) {
+		t.Errorf("Err = %v, want it to wrap the broken rules file's error", state.Err)
+	}
+	if len(state.Errors) < 2 {
+		t.Errorf("errors = %q, want the broken rules file and the unresolvable target", state.Errors)
+	}
+	if _, ok := state.Files["a.go"]; !ok {
+		t.Error("a.go has no state: the review stopped at the broken rules file")
+	}
+}
+
+// TestFetchThatLoadsNothingStopsTheReview: a fetch with no rules at all
+// (a nil set) stops the review with its error.
+func TestFetchThatLoadsNothingStopsTheReview(t *testing.T) {
+	listing := errors.New("list files: boom")
+	ev := &Evaluator{Fetch: &stubFetcher{err: listing}, Resolver: &fakeResolver{}, Log: testLogger()}
+	state := ev.Execute(t.Context(), ReviewInput{}, []string{"a.go"})
+	if state.Overall != StatusError || !errors.Is(state.Err, listing) || len(state.Files) != 0 {
+		t.Errorf("state = %s, %v, %d file(s); want an error with no files", state.Overall, state.Err, len(state.Files))
+	}
+}

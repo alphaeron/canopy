@@ -50,8 +50,8 @@ type Config struct {
 	// ReviewWorkers is how many reviews the REST API runs at once;
 	// defaults to 4.
 	ReviewWorkers int `mapstructure:"review_workers"`
-	// ReviewQueuePerWorker is how many accepted webhooks may wait per
-	// review worker; defaults to 16. See ReviewQueue for the total.
+	// ReviewQueuePerWorker is how many pull requests may wait per review
+	// worker; defaults to 16. See ReviewQueue for the total.
 	ReviewQueuePerWorker int `mapstructure:"review_queue_per_worker"`
 	// ShutdownTimeout bounds how long the REST API waits for open requests
 	// once it is told to stop; defaults to 10 seconds.
@@ -106,8 +106,8 @@ const (
 	DefaultShutdownTimeout      = 10 * time.Second
 )
 
-// MaxReviewQueue caps ReviewQueue, the webhooks that may wait for a review
-// worker, so a misconfigured server cannot reserve an unbounded queue.
+// MaxReviewQueue caps ReviewQueue, the pull requests that may wait for a
+// review worker, so a misconfigured server cannot reserve an unbounded queue.
 const MaxReviewQueue = 4096
 
 // Platform is a hosted platform the review server can review on, as
@@ -196,9 +196,10 @@ func (g GitHub) BaseURL() string {
 	return strings.TrimSuffix(g.APIURL, "/") + "/"
 }
 
-// ReviewQueue is how many accepted webhooks may wait for a review worker in
-// all: ReviewWorkers times ReviewQueuePerWorker. It is an error when either
-// is not positive or the total exceeds MaxReviewQueue. Load does not call
+// ReviewQueue is how many pull requests may wait for a review worker in
+// all: ReviewWorkers times ReviewQueuePerWorker. More webhooks for a pull
+// request already waiting take no more room. It is an error when either is
+// not positive or the total exceeds MaxReviewQueue. Load does not call
 // it, so the CLI never fails on server settings; the review server does, at
 // startup.
 func (c *Config) ReviewQueue() (int, error) {

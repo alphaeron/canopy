@@ -120,3 +120,30 @@ func TestReflow(t *testing.T) {
 		t.Errorf("reflow = %q, want %q", got, want)
 	}
 }
+
+// TestHomeOverviewIgnoresAStaleLoad: a newer overview load cancels the
+// older one, and the older one's result, landing last, is dropped.
+func TestHomeOverviewIgnoresAStaleLoad(t *testing.T) {
+	calls := 0
+	var first context.Context
+	overview := func(ctx context.Context) (Detail, error) {
+		calls++
+		if calls == 1 {
+			first = ctx
+			return Detail{Fields: []Field{{Label: "HEAD", Value: "stale"}}}, nil
+		}
+		return Detail{Fields: []Field{{Label: "HEAD", Value: "fresh"}}}, nil
+	}
+	loads := 0
+	h := newHomePage(t.Context(), homeRoutes(&loads), overview)
+	older, newer := h.loadOverview(), h.loadOverview()
+	olderMsg := older()
+	if first.Err() == nil {
+		t.Error("the older load's context is not cancelled by the newer load")
+	}
+	h.update(newer())
+	h.update(olderMsg)
+	if got := h.rootDetail.Fields[1].Value; got != "fresh" {
+		t.Errorf("root HEAD = %q, want the newer load's", got)
+	}
+}

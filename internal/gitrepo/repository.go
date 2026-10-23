@@ -3,13 +3,16 @@
 package gitrepo
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path"
 	"regexp"
 	"slices"
+	"sync"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
@@ -24,8 +27,17 @@ import (
 // call sites ask HasCommits before resolving and behave as if the tracked
 // universe is empty, because a repository with no commit has no tracked files
 // and no tracked rules.
+//
+// A Repository is a snapshot: it reads the worktree status and HEAD's file
+// list once, on first use, and reuses them, since each walks the whole
+// repository. Open a new Repository to see later changes. It is safe for
+// concurrent use.
 type Repository struct {
 	git.Repository
+
+	mu        sync.Mutex
+	status    git.Status // nil until read
+	headPaths []string   // nil until listed
 }
 
 // HasCommits reports whether HEAD resolves: false means the repository has
@@ -61,63 +73,121 @@ func (r *Repository) Root() (string, error) {
 // FindFiles lists every file at the given reference whose path matches
 // pattern (a regular expression). It delegates to FindFilesAt with the
 // reference's name as the revision to resolve.
-func (r *Repository) FindFiles(pattern string, revision *plumbing.Reference, isAbsolute bool) ([]string, error) {
-	return r.FindFilesAt(pattern, plumbing.Revision(revision.Name()), isAbsolute)
+func (r *Repository) FindFiles(ctx context.Context, pattern string, revision *plumbing.Reference, isAbsolute bool) ([]string, error) {
+	return r.FindFilesAt(ctx, pattern, plumbing.Revision(revision.Name()), isAbsolute)
 }
 
 // FindFilesAt lists every file at the commit that rev resolves to (empty
 // rev means HEAD) whose path matches pattern (a regular expression). It
 // resolves the revision before touching the tree, so a revision that does
 // not exist is an error, never a silently-empty file list.
-func (r *Repository) FindFilesAt(pattern string, rev plumbing.Revision, isAbsolute bool) ([]string, error) {
-	var paths []string
-
+func (r *Repository) FindFilesAt(ctx context.Context, pattern string, rev plumbing.Revision, isAbsolute bool) ([]string, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
 	repoRoot, err := r.Root()
 	if err != nil {
 		return nil, err
 	}
-
-	hash := plumbing.Revision("HEAD")
-	if rev != "" {
-		hash = rev
+	if rev == "" {
+		rev = "HEAD"
 	}
-	h, err := r.ResolveRevision(hash)
+	h, err := r.ResolveRevision(rev)
 	if err != nil {
 		return nil, err
 	}
-
-	commit, err := r.CommitObject(*h)
-	if err != nil {
-		return nil, err
-	}
-
-	tree, err := commit.Tree()
-	if err != nil {
-		return nil, err
-	}
-
-	itErr := tree.Files().ForEach(func(file *object.File) error {
-		isMatch, err := regexp.MatchString(pattern, file.Name)
-		if err == nil {
-			if isMatch {
-				var finalPath string
-				if isAbsolute {
-					finalPath = path.Join(repoRoot, file.Name)
-				} else {
-					finalPath = file.Name
-				}
-				paths = append(paths, finalPath)
-			}
-		} else {
-			return err
+	var paths []string
+	if err := r.walkFiles(ctx, *h, func(name string) {
+		if !re.MatchString(name) {
+			return
 		}
-		return nil
-	})
-
-	if itErr != nil {
-		return nil, itErr
+		if isAbsolute {
+			name = path.Join(repoRoot, name)
+		}
+		paths = append(paths, name)
+	}); err != nil {
+		return nil, err
 	}
 	return paths, nil
+}
+
+// HeadFiles lists every file in HEAD's tree, sorted, listing them on first
+// use (see Repository). The result is shared: callers must not modify it.
+func (r *Repository) HeadFiles(ctx context.Context) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.headPaths != nil {
+		return r.headPaths, nil
+	}
+	head, err := r.Head()
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{}
+	if err := r.walkFiles(ctx, head.Hash(), func(name string) { paths = append(paths, name) }); err != nil {
+		return nil, err
+	}
+	slices.Sort(paths)
+	r.headPaths = paths
+	return paths, nil
+}
+
+// walkFiles calls visit with the path of every file (not directory or
+// submodule) in commit's tree. It reads tree entries only, never a file's
+// contents, and stops when ctx is done.
+func (r *Repository) walkFiles(ctx context.Context, commit plumbing.Hash, visit func(path string)) error {
+	c, err := r.CommitObject(commit)
+	if err != nil {
+		return err
+	}
+	tree, err := c.Tree()
+	if err != nil {
+		return err
+	}
+	w := object.NewTreeWalker(tree, true, nil)
+	defer w.Close()
+	for i := 0; ; i++ {
+		if i%walkCheckEvery == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		name, entry, err := w.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if entry.Mode.IsFile() {
+			visit(name)
+		}
+	}
+}
+
+// walkCheckEvery is how many tree entries a walk reads between checks of
+// its context: often enough to stop promptly, rarely enough to cost nothing.
+const walkCheckEvery = 1024
+
+// Status is the worktree's status, read on first use (see Repository). The
+// result is shared: callers must not modify it.
+func (r *Repository) Status() (git.Status, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status != nil {
+		return r.status, nil
+	}
+	wt, err := r.Worktree()
+	if err != nil {
+		return nil, fmt.Errorf("open worktree: %w", err)
+	}
+	status, err := wt.Status()
+	if err != nil {
+		return nil, err
+	}
+	r.status = status
+	return status, nil
 }
 
 // WorktreeFiles lists the repository-relative, slash-separated paths of the
@@ -126,23 +196,21 @@ func (r *Repository) FindFilesAt(pattern string, rev plumbing.Revision, isAbsolu
 // not ignored. It is the file set a local, pre-pull-request view should see:
 // uncommitted additions count and uncommitted deletions do not. A repository
 // with no commit yields only new files.
-func (r *Repository) WorktreeFiles(keep func(path string) bool) ([]string, error) {
+func (r *Repository) WorktreeFiles(ctx context.Context, keep func(path string) bool) ([]string, error) {
 	set := map[string]bool{}
 	if r.HasCommits() {
-		if err := r.headFiles(func(p string) {
+		head, err := r.HeadFiles(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list files at HEAD: %w", err)
+		}
+		for _, p := range head {
 			if keep(p) {
 				set[p] = true
 			}
-		}); err != nil {
-			return nil, fmt.Errorf("list files at HEAD: %w", err)
 		}
 	}
-	wt, err := r.Worktree()
-	if err != nil {
-		return nil, fmt.Errorf("open worktree: %w", err)
-	}
 	// Status leaves out ignored files, so ignored rules files never appear.
-	status, err := wt.Status()
+	status, err := r.Status()
 	if err != nil {
 		return nil, fmt.Errorf("worktree status: %w", err)
 	}
@@ -160,64 +228,41 @@ func (r *Repository) WorktreeFiles(keep func(path string) bool) ([]string, error
 	return slices.Sorted(maps.Keys(set)), nil
 }
 
-// headFiles calls visit with the path of every file in HEAD's tree.
-func (r *Repository) headFiles(visit func(path string)) error {
-	head, err := r.Head()
-	if err != nil {
-		return err
-	}
-	commit, err := r.CommitObject(head.Hash())
-	if err != nil {
-		return err
-	}
-	tree, err := commit.Tree()
-	if err != nil {
-		return err
-	}
-	return tree.Files().ForEach(func(f *object.File) error {
-		visit(f.Name)
-		return nil
-	})
-}
-
-// FileContentAt returns the content of a single tracked file at revision
-// (typically "HEAD"). The returned boolean is false when the file is not
-// present at that revision — an expected case, with a nil error. Errors are
-// returned only for unexpected failures to resolve the revision, its commit,
-// its tree, or to read the tree's entries. This lets review.Source.DiffContent read
-// a HEAD blob without materializing a replacement tree.
-func (r *Repository) FileContentAt(path string, revision string) (string, bool, error) {
+// FileAt is the file at path in the commit that revision (typically
+// "HEAD") resolves to, looked up directly rather than by walking the tree,
+// or nil when the commit has no file there. Its contents are not read
+// until asked for (object.File.Contents, Reader), and Size is known
+// without reading them. Errors are returned only for unexpected failures to
+// resolve the revision, its commit, or its tree.
+func (r *Repository) FileAt(path, revision string) (*object.File, error) {
 	h, err := r.ResolveRevision(plumbing.Revision(revision))
 	if err != nil {
-		return "", false, fmt.Errorf("resolve revision %q: %w", revision, err)
+		return nil, fmt.Errorf("resolve revision %q: %w", revision, err)
 	}
 	commit, err := r.CommitObject(*h)
 	if err != nil {
-		return "", false, fmt.Errorf("resolve commit at %s: %w", revision, err)
+		return nil, fmt.Errorf("resolve commit at %s: %w", revision, err)
 	}
 	tree, err := commit.Tree()
 	if err != nil {
-		return "", false, fmt.Errorf("read tree at %s: %w", revision, err)
+		return nil, fmt.Errorf("read tree at %s: %w", revision, err)
 	}
-
-	var content string
-	found := false
-	err = tree.Files().ForEach(func(file *object.File) error {
-		if found || file.Name != path {
-			return nil
-		}
-		fileContent, err := file.Contents()
-		if err != nil {
-			return fmt.Errorf("read blob for %s: %w", path, err)
-		}
-		content = fileContent
-		found = true
-		return nil
-	})
+	entry, err := tree.FindEntry(path)
+	if errors.Is(err, object.ErrEntryNotFound) || errors.Is(err, object.ErrDirectoryNotFound) {
+		return nil, nil
+	}
 	if err != nil {
-		return "", false, err
+		return nil, fmt.Errorf("find %s at %s: %w", path, revision, err)
 	}
-	return content, found, nil
+	if !entry.Mode.IsFile() {
+		return nil, nil
+	}
+	f, err := tree.TreeEntryFile(entry)
+	if err != nil {
+		return nil, fmt.Errorf("read blob for %s at %s: %w", path, revision, err)
+	}
+	f.Name = path
+	return f, nil
 }
 
 // WrapReadError wraps a filesystem read error with the file path so callers

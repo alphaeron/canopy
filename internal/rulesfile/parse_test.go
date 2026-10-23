@@ -1,8 +1,10 @@
 package rulesfile
 
 import (
+	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -85,5 +87,23 @@ func TestApproverTargetRequiredCountValidation(t *testing.T) {
 	kf := &File{Rules: Rules{r}}
 	if len(kf.Violations()) == 0 {
 		t.Fatal("expected a required_count validation error")
+	}
+}
+
+// TestRulesFileSizeLimit: a rules file over MaxSize is ErrTooLarge, from
+// the parser and from a bounded read, and one at the limit is read.
+func TestRulesFileSizeLimit(t *testing.T) {
+	atLimit, over := strings.Repeat("#", MaxSize), strings.Repeat("#", MaxSize+1)
+	if _, err := ParseRules([]byte(over)); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("ParseRules over the limit: err = %v, want ErrTooLarge", err)
+	}
+	if _, err := ParseRules([]byte(atLimit)); err != nil {
+		t.Errorf("ParseRules at the limit: %v", err)
+	}
+	if _, err := ReadLimited(strings.NewReader(over)); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("ReadLimited over the limit: err = %v, want ErrTooLarge", err)
+	}
+	if got, err := ReadLimited(strings.NewReader(atLimit)); err != nil || len(got) != MaxSize {
+		t.Errorf("ReadLimited at the limit = %d bytes, %v; want all %d", len(got), err, MaxSize)
 	}
 }

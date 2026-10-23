@@ -37,10 +37,12 @@ type (
 		key     string
 		preview preview
 	}
-	// overviewMsg carries the repository overview for the root row.
+	// overviewMsg carries the repository overview for the root row; seq
+	// tells a stale load from the current one.
 	overviewMsg struct {
 		detail Detail
 		err    error
+		seq    int
 	}
 )
 
@@ -88,6 +90,11 @@ type homePage struct {
 	// deep-linked session never previews commands behind its start page.
 	active bool
 	cancel context.CancelFunc
+	// overviewSeq numbers overview loads, and overviewCancel stops the
+	// one in flight, so a newer load supersedes an older one rather than
+	// running beside it and possibly landing after it.
+	overviewSeq    int
+	overviewCancel context.CancelFunc
 }
 
 // newHomePage builds the home tree from routes, which are listed in
@@ -275,6 +282,13 @@ func (h *homePage) update(msg tea.Msg) tea.Cmd {
 		h.applyPreview(msg.key, msg.preview)
 		return nil
 	case overviewMsg:
+		if msg.seq != h.overviewSeq {
+			return nil
+		}
+		if h.overviewCancel != nil {
+			h.overviewCancel()
+			h.overviewCancel = nil
+		}
 		d := msg.detail
 		if msg.err != nil {
 			d = Detail{Fields: []Field{{Label: "Repository", Value: msg.err.Error(), Badge: BadgeFail}}}
@@ -386,10 +400,16 @@ func (h *homePage) loadOverview() tea.Cmd {
 	if h.overview == nil {
 		return nil
 	}
-	ctx, overview := h.ctx, h.overview
+	if h.overviewCancel != nil {
+		h.overviewCancel()
+	}
+	ctx, cancel := context.WithCancel(h.ctx)
+	h.overviewCancel = cancel
+	h.overviewSeq++
+	seq, overview := h.overviewSeq, h.overview
 	return func() tea.Msg {
 		d, err := overview(ctx)
-		return overviewMsg{detail: d, err: err}
+		return overviewMsg{detail: d, err: err, seq: seq}
 	}
 }
 

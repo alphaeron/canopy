@@ -19,28 +19,54 @@ import (
 	"github.com/google/go-github/v93/github"
 
 	"github.com/alphaeron/kit/internal/platform/platformtest"
+	"github.com/alphaeron/kit/internal/server"
 )
 
 // fakeGitHub answers the REST endpoints the platform uses for repository
-// o/r and pull request 7: the base tree listing, blob reads, the paginated
+// o/r and pull request 7: tree listings (nested, by subtree), blob reads,
+// the merge base of a comparison, the paginated
 // file and review listings, contents at the head revision, team members,
-// users, commit statuses, and installation tokens. It
+// users, check runs, and installation tokens. It
 // counts requests per endpoint and records what the platform publishes.
 type fakeGitHub struct {
 	base        map[string]string             // base tree blobs: path to contents
-	dirs        []string                      // non-blob entries in the tree listing
-	truncated   bool                          // the tree listing is truncated
+	trees       map[string]map[string]string  // other commits' trees: commit to path to contents
+	truncated   bool                          // every tree listing is truncated
+	maxListed   int                           // when positive, a recursive listing of more entries is truncated
+	mergeBase   string                        // the merge base the compare endpoint reports
 	head        map[string]string             // files at the head revision: path to contents
 	prPages     [][]*github.CommitFile        // the pull request's files, page by page
 	reviewPages [][]*github.PullRequestReview // the pull request's reviews, page by page
 	teams       map[string][]string           // "org/slug" to member logins
 	users       map[string]bool               // known logins to whether they are suspended
 
-	mu       sync.Mutex
-	fail     bool                // answer every request with a server error
-	calls    map[string]int      // requests per endpoint, e.g. "tree", "files", "statuses"
-	statuses []github.RepoStatus // statuses created, in order
-	auth     []string            // the Authorization header of every request
+	mu        sync.Mutex
+	fail      bool                           // answer every request with a server error
+	calls     map[string]int                 // requests per endpoint, e.g. "tree", "files", "check-runs"
+	checkRuns []github.CreateCheckRunOptions // check runs created, in order
+	auth      []string                       // the Authorization header of every request
+}
+
+// blobSHA is the fake's SHA of a blob: its contents, so equal contents
+// share a SHA at every commit, as in git, and the blob endpoint needs no
+// lookup.
+func blobSHA(content string) string { return "b" + hex.EncodeToString([]byte(content)) }
+
+// subtreeSHA is the fake's SHA of the tree at dir (ending in "/") in
+// commit's tree; treeOf reverses it.
+func subtreeSHA(commit, dir string) string {
+	return "t" + hex.EncodeToString([]byte(commit+"\x00"+dir))
+}
+
+// treeOf is the commit and directory prefix a tree SHA names: a subtree's,
+// or a commit's root.
+func treeOf(sha string) (commit, prefix string) {
+	if raw, err := hex.DecodeString(strings.TrimPrefix(sha, "t")); err == nil && strings.HasPrefix(sha, "t") {
+		if c, dir, ok := strings.Cut(string(raw), "\x00"); ok {
+			return c, dir
+		}
+	}
+	return sha, ""
 }
 
 // paged serves page of pages (1-based, from the request's page parameter),
@@ -77,23 +103,49 @@ func (f *fakeGitHub) serve(t *testing.T) string {
 	var srv *httptest.Server
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /repos/o/r/git/trees/{sha}", func(w http.ResponseWriter, r *http.Request) {
-		var entries []map[string]string
-		for _, p := range slices.Sorted(maps.Keys(f.base)) {
-			entries = append(entries, map[string]string{"path": p, "type": "blob", "sha": hex.EncodeToString([]byte(p))})
+		commit, prefix := treeOf(r.PathValue("sha"))
+		files := f.base
+		if tree, ok := f.trees[commit]; ok {
+			files = tree
 		}
-		for _, d := range f.dirs {
-			entries = append(entries, map[string]string{"path": d, "type": "tree", "sha": "dir"})
+		recursive := r.URL.Query().Get("recursive") != ""
+		entries, seen := []map[string]any{}, map[string]bool{}
+		for _, p := range slices.Sorted(maps.Keys(files)) {
+			rel, ok := strings.CutPrefix(p, prefix)
+			if !ok {
+				continue
+			}
+			dir, _, nested := strings.Cut(rel, "/")
+			if nested && !recursive {
+				if !seen[dir] {
+					seen[dir] = true
+					entries = append(entries, map[string]any{"path": dir, "type": "tree", "sha": subtreeSHA(commit, prefix+dir+"/")})
+				}
+				continue
+			}
+			if recursive {
+				for i := range len(rel) {
+					if d := rel[:i]; rel[i] == '/' && !seen[d] {
+						seen[d] = true
+						entries = append(entries, map[string]any{"path": d, "type": "tree", "sha": subtreeSHA(commit, prefix+d+"/")})
+					}
+				}
+			}
+			entries = append(entries, map[string]any{"path": rel, "type": "blob", "sha": blobSHA(files[p]), "size": len(files[p])})
 		}
-		writeJSON(t, w, map[string]any{"sha": r.PathValue("sha"), "tree": entries, "truncated": f.truncated})
+		truncated := f.truncated || recursive && f.maxListed > 0 && len(entries) > f.maxListed
+		writeJSON(t, w, map[string]any{"sha": r.PathValue("sha"), "tree": entries, "truncated": truncated})
 	})
 	mux.HandleFunc("GET /repos/o/r/git/blobs/{sha}", func(w http.ResponseWriter, r *http.Request) {
-		path, err := hex.DecodeString(r.PathValue("sha"))
-		content, ok := f.base[string(path)]
-		if err != nil || !ok {
+		content, err := hex.DecodeString(strings.TrimPrefix(r.PathValue("sha"), "b"))
+		if err != nil {
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 			return
 		}
-		writeJSON(t, w, map[string]string{"encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(content))})
+		writeJSON(t, w, map[string]string{"encoding": "base64", "content": base64.StdEncoding.EncodeToString(content)})
+	})
+	mux.HandleFunc("GET /repos/o/r/compare/{basehead}", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]any{"merge_base_commit": map[string]string{"sha": f.mergeBase}})
 	})
 	mux.HandleFunc("GET /repos/o/r/pulls/7/files", func(w http.ResponseWriter, r *http.Request) {
 		paged(t, w, r, srv.URL, f.prPages)
@@ -107,9 +159,14 @@ func (f *fakeGitHub) serve(t *testing.T) string {
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 			return
 		}
-		writeJSON(t, w, map[string]string{
-			"type": "file", "path": r.PathValue("path"), "encoding": "base64",
-			"content": base64.StdEncoding.EncodeToString([]byte(content)),
+		// As GitHub does, a file over 1 MB is sized but has no content.
+		encoding, encoded := "base64", base64.StdEncoding.EncodeToString([]byte(content))
+		if len(content) > 1_000_000 {
+			encoding, encoded = "none", ""
+		}
+		writeJSON(t, w, map[string]any{
+			"type": "file", "path": r.PathValue("path"), "encoding": encoding,
+			"content": encoded, "size": len(content),
 		})
 	})
 	mux.HandleFunc("GET /users/{login}", func(w http.ResponseWriter, r *http.Request) {
@@ -124,17 +181,16 @@ func (f *fakeGitHub) serve(t *testing.T) string {
 		}
 		writeJSON(t, w, user)
 	})
-	mux.HandleFunc("POST /repos/o/r/statuses/{sha}", func(w http.ResponseWriter, r *http.Request) {
-		var status github.RepoStatus
-		if err := json.NewDecoder(r.Body).Decode(&status); err != nil {
-			http.Error(w, `{"message":"bad body"}`, http.StatusBadRequest)
+	mux.HandleFunc("POST /repos/o/r/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		var run github.CreateCheckRunOptions
+		if err := json.NewDecoder(r.Body).Decode(&run); err != nil || run.Name == "" || run.HeadSHA == "" {
+			http.Error(w, `{"message":"bad body"}`, http.StatusUnprocessableEntity)
 			return
 		}
-		status.URL = new(r.PathValue("sha")) // records the revision reported on
 		f.mu.Lock()
-		f.statuses = append(f.statuses, status)
+		f.checkRuns = append(f.checkRuns, run)
 		f.mu.Unlock()
-		writeJSON(t, w, status)
+		writeJSON(t, w, github.CheckRun{Name: new(run.Name), HeadSHA: new(run.HeadSHA), Conclusion: run.Conclusion})
 	})
 	mux.HandleFunc("POST /app/installations/{id}/access_tokens", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, map[string]string{"token": "inst-" + r.PathValue("id"), "expires_at": "2099-01-01T00:00:00Z"})
@@ -186,8 +242,8 @@ func endpointOf(path string) string {
 	for _, e := range []struct{ part, name string }{
 		{"/git/trees/", "tree"}, {"/git/blobs/", "blob"}, {"/pulls/7/files", "files"},
 		{"/pulls/7/reviews", "reviews"}, {"/contents/", "contents"}, {"/orgs/", "teams"},
-		{"/users/", "users"}, {"/statuses/", "statuses"},
-		{"/access_tokens", "tokens"},
+		{"/users/", "users"}, {"/check-runs", "check-runs"},
+		{"/access_tokens", "tokens"}, {"/compare/", "compare"},
 	} {
 		if strings.Contains(path, e.part) {
 			return e.name
@@ -289,7 +345,7 @@ func testPR() *pullRequest {
 
 // testSource is a Source over testPR on client, acting as testAppID.
 func testSource(client *github.Client) *Source {
-	return newSource(testPR(), client, NewApproverResolver(client), testLogger())
+	return newSource(testPR(), client, NewApproverResolver(client), server.CacheScope{}, testLogger())
 }
 
 func writeJSON(t *testing.T, w http.ResponseWriter, v any) {

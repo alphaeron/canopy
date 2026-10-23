@@ -12,7 +12,7 @@ In the case an owner is inactive, the owner is removed from the list of possible
 
 If the resulting set of approvers for a given rule is empty, that rule is **skipped** — an error condition that records the skip in the review error list and forces the final review state to `error` — and evaluation falls back to the parent directory rules. If those recursively are not matched up until and including the repository root rules, we will request a review from the repository owner.
 
-These failed matches are recorded in the review's errors, and the accumulated error propagates out of the pipeline so the PR's status is `error` (blocking the merge) even when a later rule or the owner fallback satisfies the file.
+These failed matches are recorded in the review's errors, and the accumulated error propagates out of the pipeline so the review errors (blocking the merge) even when a later rule or the owner fallback satisfies the file.
 
 ### Combination Strategies
 To achieve logical completeness when combining rules from parent and subdirectories, the following combination operations are supported:
@@ -27,13 +27,13 @@ When the same approver target recurs across layers (union) or is shared across l
 
 ### Unsatisfiable Rules and the Fallback Terminal State
 
-If a file's requirement cannot be satisfied — no matching rule at all, or every matching rule prunes down to an empty approver set — the engine falls back to the repository owners. If that fallback is itself empty (no active repository owners exist at all), the rule is **unsatisfiable**: the file and the overall evaluation terminate with an `error` status rather than remaining `unresolved`. The error propagates out of the approval pipeline so the PR's status is `error`, blocking the merge.
+If a file's requirement cannot be satisfied — no matching rule at all, or every matching rule prunes down to an empty approver set — the engine falls back to the repository owners. If that fallback is itself empty (no active repository owners exist at all), the rule is **unsatisfiable**: the file and the overall evaluation terminate with an `error` status rather than remaining `unresolved`. The error propagates out of the approval pipeline so the review errors, blocking the merge.
 
 ### Branch Targets
 
 The review rules for a pull request are read from its **base branch**, at the base revision the pull request is compared against (`pull_request.base.sha` on GitHub), not from the repository's default branch. A pull request into `release/1.x` is reviewed against `release/1.x`'s `KIT` files.
 
-As with CODEOWNERS, a pull request cannot change its own requirements: `KIT` files it adds, modifies, or deletes take effect once it merges. The review server validates the ones it adds or modifies (as `kit validate` does) at the pull request's head, failing the status on any violation (the status names the invalid files), so a broken `KIT` file cannot be merged.
+As with CODEOWNERS, a pull request cannot change its own requirements: `KIT` files it adds, modifies, or deletes take effect once it merges. The review server validates the ones it adds or modifies (as `kit validate` does) at the pull request's head, failing the review on any violation (its report names the invalid files), so a broken `KIT` file cannot be merged.
 
 The CLI does the opposite on purpose: it reads the working tree's `KIT` files, uncommitted changes included, to preview the rules a branch proposes.
 
@@ -162,7 +162,7 @@ The runtime application evaluates a change (a GitHub pull request, or the local 
    * Increment counts when an active approver matches a member identity target.
    * If a rule's targets have all been pruned away (inactive members, excluded author, or unresolvable targets), the rule is **skipped and the skip is recorded as an error**; it still falls back to the preceding rule's criteria, but the final overall state terminates `error` regardless of that fallback.
 3. Mark a rule block as **Satisfied** once each target's internal `actual_count >= required_count`.
-4. Report the result back on the platform — passing only if all rules across all files resolve to a **Satisfied** state. GitHub: a commit status named `kit` on the pull request's head commit, whose description summarizes the outcome. Its state is `success` when the review is satisfied, `pending` while approvals are missing, `failure` when the pull request proposes an invalid `KIT` file, and `error` when the review could not produce a valid result: an internal `error` status (a GitHub failure, a listing too large to evaluate, a skipped or unsatisfiable rule) or a review that could not run or timed out. The review never comments on the pull request.
+4. Report the result back on the platform — passing only if all rules across all files resolve to a **Satisfied** state. GitHub: a completed check run named `kit` on the pull request's head commit. Its title summarizes the outcome in one line, and its summary lists in full what the outcome is about (the approvers still needed, or the invalid `KIT` files) and any warnings, such as a very large pull request. Its conclusion is `success` when the review is satisfied, `action_required` while approvals are missing, and `failure` when the pull request proposes an invalid `KIT` file or the review could not produce a valid result: an internal `error` status (a GitHub failure, a listing too large to evaluate, a skipped or unsatisfiable rule) or a review that could not run or timed out; the title tells these apart. Each report is a new check run, and GitHub shows the latest. Require the `kit` check in branch protection to block merging until it succeeds. The review never comments on the pull request.
 
 On GitHub, approvals are each reviewer's latest decisive review: a later change request or dismissal cancels an approval, and comments change nothing. An approval made before the latest push still counts. The author's own reviews are ignored here; `self_approve` decides whether the author counts.
 
@@ -175,9 +175,9 @@ The CLI and the review server read the same configuration, in decreasing precede
 | `verbose` | `KIT_VERBOSE` | `false` | Debug-level logging |
 | `serve_addr` | `KIT_SERVE_ADDR` | `:8080` | Review server listen address |
 | `review_timeout` | `KIT_REVIEW_TIMEOUT` | `50s` | Longest one review may run |
-| `report_timeout` | `KIT_REPORT_TIMEOUT` | `30s` | Longest reporting the status of a timed-out review may take |
+| `report_timeout` | `KIT_REPORT_TIMEOUT` | `30s` | Longest reporting the outcome of a timed-out review may take |
 | `review_workers` | `KIT_REVIEW_WORKERS` | `4` | Reviews the server runs at once |
-| `review_queue_per_worker` | `KIT_REVIEW_QUEUE_PER_WORKER` | `16` | Webhooks that may wait per worker; beyond that the server answers 503. `review_workers` × `review_queue_per_worker` may be at most 4096 |
+| `review_queue_per_worker` | `KIT_REVIEW_QUEUE_PER_WORKER` | `16` | Pull requests that may wait per worker; beyond that the server answers 503. More webhooks for a pull request already waiting or under review take no more room. `review_workers` × `review_queue_per_worker` may be at most 4096 |
 | `shutdown_timeout` | `KIT_SHUTDOWN_TIMEOUT` | `10s` | Longest the server waits for open requests when stopping |
 | `github.app_id` | `KIT_GITHUB_APP_ID` | | GitHub App ID |
 | `github.private_key` | `KIT_GITHUB_PRIVATE_KEY` | | GitHub App private key (PEM, PKCS #1 or #8) |
@@ -203,10 +203,14 @@ The platform is deployment configuration: a repository under review has no say i
 
 | Route | Purpose |
 |---|---|
-| `POST /webhooks/github` | The GitHub App's webhook; each platform chooses its own webhook path. The signature is verified before anything else; unsigned or mis-signed requests get 401. A reviewable event is acknowledged with 202 and reviewed in the background; a full queue gets 503. |
+| `POST /webhooks/github` | The GitHub App's webhook; each platform chooses its own webhook path. The signature is verified before anything else; unsigned or mis-signed requests get 401. A reviewable event is acknowledged with 202 and reviewed in the background; a full queue gets 503. Only the newest review of a pull request's head commit reports (see below). |
 | `GET /openapi.json`, `GET /openapi.yaml` | The OpenAPI 3.1 document, generated from the routes |
 | `GET /swagger` | Interactive API documentation |
 
-On GitHub, the server runs as a GitHub App. It needs these repository permissions: *Contents* (read), *Pull requests* (read), *Commit statuses* (read and write), and *Members* (organization, read) to expand `org/team` targets. It reviews on `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`, and `edited` when the base branch changes) and `pull_request_review` (`submitted`, `dismissed`) events. Requests that GitHub rate-limits with `Retry-After` are retried after the delay; other errors are not retried.
+On GitHub, the server runs as a GitHub App. It needs these repository permissions: *Contents* (read), *Pull requests* (read), *Checks* (read and write), and *Members* (organization, read) to expand `org/team` targets. It reviews on `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`, and `edited` when the base branch changes) and `pull_request_review` (`submitted`, `dismissed`) events. Requests that GitHub rate-limits are retried after the delay it asks for: up to a minute for a secondary limit (`Retry-After`), and for an exhausted primary limit until it resets, within the review's deadline (at most 10 minutes). A review still rate-limited reports `rate limited by the platform; try again later`; other errors are not retried.
 
-Each review runs with a timeout (`review_timeout`); a review that times out reports an `error` status, allowing up to `report_timeout` to post it. Stopping the server (SIGINT or SIGTERM) cancels reviews in flight and waits up to `shutdown_timeout` for open requests. A pull request whose files GitHub lists only partially (over 3000 files), or whose base tree GitHub truncates, gets an `error` status rather than being reviewed incompletely.
+Each review runs with a timeout (`review_timeout`); a review that times out reports `review timed out`, allowing up to `report_timeout` to post it. Stopping the server (SIGINT or SIGTERM) cancels reviews in flight and waits up to `shutdown_timeout` for open requests.
+
+Webhooks can arrive in bursts (several reviews submitted at once, pushes in a row), and GitHub does not order them. The server reviews one pull request's head commit at a time, and only its newest review reports: a webhook for a head commit already waiting for a worker replaces the waiting review, one for a head commit under review cancels that review and is reviewed next, and a review that a newer one supersedes after it ran does not report. Each review reads the approvals when it runs, so the last review to report has seen the latest. This holds within one server process; replicas behind a load balancer do not coordinate.
+
+A pull request with more files than GitHub lists (3000) is reviewed from a comparison of its merge-base and head trees, with a warning that it is large; a base tree too large for one listing is listed a directory at a time. One that still cannot be listed completely errors rather than being reviewed incompletely.

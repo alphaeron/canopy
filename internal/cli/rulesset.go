@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/platform/local"
+	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
 	"github.com/alphaeron/kit/internal/tui"
 )
@@ -34,15 +34,21 @@ var errNoRulesFiles = errors.New("no rules files in the repository; create one w
 // openRulesSet loads the rules files of the repository containing the current
 // directory.
 func openRulesSet(ctx context.Context) (*rulesSet, error) {
-	repo, err := getRepo()
+	repo, engine, err := openLocal(nil)
 	if err != nil {
 		return nil, err
 	}
+	return loadRulesSet(ctx, repo, engine)
+}
+
+// loadRulesSet is the rules files engine reads from repo, sharing the
+// engine's fetch.
+func loadRulesSet(ctx context.Context, repo *gitRepo, engine *review.Engine) (*rulesSet, error) {
 	root, err := repo.Root()
 	if err != nil {
 		return nil, fmt.Errorf("get repository root: %w", err)
 	}
-	rules, err := local.NewEvaluator(repo, nil).Fetch.Execute(ctx)
+	rules, err := engine.Source.Evaluator().Fetch.Execute(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load rules files: %w", err)
 	}

@@ -12,10 +12,12 @@ import (
 
 // NewEvaluator is the local platform: rules from repo's working tree, and
 // approver targets that stand for themselves (approval.DefaultApproverResolver),
-// since a local review has no platform to expand groups against.
+// since a local review has no platform to expand groups against. The rules
+// are read once (approval.OnceFetcher), as repo is a snapshot: every view
+// built on the evaluator shares one read.
 func NewEvaluator(repo *gitrepo.Repository, log *slog.Logger) *approval.Evaluator {
 	return &approval.Evaluator{
-		Fetch:    &approval.TreeFetcher{Tree: &worktree{repo: repo}, Log: log},
+		Fetch:    &approval.OnceFetcher{Fetcher: &approval.TreeFetcher{Tree: &worktree{repo: repo}, Log: log}},
 		Resolver: &approval.DefaultApproverResolver{},
 		Log:      log,
 	}

@@ -13,7 +13,7 @@ else is shared:
 | What an approver target means, and who is the same user | `approval.ApproverResolver` | `internal/approval/resolver.go` |
 | Turning the platform's own data into a `Source` | a constructor in the platform package | — |
 | *Hosted only:* the pull request webhook flow: receiving webhooks | `server.PRWebhook` | `internal/server/server.go` |
-| *Hosted only:* the pull request under review: review input, proposed files, status | `server.PullRequest` | `internal/server/server.go` |
+| *Hosted only:* the pull request under review: review input, proposed files, where it reports (its key), status | `server.PullRequest` | `internal/server/server.go` |
 
 The server implements one flow, the pull request webhook: a platform's `PRWebhook` turns each
 verified delivery into a `PullRequest`, and the server reviews it and has it report its status.
@@ -104,7 +104,7 @@ type Source interface {
 |---|---|
 | `Evaluator` | `&approval.Evaluator{Fetch: &approval.TreeFetcher{...}, Resolver: ..., Log: log}`, built once in the constructor |
 | `AllFiles` | every file at the base revision, sorted; `review.ErrTreeTruncated` for a truncated listing |
-| `ChangedFiles` | every path the change adds, modifies, or removes, sorted. A rename lists **both** paths, so the rules over the place it left still apply. Added paths are not in `AllFiles`. Empty when nothing changed. A listing the platform cut short is `review.ErrFileListIncomplete`, never a partial list. |
+| `ChangedFiles` | every path the change adds, modifies, or removes, sorted. A rename lists **both** paths, so the rules over the place it left still apply. Added paths are not in `AllFiles`. Empty when nothing changed. When the platform's own listing is capped, list the files another way if you can (GitHub compares the head tree with the merge base's past 3000 files) and report it through `Warnings`; a listing you cannot complete is `review.ErrFileListIncomplete`, never a partial list. |
 | `DiffContent` | the unified diff for `path`, or `""` when the change doesn't touch it, only renames it, or the platform has no text diff for it (binary, too large). |
 
 - Implement `review.Rooted` (`RepoRoot() string`) only if the source is an on-disk checkout. A
@@ -140,6 +140,8 @@ type PullRequest interface {
     review.Source
     ReviewInput(ctx context.Context) (approval.ReviewInput, error)
     ReadHead(ctx context.Context, path string) ([]byte, error)
+    Warnings() []string
+    Key() string
     Report(ctx context.Context, o review.Outcome) error
 }
 ```
@@ -149,15 +151,31 @@ type PullRequest interface {
   latest push still count, the author's own reviews are left to `self_approve`); `IsActive`; and
   the repository owners, the fallback reviewers. Names needn't be canonical. If an activity lookup
   fails, count the user as inactive: only a user the platform confirms is active.
-- **`ReadHead`**: a file as the pull request proposes it; a missing path wraps `fs.ErrNotExist`.
-  The server validates the rules files among the changed files with it, skipping those the head
+- **`ReadHead`**: a file as the pull request proposes it; a missing path wraps `fs.ErrNotExist`,
+  and a file over `rulesfile.MaxSize` wraps `rulesfile.ErrTooLarge` (check the size before
+  downloading). The server validates the rules files among the changed files with it, skipping those the head
   doesn't have (deleted, or the old side of a rename).
-- **`Report`**: publish `o` as the pull request's status, replacing the earlier one (one status
-  name per platform; GitHub: a commit status). Map `review.Passed`, `review.Pending`,
-  `review.Failed`, and `review.Errored` to distinct status states, and carry `o.Summary` as the status's description,
-  cut to the platform's limit rather than failing. Never decide what a review means yourself
-  (`review.OutcomeOf` does). Never publish tokens, raw API errors, or file contents. The review
-  reports only a status: it never comments on the pull request.
+- **`Warnings`**: what reading the pull request found worth reporting that does not change the
+  verdict (GitHub: a pull request too large for its file listing). The server calls it once the
+  reads are done and adds the warnings to the outcome.
+- **`Key`**: where `Report` publishes, as a string, without calling the platform (GitHub: the
+  repository, lower-cased, and the head commit, `owner/repo@sha`). The server runs the reviews of
+  one key one at a time, and only the newest reports: a review requested while another of its key
+  waits replaces it, one requested while another runs cancels it, and a review superseded after it
+  ran does not report. Two pull requests whose reports would replace each other must share a key;
+  two that publish to different places must not.
+- **`Report`**: publish `o` as the pull request's status, replacing the earlier one (one name per
+  platform; GitHub: a completed check run named `kit` on the head commit, a new one per report).
+  Map `review.Passed`, `review.Pending`, and `review.Failed` to distinct states, and
+  `review.Errored` to a state that neither passes nor waits (it may share the failed state, told
+  apart by its text; GitHub: `success`, `action_required`, `failure`, and `failure`). Carry
+  `o.Description(limit)`, with the platform's limit for a one-line summary (GitHub: the check run's
+  title, 140), as the status's headline: it fits the summary, warnings, and as many items as there
+  is room for, so the platform never rejects it as too long. A platform with room for more may also
+  list every item and warning, bounded by its limit (GitHub: the check run's Markdown summary, up
+  to 65535 bytes, each item shown as code since items come from the pull request). Never decide
+  what a review means yourself (`review.OutcomeOf` does). Never publish tokens, raw API errors, or
+  file contents. The review reports only a status: it never comments on the pull request.
 
 ### `server.PRWebhook`: the pull request webhook
 
@@ -207,8 +225,9 @@ The steps use GitLab as the example.
    reads, and status reporting. Keep every `Source` method in `source.go`, with its type.
 6. **Implement the webhook** in `pr_webhook.go`: a `PRWebhook` implementing `server.PRWebhook`
    (route, verification, event parsing, client construction), with
-   `NewPRWebhook(cfg config.GitLab, log)`.
-   Register it in `cmd/kitweb/main.go`'s `platforms`.
+   `NewPRWebhook(cfg config.GitLab, repo *server.RepoCache, log)`. Read base trees and rules files
+   through a `repo.Scope(...)` of the server's repository cache (`server.RepoCache`), named
+   for whatever limits what a reader may see (e.g. one installation). Register it in `cmd/kitweb/main.go`'s `platforms`.
 7. **Configure it**: add a section to `internal/config`:
 
    ```go
@@ -264,7 +283,7 @@ func TestGitLabResolverMeetsTheResolverContract(t *testing.T) {
 |---|---|
 | `RunSourceContract` | `AllFiles` is the base revision; `ChangedFiles` covers a modify, an add, a delete and both sides of a rename, and is empty with no change; diffs show each change and are `""` for untouched paths; the evaluator fetches the rules files |
 | `RunReviewInputContract` | *(hosted)* the author is reported; approvals are each reviewer's latest decision, sorted and deduplicated; change requests and dismissals cancel, comments don't; the author's own approval is left out |
-| `RunStatusReporterContract` | *(hosted)* one report per call; a distinct state per verdict; a later report replaces the earlier one; an oversized summary is cut, not rejected |
+| `RunStatusReporterContract` | *(hosted)* one report per call; passed, pending, and failed in distinct states, and errored neither passed nor pending; a later report replaces the earlier one; an oversized summary is cut, not rejected |
 | `RunTreeContract` | `Files` is complete and sorted; `ReadFile` round-trips contents; a missing path is `fs.ErrNotExist` |
 | `RunResolverContract` | a user resolves to itself; `Canonical` is idempotent; a group resolves to its members; an unknown group is `ErrUnknownTarget`; a malformed target is rejected offline, without an API call |
 

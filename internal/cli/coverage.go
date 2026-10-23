@@ -48,6 +48,11 @@ func runCoverage(ctx context.Context, opts review.Options) (*review.CoverageRepo
 	if err != nil {
 		return nil, nil, err
 	}
+	return coverageWith(ctx, engine, opts)
+}
+
+// coverageWith is runCoverage on an open engine.
+func coverageWith(ctx context.Context, engine *review.Engine, opts review.Options) (*review.CoverageReport, *review.Result, error) {
 	report, match, err := engine.Coverage(ctx, opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run coverage: %w", err)

@@ -2,10 +2,12 @@ package review
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 func TestOutcomeOf(t *testing.T) {
@@ -19,9 +21,9 @@ func TestOutcomeOf(t *testing.T) {
 		want    Verdict
 		summary string
 	}{
-		{name: "satisfied passes", state: &approval.ReviewState{Overall: approval.StatusSatisfied, Files: files}, want: Passed, summary: "all 2 file(s) approved"},
+		{name: "satisfied passes", state: &approval.ReviewState{Overall: approval.StatusSatisfied, Files: files}, want: Passed, summary: "all 2 files approved"},
 		{name: "done passes", state: &approval.ReviewState{Overall: approval.StatusDone}, want: Passed},
-		{name: "missing approvers is pending", state: &approval.ReviewState{Overall: approval.StatusMissingApprovers, Files: files}, want: Pending, summary: "1 of 2 file(s) awaiting approval"},
+		{name: "missing approvers is pending", state: &approval.ReviewState{Overall: approval.StatusMissingApprovers, Files: files}, want: Pending, summary: "1 of 2 files awaits approval"},
 		{name: "unresolved is pending", state: &approval.ReviewState{Overall: approval.StatusUnresolved}, want: Pending},
 		{name: "unknown is pending", state: &approval.ReviewState{}, want: Pending},
 		{name: "error errors", state: &approval.ReviewState{Overall: approval.StatusError, Errors: []string{"x", "y"}}, want: Errored, summary: "review failed with 2 errors"},
@@ -47,5 +49,65 @@ func TestOutcomeNeverQuotesErrors(t *testing.T) {
 	got := OutcomeOf(&approval.ReviewState{Overall: approval.StatusError, Errors: []string{secret}, Err: fmt.Errorf("%s", secret)})
 	if strings.Contains(got.Summary, "token") {
 		t.Errorf("Summary = %q quotes the error", got.Summary)
+	}
+}
+
+// TestOutcomeOfPendingNamesWhoIsNeeded: a pending outcome's items are the
+// approvers still needed, each with the most approvals it still owes a file.
+func TestOutcomeOfPendingNamesWhoIsNeeded(t *testing.T) {
+	need := func(target string, required, satisfied int) approval.ApproverTargetState {
+		return approval.ApproverTargetState{
+			ApproverTarget: rulesfile.ApproverTarget{Target: target, RequiredCount: required},
+			SatisfiedCount: satisfied, Satisfied: satisfied >= required,
+		}
+	}
+	state := &approval.ReviewState{Overall: approval.StatusMissingApprovers, Files: map[string]approval.FileState{
+		"a.go": {Status: approval.StatusMissingApprovers, Required: []approval.ApproverTargetState{need("org/backend", 2, 0), need("lead", 1, 1)}},
+		"b.go": {Status: approval.StatusMissingApprovers, Required: []approval.ApproverTargetState{need("org/backend", 2, 1), need("alice", 1, 0)}},
+		"c.go": {Status: approval.StatusSatisfied, Required: []approval.ApproverTargetState{need("lead", 1, 1)}},
+	}}
+	got := OutcomeOf(state)
+	want := Outcome{Verdict: Pending, Summary: "2 of 3 files await approval", Items: []string{"alice", "org/backend ×2"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("OutcomeOf = %+v, want %+v", got, want)
+	}
+}
+
+// TestOutcomeDescription: the description fits the platform's limit, keeping
+// the summary, then the warnings (shortened to a count), then as many items
+// as fit.
+func TestOutcomeDescription(t *testing.T) {
+	paths := []string{"services/payments/api/KIT", "services/payments/worker/KIT", "services/ledger/KIT", "tools/release/KIT", "docs/KIT"}
+	large := "large pull request (4012 files)"
+	tests := []struct {
+		name  string
+		o     Outcome
+		limit int
+		want  string
+	}{
+		{name: "summary alone", o: Outcome{Summary: "all 3 files approved"}, limit: 140, want: "all 3 files approved"},
+		{name: "no limit lists everything", o: Outcome{Summary: "5 invalid proposed rules files", Items: paths, Warnings: []string{large}},
+			want: "5 invalid proposed rules files (services/payments/api/KIT, services/payments/worker/KIT, services/ledger/KIT, tools/release/KIT, docs/KIT) · warning: " + large},
+		{name: "items that do not all fit end with a count", o: Outcome{Summary: "6 invalid proposed rules files", Items: append(paths, "infra/terraform/KIT")}, limit: 140,
+			want: "6 invalid proposed rules files (services/payments/api/KIT, services/payments/worker/KIT, services/ledger/KIT, tools/release/KIT +2 more)"},
+		{name: "warnings keep their place before items", o: Outcome{Summary: "5 invalid proposed rules files", Items: paths, Warnings: []string{large}}, limit: 140,
+			want: "5 invalid proposed rules files (services/payments/api/KIT, services/payments/worker/KIT +3 more) · warning: " + large},
+		{name: "a warning too long whole is counted", o: Outcome{Summary: "all 3 files approved", Warnings: []string{strings.Repeat("w", 140)}}, limit: 140,
+			want: "all 3 files approved · 1 warning"},
+		{name: "no item fits", o: Outcome{Summary: "2 of 3 files await approval", Items: []string{strings.Repeat("t", 140)}}, limit: 140,
+			want: "2 of 3 files await approval"},
+		{name: "a summary too long alone is cut", o: Outcome{Summary: strings.Repeat("é", 100), Items: paths}, limit: 140,
+			want: strings.Repeat("é", 68) + "…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.o.Description(tt.limit)
+			if got != tt.want {
+				t.Errorf("Description(%d) =\n  %q\nwant\n  %q", tt.limit, got, tt.want)
+			}
+			if tt.limit > 0 && len(got) > tt.limit {
+				t.Errorf("Description(%d) is %d bytes, over the limit", tt.limit, len(got))
+			}
+		})
 	}
 }

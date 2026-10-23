@@ -22,7 +22,7 @@ func TestGitHubMeetsTheSourceContract(t *testing.T) {
 
 func TestGitHubBaseTreeMeetsTheTreeContract(t *testing.T) {
 	platformtest.RunTreeContract(t, func(t *testing.T, files map[string]string) approval.Tree {
-		return newBaseTree((&fakeGitHub{base: files}).client(t), "o", "r", "base")
+		return newBaseTree((&fakeGitHub{base: files}).client(t), "o", "r", "base", server.CacheScope{})
 	})
 }
 
@@ -59,7 +59,7 @@ func TestGitHubMeetsTheReviewInputContract(t *testing.T) {
 		fake := &fakeGitHub{reviewPages: [][]*github.PullRequestReview{reviews[:half], reviews[half:]}}
 		pr := testPR()
 		pr.author = r.Author
-		return newSource(pr, fake.client(t), NewApproverResolver(fake.client(t)), testLogger())
+		return newSource(pr, fake.client(t), NewApproverResolver(fake.client(t)), server.CacheScope{}, testLogger())
 	})
 }
 
@@ -69,9 +69,9 @@ func TestGitHubMeetsTheStatusReporterContract(t *testing.T) {
 		observe := func() []platformtest.StatusReport {
 			fake.mu.Lock()
 			defer fake.mu.Unlock()
-			out := make([]platformtest.StatusReport, len(fake.statuses))
-			for i, s := range fake.statuses {
-				out[i] = platformtest.StatusReport{Name: s.GetContext(), State: s.GetState(), Summary: s.GetDescription()}
+			out := make([]platformtest.StatusReport, len(fake.checkRuns))
+			for i, run := range fake.checkRuns {
+				out[i] = platformtest.StatusReport{Name: run.Name, State: run.GetConclusion(), Summary: run.GetOutput().GetTitle()}
 			}
 			return out
 		}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/gitrepo"
+	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
 // worktree is the local working tree as an approval.Tree: committed files
@@ -21,7 +22,7 @@ type worktree struct {
 
 // Files lists the working tree's files.
 func (w *worktree) Files(ctx context.Context) ([]string, error) {
-	return w.repo.WorktreeFiles(func(string) bool { return true })
+	return w.repo.WorktreeFiles(ctx, func(string) bool { return true })
 }
 
 // ReadFile reads the file at path from disk. The name must match the
@@ -43,7 +44,21 @@ func (w *worktree) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	if !exists {
 		return nil, &fs.PathError{Op: "read", Path: path, Err: fs.ErrNotExist}
 	}
-	return os.ReadFile(full)
+	f, err := os.Open(full)
+	if err != nil {
+		return nil, err
+	}
+	// Only rules files are read through the tree, so a file over the rules
+	// file limit is refused rather than read whole.
+	data, err := rulesfile.ReadLimited(f)
+	closeErr := f.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close %s: %w", path, closeErr)
+	}
+	return data, nil
 }
 
 // fileExistsCaseSensitive checks if path exists, is a regular file, and

@@ -154,3 +154,28 @@ func splitLines(s string) []string {
 	}
 	return parts
 }
+
+// MaxDiffBytes is the largest file a diff is computed for. Line diffing
+// holds both sides in memory and slows sharply with size, so a larger file
+// gets LargeFileDiff instead, as GitHub omits the patch of a large file.
+const MaxDiffBytes = 1 << 20
+
+// binarySniffBytes is how much of a file git reads to judge it binary.
+const binarySniffBytes = 8000
+
+// IsBinary reports whether content is binary as git judges it: a NUL byte
+// within its first 8000 bytes.
+func IsBinary(content string) bool {
+	return strings.IndexByte(content[:min(len(content), binarySniffBytes)], 0) >= 0
+}
+
+// BinaryDiff is the diff git prints for a binary file that changed.
+func BinaryDiff(path string) string {
+	return fmt.Sprintf("Binary files a/%s and b/%s differ\n", path, path)
+}
+
+// LargeFileDiff is the diff for a changed file too large to diff (see
+// MaxDiffBytes), size being its larger side.
+func LargeFileDiff(path string, size int64) string {
+	return fmt.Sprintf("Large files a/%s and b/%s differ (%d bytes, over the %d-byte diff limit)\n", path, path, size, MaxDiffBytes)
+}

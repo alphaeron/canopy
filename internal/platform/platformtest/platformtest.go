@@ -444,13 +444,16 @@ type StatusReport struct {
 type StatusReporterFactory func(t *testing.T) (server.PullRequest, func() []StatusReport)
 
 // RunStatusReporterContract checks a hosted platform's
-// PullRequest.Report: each Report publishes exactly one status, each
-// verdict maps to a distinct platform state, a later report replaces the
-// earlier one, and an oversized summary is cut rather than rejected.
+// PullRequest.Report: each Report publishes exactly one status; a passed,
+// a pending, and a failed review are each in a distinct platform state, and
+// an errored one is in a state other than passed or pending (a platform
+// may report it as failed, told apart by its summary); a later report
+// replaces the earlier one; and an oversized summary is cut rather than
+// rejected.
 func RunStatusReporterContract(t *testing.T, newReporter StatusReporterFactory) {
 	t.Helper()
 
-	t.Run("each verdict is one report in a distinct state", func(t *testing.T) {
+	t.Run("each verdict is one report, and only a pass passes", func(t *testing.T) {
 		r, observe := newReporter(t)
 		verdicts := []review.Verdict{review.Passed, review.Pending, review.Failed, review.Errored}
 		for _, v := range verdicts {
@@ -462,15 +465,17 @@ func RunStatusReporterContract(t *testing.T, newReporter StatusReporterFactory) 
 		if len(got) != len(verdicts) {
 			t.Fatalf("reports = %d, want one per Report call (%d)", len(got), len(verdicts))
 		}
-		states := map[string]bool{}
 		for i, s := range got {
-			states[s.State] = true
 			if s.Summary != string(verdicts[i]) {
 				t.Errorf("report %d summary = %q, want %q", i, s.Summary, verdicts[i])
 			}
 		}
-		if len(states) != len(verdicts) {
-			t.Errorf("states = %v, want a distinct state per verdict", got)
+		passed, pending, failed, errored := got[0].State, got[1].State, got[2].State, got[3].State
+		if passed == pending || passed == failed || pending == failed {
+			t.Errorf("states = %v, want passed, pending, and failed distinct", got)
+		}
+		if errored == passed || errored == pending {
+			t.Errorf("states = %v, want errored neither passed nor pending", got)
 		}
 	})
 

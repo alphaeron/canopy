@@ -56,6 +56,11 @@ func runMatch(ctx context.Context, opts review.Options) (*review.Result, error) 
 	if err != nil {
 		return nil, err
 	}
+	return matchWith(ctx, engine, opts)
+}
+
+// matchWith is runMatch on an open engine.
+func matchWith(ctx context.Context, engine *review.Engine, opts review.Options) (*review.Result, error) {
 	result, err := engine.Match(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("run match: %w", err)

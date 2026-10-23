@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/rulesfile"
@@ -552,5 +553,39 @@ func TestFallbackUnsatisfiableBeatsSatisfiedFiles(t *testing.T) {
 	}
 	if state.Err == nil {
 		t.Errorf("expected non-nil error")
+	}
+}
+
+// TestSharedChainIsTracedPerFile: files that share a chain are evaluated
+// once, share its states, and each still gets the chain's events under its
+// own path and its own errors.
+func TestSharedChainIsTracedPerFile(t *testing.T) {
+	// The rule's only target is inactive, so the rule is skipped (an
+	// error), and with no repository owners the fallback is unsatisfiable.
+	layers := []RuleLayer{buildLayer("", "r", 0, approver("ghost", 1))}
+	rc := RuleChain{FileChains: map[string][]RuleLayer{"a.go": layers, "b.go": layers}}
+	state := executeChain(t, rc, buildContext(approverSet(), inactiveAllOwners(), nil))
+
+	a, b := state.Files["a.go"], state.Files["b.go"]
+	if a.Status != StatusError || b.Status != StatusError {
+		t.Fatalf("statuses = %s, %s; want error, error", a.Status, b.Status)
+	}
+	if &a.Layers[0] != &b.Layers[0] {
+		t.Errorf("files sharing a chain do not share its layer states")
+	}
+	events := map[string]int{}
+	for _, e := range state.Events {
+		events[e.Path]++
+	}
+	if events["a.go"] == 0 || events["a.go"] != events["b.go"] {
+		t.Errorf("events per file = %v, want the same nonzero count for each", events)
+	}
+	if got := len(state.Errors); got != 4 {
+		t.Fatalf("errors = %d (%q), want a skipped rule and an unsatisfiable fallback per file", got, state.Errors)
+	}
+	for _, file := range []string{"a.go", "b.go"} {
+		if !slices.ContainsFunc(state.Errors, func(e string) bool { return strings.Contains(e, "unsatisfiable rules for "+file) }) {
+			t.Errorf("no unsatisfiable error names %s: %q", file, state.Errors)
+		}
 	}
 }

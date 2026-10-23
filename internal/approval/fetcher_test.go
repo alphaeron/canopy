@@ -7,18 +7,22 @@ import (
 	"io/fs"
 	"reflect"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// mapTree is an in-memory Tree that records which paths were read.
-// listedOnly paths are listed but cannot be read.
+// mapTree is an in-memory Tree that records which paths were read, in
+// sorted order (TreeFetcher reads concurrently). listedOnly paths are listed
+// but cannot be read.
 type mapTree struct {
 	files      map[string]string
 	listedOnly []string
 	listErr    error
-	read       []string
+
+	mu   sync.Mutex
+	read []string
 }
 
 func (m *mapTree) Files(context.Context) ([]string, error) {
@@ -34,7 +38,10 @@ func (m *mapTree) Files(context.Context) ([]string, error) {
 }
 
 func (m *mapTree) ReadFile(_ context.Context, path string) ([]byte, error) {
+	m.mu.Lock()
 	m.read = append(m.read, path)
+	slices.Sort(m.read)
+	m.mu.Unlock()
 	data, ok := m.files[path]
 	if !ok {
 		return nil, fmt.Errorf("%s: %w", path, fs.ErrNotExist)

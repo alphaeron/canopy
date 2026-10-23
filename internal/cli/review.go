@@ -107,6 +107,11 @@ func runReview(ctx context.Context, opts reviewOptions, log *slog.Logger) (*appr
 	if err != nil {
 		return nil, err
 	}
+	return reviewWith(ctx, engine, opts)
+}
+
+// reviewWith is runReview on an open engine.
+func reviewWith(ctx context.Context, engine *review.Engine, opts reviewOptions) (*approval.ReviewState, error) {
 	files, err := engine.Files(ctx, review.Options{ChangedOnly: opts.changed, Patterns: opts.patterns})
 	if err != nil {
 		return nil, fmt.Errorf("list files: %w", err)

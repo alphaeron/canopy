@@ -1,13 +1,17 @@
 package local
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sort"
 
 	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/gitrepo"
@@ -50,8 +54,7 @@ func (l *Source) RepoRoot() string {
 }
 
 // AllFiles lists every tracked file at HEAD, i.e. the complete file universe
-// for matching and coverage. The ".*" regex matches every path: the list is
-// sorted for deterministic traversal downstream.
+// for matching and coverage, sorted for deterministic traversal downstream.
 func (l *Source) AllFiles(ctx context.Context) ([]string, error) {
 	// A repository with no commit yet has no tracked files: report an empty
 	// universe rather than a missing-HEAD error, so `match` is usable
@@ -59,34 +62,25 @@ func (l *Source) AllFiles(ctx context.Context) ([]string, error) {
 	if !l.repo.HasCommits() {
 		return []string{}, nil
 	}
-	ref, err := l.repo.Head()
+	files, err := l.repo.HeadFiles(ctx)
 	if err != nil {
 		return nil, err
 	}
-	files, err := l.repo.FindFiles(`.*`, ref, false)
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(files)
-	return files, nil
+	return slices.Clone(files), nil
 }
 
 // ChangedFiles returns the files in the working tree that are not identical
 // to HEAD: added, modified, deleted, and untracked files, per go-git's
 // status codes. This is the universe for `match --changed`.
 func (l *Source) ChangedFiles(ctx context.Context) ([]string, error) {
-	// The worktree's diff is against HEAD specifically, and `wt.Status()`
+	// The worktree's diff is against HEAD specifically, and the status
 	// errors rather than returning an empty result when HEAD does not exist
 	// yet. Treat that as "nothing has changed": there is no tracked revision
 	// to be different from, so the changed-file set is empty by definition.
 	if !l.repo.HasCommits() {
 		return []string{}, nil
 	}
-	wt, err := l.repo.Worktree()
-	if err != nil {
-		return nil, err
-	}
-	status, err := wt.Status()
+	status, err := l.repo.Status()
 	if err != nil {
 		return nil, err
 	}
@@ -105,17 +99,103 @@ func (l *Source) ChangedFiles(ctx context.Context) ([]string, error) {
 // HEAD and the working tree: the HEAD blob is the old side, the file on disk
 // the new side. Untracked files have empty old content; deleted files empty
 // new content. An input file not present at all in the source universe
-// yields ("" , nil) — the diff is absent, not an error.
+// yields ("" , nil) — the diff is absent, not an error. As git and GitHub
+// do, a changed binary file is gitrepo.BinaryDiff, and a changed file with
+// a side over gitrepo.MaxDiffBytes is gitrepo.LargeFileDiff: neither is
+// line-diffed, and a large file is compared without being held in memory.
 func (l *Source) DiffContent(ctx context.Context, path string) (string, error) {
-	old, _, err := l.repo.FileContentAt(path, "HEAD")
+	old, err := l.repo.FileAt(path, "HEAD")
 	if err != nil {
 		return "", err
+	}
+	wt, err := l.repo.Worktree()
+	if err != nil {
+		return "", err
+	}
+	fsys := wt.Filesystem()
+	var oldSize, newSize int64
+	if old != nil {
+		oldSize = old.Size
+	}
+	info, err := fsys.Stat(path)
+	switch {
+	case osIsNotExist(err):
+		info = nil
+	case err != nil:
+		return "", gitrepo.WrapReadError(path, err)
+	default:
+		newSize = info.Size()
+	}
+
+	if max(oldSize, newSize) > gitrepo.MaxDiffBytes {
+		open := func() (io.ReadCloser, error) { return fsys.Open(path) }
+		same, err := sameContent(old, open, path, info != nil, oldSize, newSize)
+		if err != nil || same {
+			return "", err
+		}
+		return gitrepo.LargeFileDiff(path, max(oldSize, newSize)), nil
+	}
+
+	var oldContent string
+	if old != nil {
+		if oldContent, err = old.Contents(); err != nil {
+			return "", fmt.Errorf("read blob for %s: %w", path, err)
+		}
 	}
 	newContent, err := l.worktreeContent(path)
 	if err != nil {
 		return "", err
 	}
-	return gitrepo.UnifiedDiff(path, old, newContent), nil
+	if (gitrepo.IsBinary(oldContent) || gitrepo.IsBinary(newContent)) && oldContent != newContent {
+		return gitrepo.BinaryDiff(path), nil
+	}
+	return gitrepo.UnifiedDiff(path, oldContent, newContent), nil
+}
+
+// sameContent reports whether the HEAD file old (nil when absent) and the
+// working tree file at path (absent unless onDisk; open opens it) hold the
+// same bytes, streaming both rather than reading either whole.
+func sameContent(old *object.File, open func() (io.ReadCloser, error), path string, onDisk bool, oldSize, newSize int64) (same bool, err error) {
+	if old == nil || !onDisk || oldSize != newSize {
+		return old == nil && !onDisk, nil
+	}
+	a, err := old.Reader()
+	if err != nil {
+		return false, fmt.Errorf("read blob for %s: %w", path, err)
+	}
+	defer closeInto(&err, a, "blob for "+path)
+	b, err := open()
+	if err != nil {
+		return false, gitrepo.WrapReadError(path, err)
+	}
+	defer closeInto(&err, b, path)
+	bufA, bufB := make([]byte, 64<<10), make([]byte, 64<<10)
+	for {
+		n, errA := io.ReadFull(a, bufA)
+		m, errB := io.ReadFull(b, bufB)
+		if n != m || !bytes.Equal(bufA[:n], bufB[:m]) {
+			return false, nil
+		}
+		endA := errors.Is(errA, io.EOF) || errors.Is(errA, io.ErrUnexpectedEOF)
+		endB := errors.Is(errB, io.EOF) || errors.Is(errB, io.ErrUnexpectedEOF)
+		switch {
+		case errA != nil && !endA:
+			return false, fmt.Errorf("read blob for %s: %w", path, errA)
+		case errB != nil && !endB:
+			return false, gitrepo.WrapReadError(path, errB)
+		case endA || endB:
+			return endA && endB, nil
+		}
+	}
+}
+
+// closeInto closes c, setting *err to the failure when no earlier error
+// was set: a read that succeeded is not reported as one that closed
+// cleanly when it did not.
+func closeInto(err *error, c io.Closer, what string) {
+	if cerr := c.Close(); cerr != nil && *err == nil {
+		*err = fmt.Errorf("close %s: %w", what, cerr)
+	}
 }
 
 // worktreeContent reads the working-tree version of a file, or "" when the

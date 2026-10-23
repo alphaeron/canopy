@@ -70,6 +70,11 @@ type PRWebhook interface {
 // as the server reviews it: its files and rules (review.Source, whose
 // Revision is the base commit), who wrote and approved it, its files as it
 // proposes them, and where its outcome is reported.
+//
+// A review reads the changed files, the review input, and the rules
+// concurrently, so its methods must be safe for concurrent use. It starts
+// its evaluator's fetch early and the review fetches again, so the fetch
+// should share one result per pull request rather than read the rules twice.
 type PullRequest interface {
 	review.Source
 
@@ -82,12 +87,26 @@ type PullRequest interface {
 
 	// ReadHead reads a file as the pull request proposes it, so rules files
 	// it changes can be validated before they take effect. A path its head
-	// does not have wraps fs.ErrNotExist.
+	// does not have wraps fs.ErrNotExist, and a file over rulesfile.MaxSize
+	// wraps rulesfile.ErrTooLarge.
 	ReadHead(ctx context.Context, path string) ([]byte, error)
+
+	// Warnings lists the conditions met while reading the pull request
+	// that do not stop its review but are worth reporting with its
+	// outcome, such as a pull request too large to list its files the
+	// usual way. It is called once the review's reads are done.
+	Warnings() []string
+
+	// Key identifies where Report publishes (GitHub: the repository and
+	// head commit). Reviews with the same key run one at a time and only
+	// the newest reports, so a review that finishes late never replaces a
+	// newer one. It must not call the platform's API.
+	Key() string
 
 	// Report publishes the review's outcome as the pull request's status,
 	// replacing the earlier one. The platform maps each verdict to its own
-	// status states and carries the summary as the status's description.
+	// status states and carries the outcome's Description as the status's
+	// description.
 	Report(ctx context.Context, o review.Outcome) error
 }
 
@@ -97,8 +116,10 @@ type Options struct {
 	Addr string
 	// Workers is how many reviews run at once.
 	Workers int
-	// Queue is how many accepted webhooks may wait for a worker; a webhook
-	// arriving when the queue is full is refused with 503.
+	// Queue is how many pull requests (by PullRequest.Key) may wait for a
+	// worker; a webhook for a pull request already waiting or under review
+	// takes no more room. One arriving when the queue is full is refused
+	// with 503.
 	Queue int
 	// ReviewTimeout bounds each review.
 	ReviewTimeout time.Duration
@@ -128,7 +149,7 @@ type Server struct {
 	opts    Options
 	log     *slog.Logger
 	handler http.Handler
-	pool    *pool
+	reviews *reviews
 }
 
 // New builds the server over the deployment's one platform webhook and
@@ -166,7 +187,7 @@ func New(ctx context.Context, opts Options, webhook PRWebhook) (*Server, error) 
 	}
 	s.registerWebhook(api, webhook)
 	s.handler = router
-	s.pool = newPool(ctx, opts.Workers, opts.Queue, opts.ReviewTimeout, s.review)
+	s.reviews = newReviews(ctx, opts.Workers, opts.Queue, opts.ReviewTimeout, s.review)
 	return s, nil
 }
 
@@ -175,7 +196,7 @@ func (s *Server) Handler() http.Handler { return s.handler }
 
 // Wait blocks until every review worker has stopped, after the context New
 // was given is done.
-func (s *Server) Wait() { s.pool.wait() }
+func (s *Server) Wait() { s.reviews.wait() }
 
 // ListenAndServe serves on Options.Addr until ctx is done, then stops
 // accepting requests, waits up to Options.ShutdownTimeout for open ones, and waits
@@ -295,7 +316,7 @@ func (s *Server) accept(ctx context.Context, p PRWebhook) (*webhookOutput, error
 		log.Debug("webhook ignored")
 		return out, nil
 	}
-	if !s.pool.submit(job{platform: p.Name(), pr: pr}) {
+	if !s.reviews.submit(job{platform: p.Name(), pr: pr}) {
 		log.Error("review queue full; webhook dropped")
 		return nil, huma.Error503ServiceUnavailable("review queue is full")
 	}
@@ -304,19 +325,19 @@ func (s *Server) accept(ctx context.Context, p PRWebhook) (*webhookOutput, error
 	return out, nil
 }
 
-// job is one queued review.
-type job struct {
-	platform string
-	pr       PullRequest
-}
-
 // review runs one queued review and reports its outcome as the pull
-// request's status. A review that ran out of time still reports, under a
-// fresh deadline; one cancelled because the server is stopping does not.
-func (s *Server) review(ctx context.Context, j job) {
-	log := s.log.With("component", "server", "platform", j.platform)
+// request's status, unless a newer review of its key superseded it
+// (current reports false; see reviews). A review that ran out of time
+// still reports, under a fresh deadline; one cancelled because the server
+// is stopping does not.
+func (s *Server) review(ctx context.Context, j job, current func() bool) {
+	log := s.log.With("component", "server", "platform", j.platform, "key", j.pr.Key())
 	outcome := evaluate(ctx, j.pr, log)
 
+	if !current() {
+		log.Info("review superseded by a newer one")
+		return
+	}
 	reportCtx := ctx
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		var cancel context.CancelFunc

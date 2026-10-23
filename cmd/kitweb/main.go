@@ -24,9 +24,9 @@ import (
 
 // platforms builds each hosted platform the server can run, by name. A new
 // platform adds its constructor here and nothing else.
-var platforms = map[config.Platform]func(cfg *config.Config, log *slog.Logger) (server.PRWebhook, error){
-	config.PlatformGitHub: func(cfg *config.Config, log *slog.Logger) (server.PRWebhook, error) {
-		return ghplatform.NewPRWebhook(cfg.GitHub, log)
+var platforms = map[config.Platform]func(cfg *config.Config, repo *server.RepoCache, log *slog.Logger) (server.PRWebhook, error){
+	config.PlatformGitHub: func(cfg *config.Config, repo *server.RepoCache, log *slog.Logger) (server.PRWebhook, error) {
+		return ghplatform.NewPRWebhook(cfg.GitHub, repo, log)
 	},
 }
 
@@ -66,7 +66,7 @@ func run() error {
 	if !ok {
 		return errors.New("no platform configured: set one platform's settings (see the README's Configuration section)")
 	}
-	platform, err := newPlatform(cfg, log)
+	platform, err := newPlatform(cfg, server.NewRepoCache(), log)
 	if err != nil {
 		return fmt.Errorf("platform %s: %w", name, err)
 	}

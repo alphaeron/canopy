@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -79,19 +80,25 @@ func (p *stubWebhook) PullRequest(event string, body []byte) (PullRequest, bool,
 type stubPullRequest struct {
 	rules      rulesfile.Set
 	fetchErr   error
+	warnings   []string
 	head       map[string]string
 	changed    []string
 	changedErr error
 	input      approval.ReviewInput
-	// block makes ChangedFiles wait until its context is done.
-	block bool
+	key        string // Key; "" for every stub that does not set it
+	// block makes ChangedFiles wait until its context is done, or release
+	// is closed when it is set.
+	block   bool
+	release chan struct{}
+	started chan struct{} // closed when ChangedFiles is first called
 
 	// headErr makes ReadHead fail.
 	headErr error
 
-	mu      sync.Mutex
-	reports []review.Outcome
-	done    chan struct{} // closed on the first report
+	startOnce sync.Once
+	mu        sync.Mutex
+	reports   []review.Outcome
+	done      chan struct{} // closed on the first report
 }
 
 func newStubPullRequest() *stubPullRequest {
@@ -100,12 +107,18 @@ func newStubPullRequest() *stubPullRequest {
 			Approvers: rulesfile.ApproverTargets{{Target: "lead", RequiredCount: 1}}}}},
 		changed: []string{"main.go"},
 		done:    make(chan struct{}),
+		started: make(chan struct{}),
 	}
 }
 
 func (c *stubPullRequest) Evaluator() *approval.Evaluator {
 	return &approval.Evaluator{
-		Fetch:    fetchFunc(func(context.Context) (rulesfile.Set, error) { return c.rules, c.fetchErr }),
+		Fetch: fetchFunc(func(context.Context) (rulesfile.Set, error) {
+			if c.fetchErr != nil {
+				return nil, c.fetchErr // the fetch loaded nothing
+			}
+			return c.rules, nil
+		}),
 		Resolver: &usersOnly{},
 		Log:      slog.New(slog.DiscardHandler),
 	}
@@ -114,14 +127,22 @@ func (c *stubPullRequest) Evaluator() *approval.Evaluator {
 func (c *stubPullRequest) AllFiles(context.Context) ([]string, error) { return c.changed, nil }
 
 func (c *stubPullRequest) ChangedFiles(ctx context.Context) ([]string, error) {
+	c.startOnce.Do(func() { close(c.started) })
 	if c.block {
-		<-ctx.Done()
-		return nil, ctx.Err()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-c.release:
+		}
 	}
 	return c.changed, c.changedErr
 }
 
 func (c *stubPullRequest) DiffContent(context.Context, string) (string, error) { return "", nil }
+
+func (c *stubPullRequest) Warnings() []string { return c.warnings }
+
+func (c *stubPullRequest) Key() string { return c.key }
 
 func (c *stubPullRequest) ReviewInput(context.Context) (approval.ReviewInput, error) {
 	return c.input, nil
@@ -227,7 +248,7 @@ func TestWebhookRejectsUnverifiedRequests(t *testing.T) {
 	if code, _ := post(t, s, "/webhooks/stub", "pr", "forged"); code != http.StatusUnauthorized {
 		t.Errorf("unverified webhook = %d, want 401", code)
 	}
-	if len(s.pool.jobs) != 0 {
+	if len(s.reviews.pool.jobs) != 0 {
 		t.Error("an unverified webhook queued a review")
 	}
 }
@@ -339,15 +360,21 @@ func TestServerServesItsOpenAPIDocument(t *testing.T) {
 }
 
 func TestWebhookRefusesWhenTheQueueIsFull(t *testing.T) {
-	blocked := newStubPullRequest()
-	blocked.block = true
+	changes := map[string]PullRequest{}
+	for i := range 4 {
+		blocked := newStubPullRequest()
+		blocked.block = true
+		blocked.key = fmt.Sprint(i)
+		changes[blocked.key] = blocked
+	}
 	opts := testOptions()
 	opts.Queue = 1
-	s := newTestServer(t, opts, &stubWebhook{name: "stub", changes: map[string]PullRequest{"pr": blocked}})
+	s := newTestServer(t, opts, &stubWebhook{name: "stub", changes: changes})
 	codes := map[int]int{}
-	// One review occupies the worker and one waits; the rest are refused.
-	for range 4 {
-		code, _ := post(t, s, "/webhooks/stub", "pr", "ok")
+	// One pull request occupies the worker and one waits; the rest are
+	// refused.
+	for i := range 4 {
+		code, _ := post(t, s, "/webhooks/stub", fmt.Sprint(i), "ok")
 		codes[code]++
 	}
 	if codes[http.StatusServiceUnavailable] == 0 {
@@ -398,7 +425,100 @@ func TestReviewTimeoutIsReported(t *testing.T) {
 	c.wait(t)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.reports) != 1 || c.reports[0] != (review.Outcome{Verdict: review.Errored, Summary: "review timed out"}) {
+	if len(c.reports) != 1 || !reflect.DeepEqual(c.reports[0], review.Outcome{Verdict: review.Errored, Summary: "review timed out"}) {
 		t.Errorf("reports = %+v, want one failed for the timeout", c.reports)
 	}
+}
+
+// TestNewerReviewCancelsTheRunningOne: a review requested while another of
+// the same key runs cancels it, and only the newer one reports.
+func TestNewerReviewCancelsTheRunningOne(t *testing.T) {
+	older, newer := newStubPullRequest(), newStubPullRequest()
+	older.block, older.key, newer.key = true, "k", "k"
+	s := newTestServer(t, testOptions(), &stubWebhook{name: "stub", changes: map[string]PullRequest{"older": older, "newer": newer}})
+
+	if code, _ := post(t, s, "/webhooks/stub", "older", "ok"); code != http.StatusAccepted {
+		t.Fatalf("older webhook = %d, want 202", code)
+	}
+	<-older.started
+	if code, _ := post(t, s, "/webhooks/stub", "newer", "ok"); code != http.StatusAccepted {
+		t.Fatalf("newer webhook = %d, want 202", code)
+	}
+	newer.wait(t)
+	older.mu.Lock()
+	defer older.mu.Unlock()
+	if len(older.reports) != 0 {
+		t.Errorf("older reports = %+v, want none from a superseded review", older.reports)
+	}
+}
+
+// TestNewerReviewReplacesAWaitingOne: of the reviews of one key requested
+// while it waits for a worker, only the newest runs, and it takes one
+// place in the queue.
+func TestNewerReviewReplacesAWaitingOne(t *testing.T) {
+	busy := newStubPullRequest()
+	busy.block, busy.key, busy.release = true, "busy", make(chan struct{})
+	first, second, third := newStubPullRequest(), newStubPullRequest(), newStubPullRequest()
+	first.key, second.key, third.key = "k", "k", "k"
+	opts := testOptions()
+	opts.Queue = 1
+	s := newTestServer(t, opts, &stubWebhook{name: "stub", changes: map[string]PullRequest{
+		"busy": busy, "first": first, "second": second, "third": third,
+	}})
+
+	if code, _ := post(t, s, "/webhooks/stub", "busy", "ok"); code != http.StatusAccepted {
+		t.Fatalf("busy webhook = %d, want 202", code)
+	}
+	<-busy.started // the only worker is taken
+	for _, event := range []string{"first", "second", "third"} {
+		if code, _ := post(t, s, "/webhooks/stub", event, "ok"); code != http.StatusAccepted {
+			t.Fatalf("%s webhook = %d, want 202 (one queue place for the key)", event, code)
+		}
+	}
+	close(busy.release)
+	third.wait(t)
+	for name, c := range map[string]*stubPullRequest{"first": first, "second": second} {
+		select {
+		case <-c.started:
+			t.Errorf("the %s review ran, want it replaced before it started", name)
+		default:
+		}
+	}
+}
+
+// TestSupersededReviewDoesNotReport: a review that a newer one supersedes
+// after it ran, but before it reports, is no longer current; the newer one
+// is.
+func TestSupersededReviewDoesNotReport(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	newer := newStubPullRequest()
+	newer.key = "k"
+	var r *reviews
+	got := make(chan []bool, 1)
+	var seen []bool
+	r = newReviews(ctx, 1, 1, time.Minute, func(_ context.Context, j job, current func() bool) {
+		if j.pr != PullRequest(newer) {
+			r.submit(job{pr: newer}) // arrives while the older one finishes
+		}
+		seen = append(seen, current())
+		if len(seen) == 2 {
+			got <- seen
+		}
+	})
+	older := newStubPullRequest()
+	older.key = "k"
+	if !r.submit(job{pr: older}) {
+		t.Fatal("submit refused")
+	}
+	select {
+	case seen := <-got:
+		if !reflect.DeepEqual(seen, []bool{false, true}) {
+			t.Errorf("current = %v, want the older review superseded and the newer current", seen)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the newer review never ran")
+	}
+	cancel()
+	r.wait()
 }

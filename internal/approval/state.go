@@ -73,7 +73,9 @@ type ReviewState struct {
 	Err      error    // surfaced, not swallowed
 }
 
-// FileState represents the state of a single file in the review.
+// FileState represents the state of a single file in the review. Files
+// whose rule chains match share their Layers and Required (see
+// RuleChain.Execute), so neither may be modified.
 type FileState struct {
 	Path         string
 	Layers       []LayerState
@@ -151,15 +153,19 @@ type Event struct {
 // encountered during fetch, sift, and approve so that the resulting
 // ReviewState exposes the full failure picture.
 type ReviewStateBuilder struct {
-	events  []Event
+	// events is the trace in fixed-size blocks: a large review records
+	// millions of events, and growing one slice would copy them all again
+	// at each growth. Build joins the blocks once.
+	events  [][]Event
 	errors  []string
+	causes  []error // the errors behind errors, for errors.Is on Err
 	files   map[string]FileState
 	overall Status
 }
 
 // NewReviewStateBuilder creates a new review state builder.
 func NewReviewStateBuilder() *ReviewStateBuilder {
-	return &ReviewStateBuilder{events: make([]Event, 0)}
+	return &ReviewStateBuilder{}
 }
 
 // AddEvent adds an event to the review state. It is a no-op on a nil
@@ -169,7 +175,11 @@ func (b *ReviewStateBuilder) AddEvent(phase, path, layer, rule string, status St
 	if b == nil {
 		return
 	}
-	b.events = append(b.events, Event{
+	if n := len(b.events); n == 0 || len(b.events[n-1]) == cap(b.events[n-1]) {
+		b.events = append(b.events, make([]Event, 0, eventBlockSize(n)))
+	}
+	last := &b.events[len(b.events)-1]
+	*last = append(*last, Event{
 		Phase:  phase,
 		Path:   path,
 		Layer:  layer,
@@ -177,6 +187,35 @@ func (b *ReviewStateBuilder) AddEvent(phase, path, layer, rule string, status St
 		Status: status,
 		Note:   note,
 	})
+}
+
+// replay records from's events under path, then from's errors, as if
+// they had been recorded here.
+func (b *ReviewStateBuilder) replay(from *ReviewStateBuilder, path string) {
+	if b == nil {
+		return
+	}
+	for _, block := range from.events {
+		for _, e := range block {
+			b.AddEvent(e.Phase, path, e.Layer, e.Rule, e.Status, e.Note)
+		}
+	}
+	b.errors = append(b.errors, from.errors...)
+	b.causes = append(b.causes, from.causes...)
+}
+
+// The sizes of the builder's trace blocks: the first, and the largest.
+const (
+	firstEventBlock     = 64
+	eventBlockDoublings = 6
+	eventBlock          = firstEventBlock << eventBlockDoublings
+)
+
+// eventBlockSize is the capacity of the trace's block n (from 0). Blocks
+// double from firstEventBlock up to eventBlock, so a small review allocates
+// about what it records.
+func eventBlockSize(n int) int {
+	return firstEventBlock << min(n, eventBlockDoublings)
 }
 
 // AddError records an error encountered during any phase of the review. All
@@ -188,6 +227,7 @@ func (b *ReviewStateBuilder) AddError(err error) {
 		return
 	}
 	b.errors = append(b.errors, err.Error())
+	b.causes = append(b.causes, err)
 }
 
 // WithFiles sets the per-file states on the state being built. It returns the receiver so the remaining steps chain together.
@@ -215,17 +255,35 @@ func (b *ReviewStateBuilder) Build(baseErr error) *ReviewState {
 	if len(errors) > 0 {
 		overall = StatusError
 		if baseErr == nil {
-			baseErr = fmt.Errorf("%d error(s) during review: %s", len(errors), strings.Join(errors, "; "))
+			baseErr = reviewErrors(b.causes)
 		}
+	}
+	events := slices.Concat(b.events...)
+	if events == nil {
+		events = []Event{} // an empty trace, never a missing one
 	}
 	return &ReviewState{
 		Files:   b.files,
 		Overall: overall,
-		Events:  b.events,
+		Events:  events,
 		Errors:  errors,
 		Err:     baseErr,
 	}
 }
+
+// reviewErrors is the errors a review accumulated, as one error that
+// errors.Is and errors.As see through to each of them.
+type reviewErrors []error
+
+func (e reviewErrors) Error() string {
+	msgs := make([]string, len(e))
+	for i, err := range e {
+		msgs[i] = err.Error()
+	}
+	return fmt.Sprintf("%d error(s) during review: %s", len(e), strings.Join(msgs, "; "))
+}
+
+func (e reviewErrors) Unwrap() []error { return e }
 
 // firstMatching returns the first element of items for which pred holds, or
 // the zero value and false when none do. It is a generic first-match

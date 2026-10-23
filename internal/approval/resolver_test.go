@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -131,5 +133,36 @@ func TestReviewResolvesEachTargetOnce(t *testing.T) {
 	rc.Execute(t.Context(), ReviewInput{Approvers: []string{"bo"}}, resolver, NewReviewStateBuilder(), testLogger())
 	if got := resolver.calls["org/team"]; got != 1 {
 		t.Errorf("resolved org/team %d times, want 1", got)
+	}
+}
+
+// TestPrefetchChecksOnlyWhatEvaluationChecks: the concurrent prefetch looks
+// up the activity of each target's first eligible member, the lookup
+// evaluation makes first, and of no one else: not the excluded author, not
+// later members, and no member of a target that failed to resolve.
+func TestPrefetchChecksOnlyWhatEvaluationChecks(t *testing.T) {
+	resolver := &fakeResolver{
+		groups:  map[string][]string{"org/team": {"Author", "Al", "Bo"}, "org/down": {"Cy"}},
+		failing: map[string]error{"org/down": errors.New("platform down")},
+	}
+	rc := singleRuleChain("/a.go", false, approver("org/team", 1), approver("org/down", 1))
+
+	var mu sync.Mutex
+	asked := map[string]bool{}
+	in := ReviewInput{Author: "author", IsActive: func(name string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		asked[name] = true
+		return true
+	}}
+	rc.Execute(t.Context(), in, resolver, NewReviewStateBuilder(), testLogger())
+
+	if want := map[string]bool{"al": true}; !maps.Equal(asked, want) {
+		t.Errorf("activity looked up for %v, want only %v", slices.Sorted(maps.Keys(asked)), slices.Sorted(maps.Keys(want)))
+	}
+	for target, n := range resolver.calls {
+		if n != 1 {
+			t.Errorf("resolved %s %d times, want 1", target, n)
+		}
 	}
 }

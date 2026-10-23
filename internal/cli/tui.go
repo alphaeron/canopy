@@ -435,7 +435,12 @@ func uncoveredSection(files []string, s *rulesSet) tui.Section {
 // names, with add, edit, and remove.
 func rulesListRoute(v tui.Values) tui.Route {
 	return commandRoute(rulesListCmd, v, func(ctx context.Context, v tui.Values) (tui.Page, error) {
-		s, err := openRulesSet(ctx)
+		// The rules and the match share one read of the repository.
+		repo, engine, err := openLocal(nil)
+		if err != nil {
+			return nil, err
+		}
+		s, err := loadRulesSet(ctx, repo, engine)
 		if err != nil {
 			return nil, err
 		}
@@ -443,7 +448,7 @@ func rulesListRoute(v tui.Values) tui.Route {
 		if err != nil {
 			return nil, err
 		}
-		match, err := runMatch(ctx, review.Options{})
+		match, err := matchWith(ctx, engine, review.Options{})
 		return rulesPage(s, only, newRuleMatches(match, err)), nil
 	})
 }
@@ -754,7 +759,7 @@ func rulesFilesRoute(v tui.Values) tui.Route {
 		if len(v.Args) > 0 {
 			pattern = v.Args[0]
 		}
-		files, err := findRulesFiles(pattern, v.Flag("revision"))
+		files, err := findRulesFiles(ctx, pattern, v.Flag("revision"))
 		if err != nil {
 			return nil, err
 		}

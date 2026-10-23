@@ -15,7 +15,8 @@ type ReviewInput struct {
 	Approvers []string
 	// IsActive reports whether a user can currently approve; inactive
 	// users are pruned from every target. It is called with canonical
-	// names. nil means every user is active.
+	// names, concurrently for different users, so it must be safe for
+	// concurrent use. nil means every user is active.
 	IsActive func(name string) bool
 	// Owners are the repository owners: the fallback for a file no rule
 	// covers.

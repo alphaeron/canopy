@@ -1,6 +1,8 @@
 package gitrepo
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -72,7 +74,7 @@ func TestWorktreeFiles(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "gone", "rules")); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	got, err := repo.WorktreeFiles(isRulesFile)
+	got, err := repo.WorktreeFiles(t.Context(), isRulesFile)
 	if err != nil {
 		t.Fatalf("WorktreeFiles: %v", err)
 	}
@@ -84,11 +86,71 @@ func TestWorktreeFiles(t *testing.T) {
 func TestWorktreeFilesNoCommit(t *testing.T) {
 	dir, repo := newRepo(t, nil)
 	writeFiles(t, dir, map[string]string{"rules": "a"})
-	got, err := repo.WorktreeFiles(isRulesFile)
+	got, err := repo.WorktreeFiles(t.Context(), isRulesFile)
 	if err != nil {
 		t.Fatalf("WorktreeFiles: %v", err)
 	}
 	if want := []string{"rules"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("WorktreeFiles = %v, want %v", got, want)
+	}
+}
+
+// TestFileAt pins the direct lookup: a committed file with its size and
+// contents, and nil for a missing path or a directory.
+func TestFileAt(t *testing.T) {
+	_, repo := newRepo(t, map[string]string{"a/b.txt": "hello\n"})
+	f, err := repo.FileAt("a/b.txt", "HEAD")
+	if err != nil || f == nil {
+		t.Fatalf("FileAt(a/b.txt) = %v, %v; want the file", f, err)
+	}
+	if got, err := f.Contents(); err != nil || got != "hello\n" || f.Size != 6 || f.Name != "a/b.txt" {
+		t.Errorf("file = %q (size %d, name %q), %v; want hello, 6 bytes, a/b.txt", got, f.Size, f.Name, err)
+	}
+	for _, missing := range []string{"a/missing.txt", "missing/b.txt", "a"} {
+		if f, err := repo.FileAt(missing, "HEAD"); err != nil || f != nil {
+			t.Errorf("FileAt(%s) = %v, %v; want nil, nil", missing, f, err)
+		}
+	}
+}
+
+// TestHeadFilesIsASnapshot pins that a Repository lists HEAD once: a later
+// commit is seen only by a newly opened Repository.
+func TestHeadFilesIsASnapshot(t *testing.T) {
+	dir, repo := newRepo(t, map[string]string{"a.txt": "a", "d/b.txt": "b"})
+	got, err := repo.HeadFiles(t.Context())
+	if want := []string{"a.txt", "d/b.txt"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("HeadFiles = %v, %v; want %v", got, err, want)
+	}
+	writeFiles(t, dir, map[string]string{"c.txt": "c"})
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree: %v", err)
+	}
+	if _, err := wt.Add("c.txt"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if _, err := wt.Commit("more", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@x"}}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if again, _ := repo.HeadFiles(t.Context()); len(again) != 2 {
+		t.Errorf("HeadFiles after a commit = %v, want the first listing", again)
+	}
+	reopened := &Repository{Repository: repo.Repository}
+	if fresh, _ := reopened.HeadFiles(t.Context()); len(fresh) != 3 {
+		t.Errorf("a new Repository's HeadFiles = %v, want the new commit's 3 files", fresh)
+	}
+}
+
+// TestFindFilesAtStopsWhenCancelled: a walk under a done context stops
+// with its error.
+func TestFindFilesAtStopsWhenCancelled(t *testing.T) {
+	_, repo := newRepo(t, map[string]string{"a.txt": "a"})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := repo.FindFilesAt(ctx, ".*", "", false); !errors.Is(err, context.Canceled) {
+		t.Errorf("FindFilesAt with a done context: err = %v, want context.Canceled", err)
+	}
+	if got, err := repo.FindFilesAt(t.Context(), `\.txt$`, "", false); err != nil || !reflect.DeepEqual(got, []string{"a.txt"}) {
+		t.Errorf("FindFilesAt = %v, %v; want [a.txt]", got, err)
 	}
 }

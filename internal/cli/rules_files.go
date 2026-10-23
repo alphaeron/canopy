@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
@@ -39,7 +40,7 @@ func runRulesFiles(cmd *cobra.Command, args []string) error {
 	if mode == modeTUI {
 		return openTUI(cmd, rulesFilesRoute(valuesFrom(cmd, args)))
 	}
-	files, err := findRulesFiles(pattern, revision)
+	files, err := findRulesFiles(cmd.Context(), pattern, revision)
 	if err != nil {
 		return err
 	}
@@ -61,7 +62,7 @@ func runRulesFiles(cmd *cobra.Command, args []string) error {
 // file when empty), the repository-root rules file first. An empty revision
 // reads the working tree; any other lists the files committed at that revision.
 // The result is never nil, so it encodes as a JSON list.
-func findRulesFiles(pattern, revision string) ([]string, error) {
+func findRulesFiles(ctx context.Context, pattern, revision string) ([]string, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("invalid pattern %q: %w", pattern, err)
@@ -72,12 +73,12 @@ func findRulesFiles(pattern, revision string) ([]string, error) {
 	}
 	var files []string
 	if revision == "" {
-		files, err = repo.WorktreeFiles(func(p string) bool { return rulesfile.IsRulesFile(p) && re.MatchString(p) })
+		files, err = repo.WorktreeFiles(ctx, func(p string) bool { return rulesfile.IsRulesFile(p) && re.MatchString(p) })
 		if err != nil {
 			return nil, fmt.Errorf("find rules files for pattern %q: %w", pattern, err)
 		}
 	} else {
-		files, err = repo.FindFilesAt(pattern, plumbing.Revision(revision), false)
+		files, err = repo.FindFilesAt(ctx, pattern, plumbing.Revision(revision), false)
 		if err != nil {
 			return nil, fmt.Errorf("find rules files for pattern %q at %s: %w", pattern, revision, err)
 		}

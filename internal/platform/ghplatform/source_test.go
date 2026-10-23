@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/go-github/v93/github"
@@ -12,13 +13,11 @@ import (
 	"github.com/alphaeron/kit/internal/approval"
 	"github.com/alphaeron/kit/internal/review"
 	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/kit/internal/server"
 )
 
 func TestGitHubAllFilesListsBlobsAtBaseTree(t *testing.T) {
-	fake := &fakeGitHub{
-		base: map[string]string{rulesfile.FileName: "", "src/api.go": ""},
-		dirs: []string{"src"},
-	}
+	fake := &fakeGitHub{base: map[string]string{rulesfile.FileName: "", "src/api.go": ""}}
 	files, err := testSource(fake.client(t)).AllFiles(t.Context())
 	if err != nil {
 		t.Fatalf("AllFiles: %v", err)
@@ -73,9 +72,13 @@ func TestGitHubSourceIsOnTheGitHubPlatform(t *testing.T) {
 		t.Fatalf("new client: %v", err)
 	}
 	src := testSource(client)
-	fetch, ok := src.Evaluator().Fetch.(*approval.TreeFetcher)
+	once, ok := src.Evaluator().Fetch.(*approval.OnceFetcher)
 	if !ok {
-		t.Fatalf("fetcher = %T, want *approval.TreeFetcher", src.Evaluator().Fetch)
+		t.Fatalf("fetcher = %T, want *approval.OnceFetcher", src.Evaluator().Fetch)
+	}
+	fetch, ok := once.Fetcher.(*approval.TreeFetcher)
+	if !ok {
+		t.Fatalf("once fetcher's fetcher = %T, want *approval.TreeFetcher", once.Fetcher)
 	}
 	if tree, ok := fetch.Tree.(*baseTree); !ok || tree != src.tree || tree.owner != "o" || tree.repo != "r" || tree.sha != "base" {
 		t.Errorf("fetch tree = %#v, want the source's base tree of o/r@base", fetch.Tree)
@@ -184,9 +187,12 @@ func TestGitHubListingErrorSurfacesAndRetries(t *testing.T) {
 	}
 }
 
-// TestGitHubIncompleteFileListing: a pull request with more files than
-// GitHub lists is never presented as complete.
-func TestGitHubIncompleteFileListing(t *testing.T) {
+// TestGitHubLargePullRequestIsListedByTrees: a pull request with more
+// files than GitHub lists, by the event's count or a listing cut short, is
+// listed by comparing the head tree with the merge base's, as completely as
+// GitHub's listing would be, and is warned of as large; one GitHub lists
+// whole is listed the usual way, without a warning.
+func TestGitHubLargePullRequestIsListedByTrees(t *testing.T) {
 	page := func(n int) []*github.CommitFile {
 		files := make([]*github.CommitFile, n)
 		for i := range files {
@@ -194,25 +200,43 @@ func TestGitHubIncompleteFileListing(t *testing.T) {
 		}
 		return files
 	}
+	trees := map[string]map[string]string{
+		"mb":   {"a.go": "1", "b.go": "1", "old/x.go": "x"},
+		"head": {"a.go": "2", "b.go": "1", "new/x.go": "x", "c.go": "c"},
+	}
+	byTrees := []string{"a.go", "c.go", "new/x.go", "old/x.go"}
 	tests := []struct {
 		name     string
 		reported int
 		pages    [][]*github.CommitFile
-		wantErr  bool
+		want     []string
+		listed   bool // the pull request's file listing was read
+		compared bool // the trees were compared instead
 	}{
-		{name: "listing short of the reported count", reported: 5, pages: [][]*github.CommitFile{page(3)}, wantErr: true},
-		{name: "listing matches the reported count", reported: 3, pages: [][]*github.CommitFile{page(3)}},
-		{name: "count unknown, under the cap", pages: [][]*github.CommitFile{page(3)}},
+		{name: "more files reported than GitHub lists", reported: maxListedFiles + 1, want: byTrees, compared: true},
+		{name: "listing short of the reported count", reported: 5, pages: [][]*github.CommitFile{page(3)}, want: byTrees, listed: true, compared: true},
+		{name: "listing matches the reported count", reported: 3, pages: [][]*github.CommitFile{page(3)}, want: []string{"a0", "b0", "c0"}, listed: true},
+		{name: "count unknown, under the cap", pages: [][]*github.CommitFile{page(3)}, want: []string{"a0", "b0", "c0"}, listed: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fake := &fakeGitHub{prPages: tt.pages}
+			fake := &fakeGitHub{prPages: tt.pages, trees: trees, mergeBase: "mb"}
 			pr := testPR()
 			pr.changedFiles = tt.reported
-			src := newSource(pr, fake.client(t), nil, testLogger())
-			_, err := src.ChangedFiles(t.Context())
-			if got := errors.Is(err, review.ErrFileListIncomplete); got != tt.wantErr {
-				t.Fatalf("ChangedFiles err = %v, want ErrFileListIncomplete %v", err, tt.wantErr)
+			src := newSource(pr, fake.client(t), nil, server.CacheScope{}, testLogger())
+			got, err := src.ChangedFiles(t.Context())
+			if err != nil || !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("ChangedFiles = %v, %v; want %v", got, err, tt.want)
+			}
+			if listed := fake.callCount("files") > 0; listed != tt.listed {
+				t.Errorf("listed the files: %v, want %v", listed, tt.listed)
+			}
+			if compared := fake.callCount("compare") > 0; compared != tt.compared {
+				t.Errorf("compared the trees: %v, want %v", compared, tt.compared)
+			}
+			warnings := src.Warnings()
+			if tt.compared && !reflect.DeepEqual(warnings, []string{"large pull request (4 files)"}) || !tt.compared && len(warnings) > 0 {
+				t.Errorf("warnings = %q, want a large pull request warning only when the trees were compared", warnings)
 			}
 		})
 	}
@@ -230,6 +254,18 @@ func TestGitHubReadHead(t *testing.T) {
 	}
 	if _, err := src.ReadHead(t.Context(), "missing/"+rulesfile.FileName); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("ReadHead(missing) err = %v, want fs.ErrNotExist", err)
+	}
+}
+
+// TestGitHubReadHeadOfAnOversizedFile: a proposed file over the rules file
+// limit, which GitHub serves without content past 1 MB, is reported as too
+// large rather than as a read failure.
+func TestGitHubReadHeadOfAnOversizedFile(t *testing.T) {
+	for _, size := range []int{rulesfile.MaxSize + 1, 2_000_000} {
+		fake := &fakeGitHub{head: map[string]string{rulesfile.FileName: strings.Repeat("#", size)}}
+		if _, err := testSource(fake.client(t)).ReadHead(t.Context(), rulesfile.FileName); !errors.Is(err, rulesfile.ErrTooLarge) {
+			t.Errorf("ReadHead of %d bytes: err = %v, want rulesfile.ErrTooLarge", size, err)
+		}
 	}
 }
 
@@ -272,32 +308,78 @@ func TestGitHubReportsOnTheHeadRevision(t *testing.T) {
 	if err := testSource(fake.client(t)).Report(t.Context(), review.Outcome{Verdict: review.Passed, Summary: "ok"}); err != nil {
 		t.Fatalf("Report: %v", err)
 	}
-	if len(fake.statuses) != 1 {
-		t.Fatalf("statuses = %d, want 1", len(fake.statuses))
+	if len(fake.checkRuns) != 1 {
+		t.Fatalf("check runs = %d, want 1", len(fake.checkRuns))
 	}
-	s := fake.statuses[0]
-	if s.GetURL() != "head" || s.GetState() != "success" || s.GetContext() != statusContext {
-		t.Errorf("status = %s on %s under %s, want success on head under %s", s.GetState(), s.GetURL(), s.GetContext(), statusContext)
+	run := fake.checkRuns[0]
+	if run.HeadSHA != "head" || run.Name != checkName || run.GetStatus() != "completed" || run.GetConclusion() != "success" || run.CompletedAt == nil {
+		t.Errorf("check run = %+v, want a completed success named %s on head", run, checkName)
 	}
-	if len(fake.statuses[0].GetDescription()) > maxStatusDescription {
-		t.Errorf("description over GitHub's limit: %q", s.GetDescription())
+	if title := run.GetOutput().GetTitle(); title != "ok" {
+		t.Errorf("title = %q, want the outcome's description", title)
 	}
 }
 
-func TestTruncate(t *testing.T) {
+// TestGitHubKeyIsTheReportedRevision: the key names the repository, as
+// GitHub matches it, and the head revision.
+func TestGitHubKeyIsTheReportedRevision(t *testing.T) {
+	pr := testPR()
+	pr.owner, pr.repo = "Org", "Repo"
+	src := newSource(pr, nil, nil, server.CacheScope{}, testLogger())
+	if got, want := src.Key(), "org/repo@"+pr.headSHA; got != want {
+		t.Errorf("Key = %q, want %q", got, want)
+	}
+}
+
+// TestCheckSummary: the summary lists every item as code and every
+// warning, as many as fit in the limit.
+func TestCheckSummary(t *testing.T) {
 	tests := []struct {
-		s     string
+		name  string
+		o     review.Outcome
 		limit int
 		want  string
 	}{
-		{s: "short", limit: 10, want: "short"},
-		{s: "exactly10!", limit: 10, want: "exactly10!"},
-		{s: "abcdefghijkl", limit: 10, want: "abcdefg…"},
-		{s: "ééééé", limit: 8, want: "éé…"}, // never splits a two-byte é
+		{
+			name:  "summary alone",
+			o:     review.Outcome{Summary: "1 file approved"},
+			limit: maxCheckSummary,
+			want:  "**1 file approved**\n",
+		},
+		{
+			name: "items and warnings",
+			o: review.Outcome{Summary: "2 of 3 files await approval", Items: []string{"alice", "org/backend ×2"},
+				Warnings: []string{"large pull request (4012 files)"}},
+			limit: maxCheckSummary,
+			want: "**2 of 3 files await approval**\n\n- `alice`\n- `org/backend ×2`\n" +
+				"\n**Warnings**\n\n- large pull request (4012 files)\n",
+		},
+		{
+			name:  "an item cannot end its code span or its line",
+			o:     review.Outcome{Summary: "1 invalid proposed rules file", Items: []string{"a`[x](y)`\nb/KIT"}},
+			limit: maxCheckSummary,
+			want:  "**1 invalid proposed rules file**\n\n- `a'[x](y)' b/KIT`\n",
+		},
+		{
+			name:  "items past the limit are counted",
+			o:     review.Outcome{Summary: "s", Items: []string{"a", "b", "c"}},
+			limit: len("**s**\n\n- `a`\n") + len("- … and 1000000 more\n"),
+			want:  "**s**\n\n- `a`\n- … and 2 more\n",
+		},
 	}
 	for _, tt := range tests {
-		if got := truncate(tt.s, tt.limit, "…"); got != tt.want {
-			t.Errorf("truncate(%q, %d) = %q, want %q", tt.s, tt.limit, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got := checkSummary(tt.o, tt.limit)
+			if got != tt.want {
+				t.Errorf("checkSummary = %q, want %q", got, tt.want)
+			}
+			if len(got) > tt.limit {
+				t.Errorf("checkSummary is %d bytes, over the %d limit", len(got), tt.limit)
+			}
+		})
+	}
+	long := checkSummary(review.Outcome{Summary: strings.Repeat("ü", 100_000), Items: make([]string, 100_000)}, maxCheckSummary)
+	if len(long) > maxCheckSummary {
+		t.Errorf("checkSummary of a huge outcome is %d bytes, over GitHub's limit", len(long))
 	}
 }

@@ -61,7 +61,7 @@ func TestFindRulesFiles(t *testing.T) {
 		{"cmd", "HEAD", []string{rulesfile.PathInDir("cmd/app")}},
 	}
 	for _, tc := range tests {
-		got, err := findRulesFiles(tc.pattern, tc.revision)
+		got, err := findRulesFiles(t.Context(), tc.pattern, tc.revision)
 		if err != nil {
 			t.Fatalf("findRulesFiles(%q, %q): %v", tc.pattern, tc.revision, err)
 		}
@@ -69,10 +69,10 @@ func TestFindRulesFiles(t *testing.T) {
 			t.Errorf("findRulesFiles(%q, %q) = %q, want %q", tc.pattern, tc.revision, got, tc.want)
 		}
 	}
-	if _, err := findRulesFiles("(", ""); err == nil {
+	if _, err := findRulesFiles(t.Context(), "(", ""); err == nil {
 		t.Error("an invalid pattern must be an error")
 	}
-	if _, err := findRulesFiles("", "no-such-rev"); err == nil {
+	if _, err := findRulesFiles(t.Context(), "", "no-such-rev"); err == nil {
 		t.Error("an unknown revision must be an error")
 	}
 }

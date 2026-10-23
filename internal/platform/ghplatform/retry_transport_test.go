@@ -2,29 +2,45 @@ package ghplatform
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/alphaeron/kit/internal/review"
 )
 
 func TestRetryTransport(t *testing.T) {
+	// A real time (deadlines are real), whole so reset times are exact.
+	now := time.Now().Truncate(time.Second)
+	primary := func(resetIn time.Duration) map[string]string {
+		return map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": strconv.FormatInt(now.Add(resetIn).Unix(), 10)}
+	}
+	retryAfter := func(secs string) map[string]string { return map[string]string{"Retry-After": secs} }
 	tests := []struct {
 		name      string
-		responses []int  // status codes, in order
-		retryHdr  string // Retry-After on rate-limited responses
+		responses []int             // status codes, in order
+		limitHdr  map[string]string // headers on rate-limited responses
+		deadline  time.Duration     // the request's deadline from now; 0 for none
 		wantCalls int
-		wantCode  int
+		wantCode  int           // the response's status, when there is one
+		wantWait  time.Duration // each wait the transport makes
 	}{
-		{name: "secondary rate limit is retried", responses: []int{403, 200}, retryHdr: "1", wantCalls: 2, wantCode: 200},
-		{name: "429 is retried", responses: []int{429, 429, 200}, retryHdr: "1", wantCalls: 3, wantCode: 200},
-		{name: "403 without Retry-After is not", responses: []int{403, 200}, wantCalls: 1, wantCode: 403},
-		{name: "404 is not", responses: []int{404, 200}, retryHdr: "1", wantCalls: 1, wantCode: 404},
-		{name: "a long Retry-After is not waited", responses: []int{403, 200}, retryHdr: "3600", wantCalls: 1, wantCode: 403},
-		{name: "retries are bounded", responses: []int{403, 403, 403, 403, 403}, retryHdr: "1", wantCalls: maxRetries + 1, wantCode: 403},
+		{name: "secondary rate limit is retried", responses: []int{403, 200}, limitHdr: retryAfter("1"), wantCalls: 2, wantCode: 200, wantWait: time.Second},
+		{name: "429 is retried", responses: []int{429, 429, 200}, limitHdr: retryAfter("1"), wantCalls: 3, wantCode: 200, wantWait: time.Second},
+		{name: "403 without a limit header is not", responses: []int{403, 200}, wantCalls: 1, wantCode: 403},
+		{name: "404 is not", responses: []int{404, 200}, limitHdr: retryAfter("1"), wantCalls: 1, wantCode: 404},
+		{name: "a long Retry-After fails as rate limited", responses: []int{403, 200}, limitHdr: retryAfter("3600"), wantCalls: 1},
+		{name: "retries are bounded", responses: []int{403, 403, 403, 403, 403}, limitHdr: retryAfter("1"), wantCalls: maxRetries + 1, wantWait: time.Second},
+		{name: "an exhausted primary limit is waited to its reset", responses: []int{403, 200}, limitHdr: primary(30 * time.Second), deadline: time.Minute, wantCalls: 2, wantCode: 200, wantWait: 31 * time.Second},
+		{name: "a primary reset past the deadline fails as rate limited", responses: []int{403, 200}, limitHdr: primary(30 * time.Minute), deadline: time.Minute, wantCalls: 1},
+		{name: "a primary reset is waited up to the cap without a deadline", responses: []int{429, 200}, limitHdr: primary(time.Minute), wantCalls: 2, wantCode: 200, wantWait: time.Minute + time.Second},
+		{name: "a primary reset past the cap fails as rate limited", responses: []int{429, 200}, limitHdr: primary(time.Hour), wantCalls: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -35,8 +51,10 @@ func TestRetryTransport(t *testing.T) {
 					t.Errorf("request body = %q, want it replayed intact", body)
 				}
 				code := tt.responses[calls.Add(1)-1]
-				if tt.retryHdr != "" && code != 200 {
-					w.Header().Set("Retry-After", tt.retryHdr)
+				if code != 200 {
+					for k, v := range tt.limitHdr {
+						w.Header().Set(k, v)
+					}
 				}
 				w.WriteHeader(code)
 			}))
@@ -45,18 +63,38 @@ func TestRetryTransport(t *testing.T) {
 			client := &http.Client{Transport: &retryTransport{
 				base: http.DefaultTransport,
 				wait: func(_ context.Context, d time.Duration) error { waited = append(waited, d); return nil },
+				now:  func() time.Time { return now },
 			}}
-			resp, err := client.Post(srv.URL, "text/plain", strings.NewReader("payload"))
-			if err != nil {
-				t.Fatalf("Post: %v", err)
+			ctx := t.Context()
+			if tt.deadline > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, now.Add(tt.deadline))
+				defer cancel()
 			}
-			_ = resp.Body.Close()
-			if int(calls.Load()) != tt.wantCalls || resp.StatusCode != tt.wantCode {
-				t.Errorf("calls, status = %d, %d; want %d, %d", calls.Load(), resp.StatusCode, tt.wantCalls, tt.wantCode)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, strings.NewReader("payload"))
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+			resp, err := client.Do(req)
+			switch {
+			case tt.wantCode == 0:
+				if !errors.Is(err, review.ErrRateLimited) {
+					t.Errorf("err = %v, want review.ErrRateLimited", err)
+				}
+			case err != nil:
+				t.Fatalf("Do: %v", err)
+			default:
+				_ = resp.Body.Close()
+				if resp.StatusCode != tt.wantCode {
+					t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantCode)
+				}
+			}
+			if int(calls.Load()) != tt.wantCalls {
+				t.Errorf("calls = %d, want %d", calls.Load(), tt.wantCalls)
 			}
 			for _, d := range waited {
-				if d != time.Second {
-					t.Errorf("waited %s, want the Retry-After of 1s", d)
+				if d != tt.wantWait {
+					t.Errorf("waited %s, want %s", d, tt.wantWait)
 				}
 			}
 		})

@@ -3,25 +3,22 @@ package server
 import (
 	"context"
 	"sync"
-	"time"
 )
 
-// pool runs queued reviews on a fixed number of workers. Each review runs
-// under a context derived from the pool's lifetime context with the review
-// timeout, so cancelling the lifetime context cancels every review in
-// flight and no review runs unbounded.
+// pool runs queued work on a fixed number of workers, under the pool's
+// lifetime context: cancelling it cancels the work in flight. Each item is
+// a pull request key (see reviews), which the worker drains.
 type pool struct {
-	ctx     context.Context
-	jobs    chan job
-	timeout time.Duration
-	run     func(context.Context, job)
-	wg      sync.WaitGroup
+	ctx  context.Context
+	jobs chan string
+	run  func(context.Context, string)
+	wg   sync.WaitGroup
 }
 
-// newPool starts workers running run on submitted jobs, until ctx is done.
-// Up to queue jobs wait for a worker.
-func newPool(ctx context.Context, workers, queue int, timeout time.Duration, run func(context.Context, job)) *pool {
-	p := &pool{ctx: ctx, jobs: make(chan job, queue), timeout: timeout, run: run}
+// newPool starts workers running run on submitted keys, until ctx is done.
+// Up to queue keys wait for a worker.
+func newPool(ctx context.Context, workers, queue int, run func(context.Context, string)) *pool {
+	p := &pool{ctx: ctx, jobs: make(chan string, queue), run: run}
 	p.wg.Add(workers)
 	for range workers {
 		go p.work()
@@ -29,35 +26,33 @@ func newPool(ctx context.Context, workers, queue int, timeout time.Duration, run
 	return p
 }
 
-// submit queues j without blocking; false when the queue is full or the
+// submit queues key without blocking; false when the queue is full or the
 // pool is stopping.
-func (p *pool) submit(j job) bool {
+func (p *pool) submit(key string) bool {
 	if p.ctx.Err() != nil {
 		return false
 	}
 	select {
-	case p.jobs <- j:
+	case p.jobs <- key:
 		return true
 	default:
 		return false
 	}
 }
 
-// wait blocks until every worker has stopped. Jobs still queued when the
+// wait blocks until every worker has stopped. Keys still queued when the
 // lifetime context ends are dropped.
 func (p *pool) wait() { p.wg.Wait() }
 
-// work runs jobs until the lifetime context is done.
+// work runs keys until the lifetime context is done.
 func (p *pool) work() {
 	defer p.wg.Done()
 	for {
 		select {
 		case <-p.ctx.Done():
 			return
-		case j := <-p.jobs:
-			ctx, cancel := context.WithTimeout(p.ctx, p.timeout)
-			p.run(ctx, j)
-			cancel()
+		case key := <-p.jobs:
+			p.run(p.ctx, key)
 		}
 	}
 }

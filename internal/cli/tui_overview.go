@@ -14,12 +14,15 @@ import (
 // repoOverview is the home page's root row: the repository at a glance,
 // and links to the pages that act on what it shows. A part that cannot be
 // computed is reported in its own field rather than hiding the rest.
+//
+// Every part reads one snapshot of the repository through one engine, so
+// the rules are fetched, and the working tree and HEAD listed, once.
 func repoOverview(ctx context.Context) (tui.Detail, error) {
-	repo, err := getRepo()
+	repo, engine, err := openLocal(quietLog)
 	if err != nil {
 		return tui.Detail{}, err
 	}
-	s, err := openRulesSet(ctx)
+	s, err := loadRulesSet(ctx, repo, engine)
 	if err != nil {
 		return tui.Detail{}, err
 	}
@@ -44,7 +47,7 @@ func repoOverview(ctx context.Context) (tui.Detail, error) {
 		d.Fields = append(d.Fields, tui.Field{Label: "Validation", Value: "valid", Badge: tui.BadgeOK})
 	}
 
-	if report, _, err := runCoverage(ctx, review.Options{}); err != nil {
+	if report, _, err := coverageWith(ctx, engine, review.Options{}); err != nil {
 		d.Fields = append(d.Fields, failed("Coverage", err))
 	} else {
 		badge := tui.BadgeOK
@@ -54,7 +57,7 @@ func repoOverview(ctx context.Context) (tui.Detail, error) {
 		d.Fields = append(d.Fields, tui.Field{Label: "Coverage", Value: fmt.Sprintf("%.1f%% of %d files", report.Percent, report.Universe), Badge: badge})
 	}
 
-	if state, err := runReview(ctx, reviewOptions{changed: true}, quietLog); err != nil {
+	if state, err := reviewWith(ctx, engine, reviewOptions{changed: true}); err != nil {
 		d.Fields = append(d.Fields, failed("Changed", err))
 	} else {
 		d.Fields = append(d.Fields,

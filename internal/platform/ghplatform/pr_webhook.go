@@ -37,6 +37,7 @@ var (
 type PRWebhook struct {
 	secret []byte
 	auth   *appAuth
+	cache  *server.RepoCache // nil keeps nothing
 	log    *slog.Logger
 
 	mu       sync.Mutex
@@ -45,15 +46,19 @@ type PRWebhook struct {
 
 var _ server.PRWebhook = (*PRWebhook)(nil)
 
-// installation is the client and resolver of one installation of the app.
+// installation is the client, resolver, and cache of one installation of
+// the app.
 type installation struct {
 	client   *github.Client
 	resolver *ApproverResolver
+	cache    server.CacheScope
 }
 
 // NewPRWebhook builds the GitHub platform from its configuration section,
-// which must Validate. log may be nil (defaults to slog.Default()).
-func NewPRWebhook(cfg config.GitHub, log *slog.Logger) (*PRWebhook, error) {
+// which must Validate. Each installation reads base trees and rules files
+// through repo, the server's repository cache, keyed by installation; nil
+// keeps nothing. log may be nil (defaults to slog.Default()).
+func NewPRWebhook(cfg config.GitHub, repo *server.RepoCache, log *slog.Logger) (*PRWebhook, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -74,6 +79,7 @@ func NewPRWebhook(cfg config.GitHub, log *slog.Logger) (*PRWebhook, error) {
 			transport: &retryTransport{base: apiTransport(cfg.APITimeout())},
 			now:       time.Now,
 		},
+		cache:    repo,
 		log:      log,
 		installs: map[int64]*installation{},
 	}, nil
@@ -176,10 +182,10 @@ func (p *PRWebhook) PullRequest(event string, body []byte) (server.PullRequest, 
 	if err != nil {
 		return nil, false, err
 	}
-	return newSource(gh, in.client, in.resolver, p.log), true, nil
+	return newSource(gh, in.client, in.resolver, in.cache, p.log), true, nil
 }
 
-// installation returns the client and resolver of an installation,
+// installation returns the client, resolver, and cache of an installation,
 // creating them on first use.
 func (p *PRWebhook) installation(id int64) (*installation, error) {
 	p.mu.Lock()
@@ -191,7 +197,11 @@ func (p *PRWebhook) installation(id int64) (*installation, error) {
 	if err != nil {
 		return nil, fmt.Errorf("client for installation %d: %w", id, err)
 	}
-	in := &installation{client: client, resolver: NewApproverResolver(client)}
+	in := &installation{client: client, resolver: NewApproverResolver(client), cache: p.cache.Scope(installationScope(id))}
 	p.installs[id] = in
 	return in, nil
 }
+
+// installationScope names an installation's scope of the server's cache:
+// an installation reads only the repositories it is installed on.
+func installationScope(id int64) string { return fmt.Sprintf("github/installation/%d", id) }

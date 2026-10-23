@@ -42,7 +42,7 @@ func testPRWebhook(t *testing.T, fake *fakeGitHub) (*PRWebhook, *rsa.PrivateKey)
 		PrivateKey:    string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})),
 		WebhookSecret: "s3cret",
 		APIURL:        fake.serve(t),
-	}, testLogger())
+	}, nil, testLogger())
 	if err != nil {
 		t.Fatalf("NewPRWebhook: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestAPITransportKeepsTheDefaults(t *testing.T) {
 }
 
 func TestNewPRWebhookValidatesItsSection(t *testing.T) {
-	if _, err := NewPRWebhook(config.GitHub{AppID: "99"}, nil); err == nil {
+	if _, err := NewPRWebhook(config.GitHub{AppID: "99"}, nil, nil); err == nil {
 		t.Error("NewPRWebhook with an incomplete section succeeded, want an error")
 	}
 }

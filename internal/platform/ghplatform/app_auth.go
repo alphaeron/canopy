@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -37,8 +38,17 @@ type appAuth struct {
 	transport http.RoundTripper
 	now       func() time.Time
 
-	mu     sync.Mutex
-	tokens map[int64]*github.InstallationToken
+	mu        sync.Mutex
+	tokens    map[int64]*github.InstallationToken
+	exchanges map[int64]*exchange // the exchange in flight per installation
+}
+
+// exchange is one token exchange in flight. done is closed once err is
+// set, and token on success.
+type exchange struct {
+	done  chan struct{}
+	token *github.InstallationToken
+	err   error
 }
 
 // jwt is a fresh App JWT (RS256), authenticating as the app itself.
@@ -63,30 +73,82 @@ func (a *appAuth) jwt() (string, error) {
 }
 
 // token returns installation's access token, exchanging an App JWT for a
-// new one when there is none or it is about to expire. The lock is held
-// across the exchange, so concurrent reviews share one.
+// new one when there is none or it is about to expire. The lock guards only
+// the maps, never a request: an installation has at most one exchange in
+// flight, whose result its concurrent callers share, so one installation's
+// exchange never holds up another's requests. A caller waiting on another's
+// exchange stops when its own ctx is done, and makes its own exchange when
+// that one was cut short by its caller's ctx.
 func (a *appAuth) token(ctx context.Context, installation int64) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if t, ok := a.tokens[installation]; ok && a.now().Add(tokenRenewal).Before(t.GetExpiresAt().Time) {
-		return t.GetToken(), nil
+	for {
+		a.mu.Lock()
+		if t, ok := a.tokens[installation]; ok && a.now().Add(tokenRenewal).Before(t.GetExpiresAt().Time) {
+			a.mu.Unlock()
+			return t.GetToken(), nil
+		}
+		ex, inFlight := a.exchanges[installation]
+		if !inFlight {
+			ex = &exchange{done: make(chan struct{})}
+			if a.exchanges == nil {
+				a.exchanges = map[int64]*exchange{}
+			}
+			a.exchanges[installation] = ex
+		}
+		a.mu.Unlock()
+
+		if !inFlight {
+			a.runExchange(ctx, installation, ex)
+			if ex.err != nil {
+				return "", ex.err
+			}
+			return ex.token.GetToken(), nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-ex.done:
+		}
+		switch {
+		case ex.err == nil:
+			return ex.token.GetToken(), nil
+		case errors.Is(ex.err, context.Canceled), errors.Is(ex.err, context.DeadlineExceeded):
+			continue // the exchange's caller gave up; this caller has not
+		default:
+			return "", ex.err
+		}
 	}
+}
+
+// runExchange makes ex, keeping its token on success, and ends it: removed
+// from the exchanges in flight, and done closed for its waiters.
+func (a *appAuth) runExchange(ctx context.Context, installation int64, ex *exchange) {
+	ex.token, ex.err = a.exchangeToken(ctx, installation)
+	a.mu.Lock()
+	delete(a.exchanges, installation)
+	if ex.err == nil {
+		if a.tokens == nil {
+			a.tokens = map[int64]*github.InstallationToken{}
+		}
+		a.tokens[installation] = ex.token
+	}
+	a.mu.Unlock()
+	close(ex.done)
+}
+
+// exchangeToken exchanges a fresh App JWT for an installation token.
+func (a *appAuth) exchangeToken(ctx context.Context, installation int64) (*github.InstallationToken, error) {
 	client, err := a.client(&bearer{token: func(context.Context) (string, error) { return a.jwt() }, base: a.transport})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	t, _, err := client.Apps.CreateInstallationToken(ctx, installation, nil)
 	if err != nil {
-		return "", fmt.Errorf("create installation %d token: %w", installation, err)
+		return nil, fmt.Errorf("create installation %d token: %w", installation, err)
 	}
 	if t.GetToken() == "" {
-		return "", fmt.Errorf("create installation %d token: empty token", installation)
+		return nil, fmt.Errorf("create installation %d token: empty token", installation)
 	}
-	if a.tokens == nil {
-		a.tokens = map[int64]*github.InstallationToken{}
-	}
-	a.tokens[installation] = t
-	return t.GetToken(), nil
+	return t, nil
 }
 
 // installationClient is a client acting as the app's installation: each

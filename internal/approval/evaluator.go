@@ -38,7 +38,10 @@ type Evaluator struct {
 // the change described by in and returns the complete review state. Every
 // error encountered along the way is accumulated in the returned state and
 // forces the final approval status to StatusError, so the caller can block
-// the review and surface the full failure history to the user.
+// the review and surface the full failure history to the user. A rules file
+// that cannot be read or parsed is such an error, but the review still runs
+// over the rules that loaded, so it reports every other error too; only a
+// fetch that loaded no rules at all (a nil set) stops it.
 func (s *Evaluator) Execute(ctx context.Context, in ReviewInput, files []string) *ReviewState {
 	log := s.log()
 	events := NewReviewStateBuilder()
@@ -51,19 +54,29 @@ func (s *Evaluator) Execute(ctx context.Context, in ReviewInput, files []string)
 			"component", "approval", "phase", "fetch", "error", err)
 		events.AddEvent("fetch", "", "", "", StatusError, err.Error())
 		events.AddError(err)
-		return events.WithFiles(map[string]FileState{}).
-			WithOverall(StatusError).
-			Build(err)
+		if repoRules == nil {
+			return events.WithFiles(map[string]FileState{}).
+				WithOverall(StatusError).
+				Build(err)
+		}
+	} else {
+		events.AddEvent("fetch", "", "", "", StatusDone,
+			fmt.Sprintf("fetched rules from %d rules file(s)", len(repoRules)))
 	}
-	events.AddEvent("fetch", "", "", "", StatusDone,
-		fmt.Sprintf("fetched rules from %d rules file(s)", len(repoRules)))
 	log.Info("review: rules fetched",
 		"component", "approval", "phase", "fetch", "rules_files", len(repoRules))
 
 	// Sift phase: build the per-file rule chains from the fetched rules.
 	log.Info("review: sifting rules for files",
 		"component", "approval", "phase", "sift", "files", len(files))
-	ruleChain := GetFileRuleChain(repoRules, files, events, log)
+	ruleChain, err := GetFileRuleChain(ctx, repoRules, files, events, log)
+	if err != nil {
+		events.AddEvent("sift", "", "", "", StatusError, err.Error())
+		events.AddError(err)
+		return events.WithFiles(map[string]FileState{}).
+			WithOverall(StatusError).
+			Build(err)
+	}
 
 	// Approve phase: evaluate the rule chains and assemble the final state.
 	reviewState := ruleChain.Execute(ctx, in, s.Resolver, events, log)

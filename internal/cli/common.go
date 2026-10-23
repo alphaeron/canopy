@@ -16,11 +16,20 @@ import (
 // hosted platform from the CLI only changes this function. log may be nil
 // (slog.Default()); the TUI passes quietLog.
 func openEngine(log *slog.Logger) (*review.Engine, error) {
+	_, engine, err := openLocal(log)
+	return engine, err
+}
+
+// openLocal is openEngine with the repository it reads. The engine reads the
+// repository as a snapshot (see gitrepo.Repository), fetching its rules
+// once, so the views one page builds from it share one read of the
+// working tree.
+func openLocal(log *slog.Logger) (*gitRepo, *review.Engine, error) {
 	repo, err := getRepo()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return review.New(local.NewSource(repo, log), log), nil
+	return repo, review.New(local.NewSource(repo, log), log), nil
 }
 
 // rulesFileFlag registers the shared --file flag on a command that changes a

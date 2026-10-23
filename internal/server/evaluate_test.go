@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"testing"
 
 	"github.com/alphaeron/kit/internal/approval"
@@ -20,12 +21,12 @@ func TestEvaluate(t *testing.T) {
 		{
 			name:  "approved",
 			setup: func(pr *stubPullRequest) { pr.input = approval.ReviewInput{Approvers: []string{"lead"}} },
-			want:  review.Outcome{Verdict: review.Passed, Summary: "all 1 file(s) approved"},
+			want:  review.Outcome{Verdict: review.Passed, Summary: "1 file approved"},
 		},
 		{
 			name:  "awaiting approval",
 			setup: func(pr *stubPullRequest) {},
-			want:  review.Outcome{Verdict: review.Pending, Summary: "1 of 1 file(s) awaiting approval"},
+			want:  review.Outcome{Verdict: review.Pending, Summary: "1 file awaits approval", Items: []string{"lead"}},
 		},
 		{
 			name: "an invalid proposed rules file fails even when approved",
@@ -34,7 +35,7 @@ func TestEvaluate(t *testing.T) {
 				pr.changed = []string{"main.go", "old/KIT", "svc/KIT"}
 				pr.head = map[string]string{"svc/KIT": "- \".*\":\n  name: Svc\n  approvers:\n    - target: org/team\n"}
 			},
-			want: review.Outcome{Verdict: review.Failed, Summary: "invalid proposed rules file(s): svc/KIT"},
+			want: review.Outcome{Verdict: review.Failed, Summary: "1 invalid proposed rules file", Items: []string{"svc/KIT"}},
 		},
 		{
 			name:  "too many changed files",
@@ -47,6 +48,19 @@ func TestEvaluate(t *testing.T) {
 			want:  review.Outcome{Verdict: review.Errored, Summary: "repository too large to evaluate completely"},
 		},
 		{
+			name: "warnings go with the outcome without changing it",
+			setup: func(pr *stubPullRequest) {
+				pr.input = approval.ReviewInput{Approvers: []string{"lead"}}
+				pr.warnings = []string{"large pull request (3500 files)"}
+			},
+			want: review.Outcome{Verdict: review.Passed, Summary: "1 file approved", Warnings: []string{"large pull request (3500 files)"}},
+		},
+		{
+			name:  "rate limited",
+			setup: func(pr *stubPullRequest) { pr.changedErr = fmt.Errorf("listing: %w", review.ErrRateLimited) },
+			want:  review.Outcome{Verdict: review.Errored, Summary: "rate limited by the platform; try again later"},
+		},
+		{
 			name:  "a platform failure is not quoted",
 			setup: func(pr *stubPullRequest) { pr.changedErr = errors.New("GET https://api/x?token=secret: 500") },
 			want:  review.Outcome{Verdict: review.Errored, Summary: "review could not run; see the server logs"},
@@ -56,7 +70,7 @@ func TestEvaluate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			pr := newStubPullRequest()
 			tt.setup(pr)
-			if got := evaluate(t.Context(), pr, slog.New(slog.DiscardHandler)); got != tt.want {
+			if got := evaluate(t.Context(), pr, slog.New(slog.DiscardHandler)); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("outcome = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -99,6 +113,12 @@ func TestValidateProposed(t *testing.T) {
 		if len(got[p]) != 0 {
 			t.Errorf("%s: violations %v, want none", p, got[p])
 		}
+	}
+
+	tooLarge := fmt.Errorf("read big/KIT: %w", rulesfile.ErrTooLarge)
+	pr.headErr = tooLarge
+	if got, err := validateProposed(t.Context(), pr, []string{"big/KIT"}); err != nil || !errors.Is(got["big/KIT"][0], rulesfile.ErrTooLarge) {
+		t.Errorf("validateProposed with an oversized file = %v, %v; want it as a violation", got, err)
 	}
 
 	unreadable := errors.New("unreadable")

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	git "github.com/go-git/go-git/v6"
@@ -78,8 +79,12 @@ func TestLocalNoCommitYieldsEmptyUniverses(t *testing.T) {
 // tree's rules and resolves approvers as themselves.
 func TestLocalSourceIsOnTheLocalPlatform(t *testing.T) {
 	rev := NewSource(nil, nil).Evaluator()
-	if fetch, ok := rev.Fetch.(*approval.TreeFetcher); !ok {
-		t.Errorf("fetcher = %T, want *approval.TreeFetcher", rev.Fetch)
+	once, ok := rev.Fetch.(*approval.OnceFetcher)
+	if !ok {
+		t.Fatalf("fetcher = %T, want *approval.OnceFetcher", rev.Fetch)
+	}
+	if fetch, ok := once.Fetcher.(*approval.TreeFetcher); !ok {
+		t.Errorf("once fetcher's fetcher = %T, want *approval.TreeFetcher", once.Fetcher)
 	} else if _, ok := fetch.Tree.(*worktree); !ok {
 		t.Errorf("fetch tree = %T, want the working tree", fetch.Tree)
 	}
@@ -120,5 +125,45 @@ func TestLocalChangedFilesListsBothPathsOfARename(t *testing.T) {
 				t.Errorf("ChangedFiles = %v, want %v", changed, want)
 			}
 		})
+	}
+}
+
+// TestLocalDiffContentOfBinaryAndLargeFiles: like git, a changed binary
+// file is reported as differing rather than line-diffed, and a file over the
+// diff limit is compared without diffing: reported when it changed, empty
+// when it did not.
+func TestLocalDiffContentOfBinaryAndLargeFiles(t *testing.T) {
+	large := strings.Repeat("line\n", gitrepo.MaxDiffBytes/5+1)
+	dir, repo := newScratchRepo(t, map[string]string{
+		"img.png":   "PNG\x00old",
+		"big.txt":   large,
+		"same.txt":  large,
+		"small.txt": "a\n",
+	})
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile %s: %v", path, err)
+		}
+	}
+	write("img.png", "PNG\x00new")
+	write("big.txt", large+"more\n")
+	write("small.txt", "b\n")
+	src := NewSource(repo, nil)
+
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "img.png", want: gitrepo.BinaryDiff("img.png")},
+		{path: "big.txt", want: gitrepo.LargeFileDiff("big.txt", int64(len(large)+5))},
+		{path: "same.txt", want: ""},
+		{path: "small.txt", want: "--- a/small.txt\n+++ b/small.txt\n@@ -1,1 +1,1 @@\n-a\n+b\n"},
+	}
+	for _, tt := range tests {
+		got, err := src.DiffContent(t.Context(), tt.path)
+		if err != nil || got != tt.want {
+			t.Errorf("DiffContent(%s) = %q, %v; want %q", tt.path, got, err, tt.want)
+		}
 	}
 }

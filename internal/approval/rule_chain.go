@@ -4,11 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 
+	"github.com/alphaeron/kit/internal/parallel"
 	"github.com/alphaeron/kit/internal/rulesfile"
 )
 
-// RuleChain maps each changed file to its own localized, ordered rule pipeline.
+// RuleChain maps each changed file to its own localized, ordered rule
+// pipeline. Files that match the same rules may share one []RuleLayer, so a
+// chain's layers must not be modified.
 type RuleChain struct {
 	// Key: File path (e.g., "/src/api/v1/auth.go")
 	// Value: Topologically ordered rules from child up to the allowed parent boundary
@@ -23,6 +28,12 @@ type RuleChain struct {
 // internal/platform builds its evaluator with one) and is required. Every name
 // in the review is compared in the resolver's canonical form, and each
 // target is resolved at most once.
+//
+// Evaluating a chain depends on its layers, not on the file's path, so
+// files that share a []RuleLayer (as GetFileRuleChain's do) are evaluated
+// once: they share the resulting layer and approver states, which must not
+// be modified, and each file gets its own copy of the chain's trace. A
+// failure inside a shared chain is logged once, for the first file.
 func (rc *RuleChain) Execute(
 	ctx context.Context,
 	in ReviewInput,
@@ -32,94 +43,32 @@ func (rc *RuleChain) Execute(
 ) *ReviewState {
 	resolver = newReviewResolver(resolver)
 	p := newParticipants(in, resolver.Canonical)
+	rc.prefetch(ctx, p, resolver)
 	log.Info("approve: evaluating rule chain",
 		"component", "rule_chain", "phase", "approve", "files", len(rc.FileChains))
 
-	// Create initial files map for review state
-	files := make(map[string]FileState)
+	files := make(map[string]FileState, len(rc.FileChains))
+	evaluated := map[chainKey]*chainResult{}
 	var unsatisfiableFiles []string
 
 	for file, layers := range rc.FileChains {
-		// This slice tracks the cumulative list of required approvers as we
-		// descend the tree.
-		var runningRequiredApprovers RuleTargets
-
-		// Process layers chronologically: from Root (Index 0) down to
-		//                                 Target Directory (Index N).
-		// Each layer consumes the downstream target state and returns only
-		// its own LayerState; the chain reads Required from that state to
-		// feed the next layer, so it never reaches into the rule or target
-		// levels itself.
-		fileLayers := make([]LayerState, 0, len(layers))
-		for _, layer := range layers {
-			layerState := layer.Execute(
-				ctx, runningRequiredApprovers, p, events, resolver, file, log,
-			)
-			runningRequiredApprovers = layerState.Required
-
-			events.AddEvent("approve", file, layer.DirectoryPath, "", layerState.Status,
-				fmt.Sprintf("Processed %d rule(s) in layer %s", len(layerState.Rules), layer.DirectoryPath))
-			log.Info("approve: processed rule layer",
-				"component", "rule_chain", "phase", "approve",
-				"file", file, "layer", layer.DirectoryPath,
-				"rules", len(layerState.Rules), "status", layerState.Status)
-
-			fileLayers = append(fileLayers, layerState)
+		if err := ctx.Err(); err != nil {
+			events.AddError(fmt.Errorf("approve: %w", err))
+			break
 		}
-
-		// If sifting produced no matching rules, or every rule yielded or
-		// combined into an empty set, fall back to the repository owners.
-		if len(runningRequiredApprovers) == 0 {
-			note := "No approvers found after processing all layers; falling back to repository owners"
-			if len(layers) == 0 {
-				note = "No matching rules found for file; falling back to repository owners"
-			}
-			events.AddEvent("approve", file, "", "", StatusUnresolved, note)
-			fs := rc.fallbackFileState(ctx, p, resolver, file, fileLayers, events, log)
-			if fs.Status == StatusError {
-				unsatisfiableFiles = append(unsatisfiableFiles, file)
-			}
-			files[file] = fs
-			continue
+		r, ok := evaluated[keyOf(layers)]
+		if !ok {
+			r = rc.evaluate(ctx, layers, p, resolver, file, log)
+			evaluated[keyOf(layers)] = r
 		}
-
-		// Build required approver states with proper per-target satisfaction
-		// tracking.
-		var requiredApprovers []ApproverTargetState
-		for _, rt := range runningRequiredApprovers {
-			// The rule target carries its own rule-specific state;
-			// resolution, counting, and the author / self-approval rule all
-			// live on the rule-target type.
-			state := rt.Execute(ctx, p, resolver)
-			if state.Status == StatusUnresolved {
-				resolveErr := fmt.Errorf(
-					"approver target %q for file %q: %s",
-					rt.Target, file, state.Reason)
-				events.AddError(resolveErr)
-				log.Error("approve: could not resolve approver target",
-					"component", "rule_chain", "phase", "approve",
-					"file", file, "target", rt.Target, "error", resolveErr)
-			}
-			requiredApprovers = append(requiredApprovers, *state)
+		fs := r.fileState(file, events)
+		if fs.UsedFallback && fs.Status == StatusError {
+			unsatisfiableFiles = append(unsatisfiableFiles, file)
 		}
-
-		// Determine file-level status from the per-target states the chain
-		// just assembled. An unresolvable target escalates the file to
-		// StatusUnresolved; any unsatisfied target yields
-		// StatusMissingApprovers.
-		fileStatus := statusFromApproverStates(requiredApprovers)
-
-		log.Info("approve: file evaluated",
+		log.Debug("approve: file evaluated",
 			"component", "rule_chain", "phase", "approve",
-			"file", file, "status", fileStatus, "required", len(requiredApprovers))
-
-		files[file] = FileState{
-			Path:         file,
-			Layers:       fileLayers,
-			Required:     requiredApprovers,
-			Status:       fileStatus,
-			UsedFallback: false,
-		}
+			"file", file, "status", fs.Status, "required", len(fs.Required))
+		files[file] = fs
 	}
 
 	// Determine overall status across all files.
@@ -149,6 +98,183 @@ func (rc *RuleChain) Execute(
 		Build(overallErr)
 }
 
+// chainKey identifies a chain by its layers' backing array: files whose
+// chains share one hold the same layers. Distinct arrays with equal
+// contents are merely evaluated twice.
+type chainKey struct {
+	first *RuleLayer
+	n     int
+}
+
+func keyOf(layers []RuleLayer) chainKey {
+	if len(layers) == 0 {
+		return chainKey{}
+	}
+	return chainKey{first: &layers[0], n: len(layers)}
+}
+
+// chainResult is a chain's evaluation, shared by every file with that
+// chain: the file state without its path, and the trace evaluating it
+// recorded, to repeat for each file.
+type chainResult struct {
+	layers   []LayerState
+	required []ApproverTargetState
+	status   Status
+	fallback bool
+	trace    *ReviewStateBuilder
+}
+
+// evaluate evaluates layers, recording its trace under file's path.
+func (rc *RuleChain) evaluate(
+	ctx context.Context,
+	layers []RuleLayer,
+	p participants,
+	resolver ApproverResolver,
+	file string,
+	log *slog.Logger,
+) *chainResult {
+	trace := NewReviewStateBuilder()
+	// This slice tracks the cumulative list of required approvers as we
+	// descend the tree.
+	var runningRequiredApprovers RuleTargets
+
+	// Process layers chronologically: from Root (Index 0) down to
+	//                                 Target Directory (Index N).
+	// Each layer consumes the downstream target state and returns only
+	// its own LayerState; the chain reads Required from that state to
+	// feed the next layer, so it never reaches into the rule or target
+	// levels itself.
+	fileLayers := make([]LayerState, 0, len(layers))
+	for _, layer := range layers {
+		layerState := layer.Execute(
+			ctx, runningRequiredApprovers, p, trace, resolver, file, log,
+		)
+		runningRequiredApprovers = layerState.Required
+
+		trace.AddEvent("approve", file, layer.DirectoryPath, "", layerState.Status,
+			fmt.Sprintf("Processed %d rule(s) in layer %s", len(layerState.Rules), layer.DirectoryPath))
+		log.Debug("approve: processed rule layer",
+			"component", "rule_chain", "phase", "approve",
+			"file", file, "layer", layer.DirectoryPath,
+			"rules", len(layerState.Rules), "status", layerState.Status)
+
+		fileLayers = append(fileLayers, layerState)
+	}
+
+	// If sifting produced no matching rules, or every rule yielded or
+	// combined into an empty set, fall back to the repository owners.
+	if len(runningRequiredApprovers) == 0 {
+		note := "No approvers found after processing all layers; falling back to repository owners"
+		if len(layers) == 0 {
+			note = "No matching rules found for file; falling back to repository owners"
+		}
+		trace.AddEvent("approve", file, "", "", StatusUnresolved, note)
+		return rc.fallbackResult(ctx, p, resolver, file, fileLayers, trace, log)
+	}
+
+	// Build required approver states with proper per-target satisfaction
+	// tracking.
+	var requiredApprovers []ApproverTargetState
+	for _, rt := range runningRequiredApprovers {
+		// The rule target carries its own rule-specific state;
+		// resolution, counting, and the author / self-approval rule all
+		// live on the rule-target type.
+		state := rt.Execute(ctx, p, resolver)
+		if state.Status == StatusUnresolved {
+			log.Error("approve: could not resolve approver target",
+				"component", "rule_chain", "phase", "approve",
+				"file", file, "target", rt.Target, "reason", state.Reason)
+		}
+		requiredApprovers = append(requiredApprovers, *state)
+	}
+
+	// Determine file-level status from the per-target states the chain
+	// just assembled. An unresolvable target escalates the file to
+	// StatusUnresolved; any unsatisfied target yields
+	// StatusMissingApprovers.
+	return &chainResult{
+		layers:   fileLayers,
+		required: requiredApprovers,
+		status:   statusFromApproverStates(requiredApprovers),
+		trace:    trace,
+	}
+}
+
+// fileState is file's state under the chain r evaluated: it repeats r's
+// trace under file's path into events, and records the errors that name
+// file.
+func (r *chainResult) fileState(file string, events *ReviewStateBuilder) FileState {
+	events.replay(r.trace, file)
+	fs := FileState{
+		Path:         file,
+		Layers:       r.layers,
+		Required:     r.required,
+		Status:       r.status,
+		UsedFallback: r.fallback,
+	}
+	if r.fallback && r.status == StatusError {
+		events.AddEvent("approve", file, "", "", StatusError,
+			"No active repository owners available; rule is unsatisfiable")
+		events.AddError(fmt.Errorf("unsatisfiable rules for %s: no active repository owners", file))
+		return fs
+	}
+	if r.fallback {
+		return fs
+	}
+	for _, state := range r.required {
+		if state.Status == StatusUnresolved {
+			events.AddError(fmt.Errorf(
+				"approver target %q for file %q: %s",
+				state.Target, file, state.Reason))
+		}
+	}
+	return fs
+}
+
+// prefetch makes, concurrently, the platform calls that evaluating the
+// chain makes first, one after another: it resolves every rule target, then
+// looks up whether the first member each resolved target could count is
+// active. Evaluation then finds both in the review's caches (resolver, the
+// review's reviewResolver, and the platform's IsActive). Evaluation prunes
+// every rule's targets, which resolves each one and checks its members up to
+// the first eligible one, so prefetch makes no call evaluation would not.
+func (rc *RuleChain) prefetch(ctx context.Context, p participants, resolver ApproverResolver) {
+	targets := map[RuleTarget]bool{}
+	named := map[string]bool{}
+	seen := map[chainKey]bool{}
+	for _, layers := range rc.FileChains {
+		if seen[keyOf(layers)] {
+			continue
+		}
+		seen[keyOf(layers)] = true
+		for _, layer := range layers {
+			for _, rule := range layer.Rules {
+				for _, t := range rule.Targets() {
+					targets[t] = true
+					named[t.Target] = true
+				}
+			}
+		}
+	}
+	names := slices.Collect(maps.Keys(named))
+	parallel.For(len(names), parallel.Limit, func(i int) {
+		_, _ = resolver.Resolve(ctx, names[i]) // cached for evaluation, which reports any error
+	})
+
+	first := map[string]bool{}
+	for t := range targets {
+		members, err := resolver.Resolve(ctx, t.Target)
+		if err != nil {
+			continue
+		}
+		if i := slices.IndexFunc(members, func(m string) bool { return t.contributes(m, p) }); i >= 0 {
+			first[members[i]] = true
+		}
+	}
+	users := slices.Collect(maps.Keys(first))
+	parallel.For(len(users), parallel.Limit, func(i int) { p.isActive(users[i]) })
+}
+
 // statusFromApproverStates derives a layer/file status from a slice of
 // ApproverTargetState. A target that could not be resolved at all
 // (StatusUnresolved) escalates the status to StatusUnresolved; otherwise any
@@ -170,35 +296,31 @@ func statusFromApproverStates(states []ApproverTargetState) Status {
 	return fileStatus
 }
 
-// fallbackFileState is a file's state when the repository owners decide
-// it: their per-owner approval states, or StatusError (recorded as an
-// unsatisfiable-rules error) when no repository owner is active.
-func (rc *RuleChain) fallbackFileState(
+// fallbackResult is a chain's result when the repository owners decide
+// it: their per-owner approval states, or StatusError when no repository
+// owner is active (which fileState records, per file, as an
+// unsatisfiable-rules error).
+func (rc *RuleChain) fallbackResult(
 	ctx context.Context,
 	p participants,
 	resolver ApproverResolver,
 	file string,
 	layers []LayerState,
-	events *ReviewStateBuilder,
+	trace *ReviewStateBuilder,
 	log *slog.Logger,
-) FileState {
-	fs := FileState{Path: file, Layers: layers, Required: []ApproverTargetState{}, UsedFallback: true}
-	states, unsatisfiable := rc.evaluateFallback(ctx, p, resolver, file, events, log)
+) *chainResult {
+	r := &chainResult{layers: layers, required: []ApproverTargetState{}, fallback: true, trace: trace}
+	states, unsatisfiable := rc.evaluateFallback(ctx, p, resolver, file, trace, log)
 	if unsatisfiable {
-		events.AddEvent("approve", file, "", "", StatusError,
-			"No active repository owners available; rule is unsatisfiable")
-		fallbackErr := fmt.Errorf(
-			"unsatisfiable rules for %s: no active repository owners", file)
-		events.AddError(fallbackErr)
 		log.Error("approve: fallback unsatisfiable",
 			"component", "rule_chain", "phase", "approve",
-			"file", file, "error", fallbackErr)
-		fs.Status = StatusError
-		return fs
+			"file", file, "error", "no active repository owners")
+		r.status = StatusError
+		return r
 	}
-	fs.Required = states
-	fs.Status = statusFromApproverStates(states)
-	return fs
+	r.required = states
+	r.status = statusFromApproverStates(states)
+	return r
 }
 
 // evaluateFallback attempts to satisfy a file's requirements by falling back

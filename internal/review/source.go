@@ -33,8 +33,10 @@ type Source interface {
 	// removes relative to the base revision. A renamed file is listed at
 	// both its old and its new path, so the rules over the place it left
 	// still apply. Paths the change adds are not in AllFiles, so this is
-	// not a subset of it. Empty when nothing changed. A listing the
-	// platform cut short is ErrFileListIncomplete.
+	// not a subset of it. Empty when nothing changed. A platform that can
+	// only list part of a change's files lists them another way when it
+	// can (and may then have no diffs for them); a listing it cannot
+	// complete is ErrFileListIncomplete, never a partial list.
 	ChangedFiles(ctx context.Context) ([]string, error)
 
 	// DiffContent returns the unified diff of the change to path, or ""
@@ -63,3 +65,7 @@ var ErrTreeTruncated = errors.New("repository tree listing is truncated")
 // only partially, as a platform may past its own limit. The partial listing
 // is never presented as complete.
 var ErrFileListIncomplete = errors.New("changed file listing is incomplete")
+
+// ErrRateLimited reports that the platform refused a request under its rate
+// limit for longer than the review could wait.
+var ErrRateLimited = errors.New("rate limited by the platform")

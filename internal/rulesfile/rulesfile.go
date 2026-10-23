@@ -32,9 +32,17 @@ type File struct {
 // Load reads and parses the rules file at path. It returns an error
 // when the file is missing or does not parse into the rule sequence form.
 func Load(path string) (*File, error) {
-	dat, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("read rules file %q: %w", path, err)
+	}
+	dat, err := ReadLimited(f)
+	closeErr := f.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read rules file %q: %w", path, err)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close rules file %q: %w", path, closeErr)
 	}
 
 	rules, err := ParseRules(dat)

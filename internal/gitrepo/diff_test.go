@@ -92,3 +92,23 @@ func TestUnifiedDiffSeparateHunksForDistantChanges(t *testing.T) {
 		t.Errorf("expected two hunks, got %d\n%s", n, got)
 	}
 }
+
+func TestIsBinary(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{name: "empty", content: "", want: false},
+		{name: "text", content: "package main\n", want: false},
+		{name: "a NUL early", content: "PNG\x00\x01", want: true},
+		{name: "a NUL past the sniffed prefix", content: strings.Repeat("a", 8000) + "\x00", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsBinary(tt.content); got != tt.want {
+				t.Errorf("IsBinary = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
