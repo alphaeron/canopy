@@ -149,6 +149,16 @@ func TestGitHubEndToEnd(t *testing.T) {
 			},
 		},
 		{
+			name:    "blocking label fails until removed",
+			feature: map[string]string{"main.go": "package main // v2\n"},
+			steps: []step{
+				{name: "open", do: openPR, want: check{"action_required", "acme/go-reviewers"}},
+				{name: "label", do: label("Do Not Merge"), want: check{"failure", "do not merge"}},
+				{name: "alice approves", do: review("alice", "APPROVE"), want: check{"failure", "label found"}},
+				{name: "unlabel", do: unlabel("Do Not Merge"), want: check{"success", "1 file approved"}},
+			},
+		},
+		{
 			name:    "malformed proposed rules file fails",
 			feature: map[string]string{brand.RulesFileName: "- [not: a rule\n"},
 			steps: []step{
@@ -247,6 +257,7 @@ func newEnv(t *testing.T, feature map[string]string) *env {
 		PublicURL:       web.URL,
 		LinkKey:         []byte(strings.Repeat("l", server.MinLinkKeyBytes)),
 		LinkLifetime:    server.MinLinkLifetime,
+		BlockingLabels:  []string{"do not merge"},
 	}, platform)
 	if err != nil {
 		cancel()
@@ -386,6 +397,26 @@ func review(login, event string) func(context.Context, *env) {
 		if _, _, err := e.github.userClient(login).PullRequests.CreateReview(ctx, owner, "widgets", e.pr,
 			&github.PullRequestReviewRequest{Event: new(event)}); err != nil {
 			e.t.Fatalf("%s %s: %v", login, event, err)
+		}
+	}
+}
+
+// label adds a label to the pull request, as its author.
+func label(name string) func(context.Context, *env) {
+	return func(ctx context.Context, e *env) {
+		e.t.Helper()
+		if _, _, err := e.github.userClient(author).Issues.AddLabelsToIssue(ctx, owner, "widgets", e.pr, []string{name}); err != nil {
+			e.t.Fatalf("label %s: %v", name, err)
+		}
+	}
+}
+
+// unlabel removes a label from the pull request, as its author.
+func unlabel(name string) func(context.Context, *env) {
+	return func(ctx context.Context, e *env) {
+		e.t.Helper()
+		if _, err := e.github.userClient(author).Issues.RemoveLabelForIssue(ctx, owner, "widgets", e.pr, name); err != nil {
+			e.t.Fatalf("unlabel %s: %v", name, err)
 		}
 	}
 }

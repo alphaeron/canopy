@@ -64,6 +64,7 @@ review against a hosted change such as a pull request.`,
 		if verbose {
 			config.SetVerbose(true)
 		}
+		blockingLabels = cfg.BlockingLabels
 		if cfg.Path != "" {
 			slog.Debug("using config file", "component", "config", "path", cfg.Path)
 		}
@@ -98,3 +99,7 @@ func init() {
 // verbose is the --verbose / -v flag: when true, debug-level slog output is
 // enforced after config.Load has already run, so the flag always wins.
 var verbose bool
+
+// blockingLabels are the configured blocking_labels, set once configuration
+// is loaded: `review` fails a change whose --label names one.
+var blockingLabels []string

@@ -1,8 +1,8 @@
 package approval
 
 // ReviewInput is the state of a change that a review evaluates its files
-// against: who wrote it, who has approved it, who can approve at all, and
-// the repository owners who decide files no rule covers. It is
+// against: who wrote it, who has approved it, who can approve at all, the
+// repository owners who decide files no rule covers, and its labels. It is
 // platform-neutral plain data: the CLI builds it from flags, and a hosted
 // platform reads it from its API. Names are compared in their platform's
 // canonical form (ApproverResolver.Canonical), so they may be given in any
@@ -23,6 +23,10 @@ type ReviewInput struct {
 	// Owners are the repository owners: the fallback for a file no rule
 	// covers.
 	Owners []string
+	// Labels are the change's labels, as the platform names them. The
+	// algorithm does not read them: a blocking label fails the change
+	// whatever its approvals (see BlockingLabels).
+	Labels []string
 }
 
 // participants is a ReviewInput in the form the algorithm evaluates it:

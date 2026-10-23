@@ -88,7 +88,7 @@ func TestLoadPlatformSectionFromEnv(t *testing.T) {
 	}
 	if !reflect.DeepEqual(configKeys(reflect.TypeFor[Config](), ""), []string{
 		"verbose", "serve_addr", "review_timeout", "report_timeout", "review_workers", "review_queue_per_worker", "shutdown_timeout", "database_url", "database_key",
-		"public_url", "link_key", "link_lifetime",
+		"public_url", "link_key", "link_lifetime", "blocking_labels",
 		"github.app_id", "github.private_key", "github.webhook_secret", "github.api_url", "github.request_timeout",
 	}) {
 		t.Errorf("configKeys = %v, want every tagged field, sections dotted", configKeys(reflect.TypeFor[Config](), ""))
@@ -415,6 +415,37 @@ func TestLoadServerSettings(t *testing.T) {
 			got.GitHub.RequestTimeout != 11*time.Second ||
 			got.GitHub.APIURL != "https://ghe/api/v3/" {
 			t.Errorf("config = %+v, want the environment's server settings", got)
+		}
+	})
+}
+
+func TestLoadBlockingLabels(t *testing.T) {
+	t.Run("from the file", func(t *testing.T) {
+		got, err := Load(writeConfig(t, "blocking_labels:\n  - do not merge\n  - wip\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if want := []string{"do not merge", "wip"}; !reflect.DeepEqual(got.BlockingLabels, want) {
+			t.Errorf("BlockingLabels = %q, want %q", got.BlockingLabels, want)
+		}
+	})
+	t.Run("from the environment, comma-separated", func(t *testing.T) {
+		withEnv(t, map[string]string{brand.EnvPrefix + "BLOCKING_LABELS": "do not merge,wip"})
+		got, err := Load(writeConfig(t, "blocking_labels: [other]\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if want := []string{"do not merge", "wip"}; !reflect.DeepEqual(got.BlockingLabels, want) {
+			t.Errorf("BlockingLabels = %q, want %q", got.BlockingLabels, want)
+		}
+	})
+	t.Run("none by default", func(t *testing.T) {
+		got, err := Load(writeConfig(t, "verbose: false\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(got.BlockingLabels) != 0 {
+			t.Errorf("BlockingLabels = %q, want none", got.BlockingLabels)
 		}
 	})
 }

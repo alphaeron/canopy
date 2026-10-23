@@ -81,6 +81,7 @@ type fakePull struct {
 	author     string
 	base, head string // branch names
 	reviews    []*github.PullRequestReview
+	labels     []string
 }
 
 // delivery is one webhook the fake delivered, and the app's answer.
@@ -292,6 +293,9 @@ func (f *fakeGitHub) routes() http.Handler {
 	api("GET /repos/{owner}/{repo}/compare/{basehead}", false, f.compareCommits)
 	api("GET /repos/{owner}/{repo}/pulls/{number}/reviews", false, f.listReviews)
 	api("POST /repos/{owner}/{repo}/pulls/{number}/reviews", false, f.createReview)
+	api("GET /repos/{owner}/{repo}/issues/{number}/labels", false, f.listLabels)
+	api("POST /repos/{owner}/{repo}/issues/{number}/labels", false, f.addLabels)
+	api("DELETE /repos/{owner}/{repo}/issues/{number}/labels/{name}", false, f.removeLabel)
 	api("POST /repos/{owner}/{repo}/check-runs", true, f.createCheckRun)
 	api("GET /users/{login}", false, f.getUser)
 	api("GET /orgs/{org}/teams/{slug}/members", false, f.listTeamMembers)
@@ -492,6 +496,79 @@ func (f *fakeGitHub) listReviews(w http.ResponseWriter, r *http.Request, _ calle
 	reviews := slices.Clone(pr.reviews)
 	f.mu.Unlock()
 	writeJSON(w, http.StatusOK, reviews)
+}
+
+// listLabels lists the pull request's labels, in one page.
+func (f *fakeGitHub) listLabels(w http.ResponseWriter, r *http.Request, _ caller, repo *fakeRepo) {
+	pr := f.pull(r, repo)
+	if pr == nil {
+		writeError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	f.mu.Lock()
+	labels := labelsOf(pr.labels)
+	f.mu.Unlock()
+	writeJSON(w, http.StatusOK, labels)
+}
+
+// addLabels adds labels to the pull request as a user, delivering a
+// labeled event for each label it did not have.
+func (f *fakeGitHub) addLabels(w http.ResponseWriter, r *http.Request, c caller, repo *fakeRepo) {
+	pr := f.pull(r, repo)
+	var names []string
+	if pr == nil || c.isApp() || json.NewDecoder(r.Body).Decode(&names) != nil {
+		writeError(w, http.StatusUnprocessableEntity, "Validation Failed")
+		return
+	}
+	var events []*github.PullRequestEvent
+	f.mu.Lock()
+	for _, l := range names {
+		if !slices.Contains(pr.labels, l) {
+			pr.labels = append(pr.labels, l)
+			ev := f.pullRequestEventLocked(repo, pr, "labeled")
+			ev.Label = &github.Label{Name: l}
+			events = append(events, ev)
+		}
+	}
+	labels := labelsOf(pr.labels)
+	f.mu.Unlock()
+	for _, ev := range events {
+		f.deliver(r.Context(), "pull_request", ev)
+	}
+	writeJSON(w, http.StatusOK, labels)
+}
+
+// removeLabel removes a label from the pull request as a user, delivering
+// an unlabeled event.
+func (f *fakeGitHub) removeLabel(w http.ResponseWriter, r *http.Request, c caller, repo *fakeRepo) {
+	pr := f.pull(r, repo)
+	name := r.PathValue("name")
+	f.mu.Lock()
+	i := -1
+	if pr != nil {
+		i = slices.Index(pr.labels, name)
+	}
+	if i < 0 || c.isApp() {
+		f.mu.Unlock()
+		writeError(w, http.StatusNotFound, "Label does not exist")
+		return
+	}
+	pr.labels = slices.Delete(pr.labels, i, i+1)
+	ev := f.pullRequestEventLocked(repo, pr, "unlabeled")
+	ev.Label = &github.Label{Name: name}
+	labels := labelsOf(pr.labels)
+	f.mu.Unlock()
+	f.deliver(r.Context(), "pull_request", ev)
+	writeJSON(w, http.StatusOK, labels)
+}
+
+// labelsOf is names as GitHub lists labels.
+func labelsOf(names []string) []*github.Label {
+	labels := make([]*github.Label, len(names))
+	for i, n := range names {
+		labels[i] = &github.Label{Name: n}
+	}
+	return labels
 }
 
 // reviewStates maps a review request's event to the review's state.

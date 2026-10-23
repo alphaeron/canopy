@@ -12,10 +12,10 @@ import (
 
 // conditionalPaths are the API paths whose answers can change between
 // reviews and that the platform reads on every review: a team's members, a
-// user, and a pull request's reviews. Only GETs of these are made
+// user, and a pull request's reviews and labels. Only GETs of these are made
 // conditional. Everything else the platform reads is either addressed by
 // SHA, and so cached as is (trees, blobs), or read once.
-var conditionalPaths = regexp.MustCompile(`/(orgs/[^/]+/teams/[^/]+/members|users/[^/]+|repos/[^/]+/[^/]+/pulls/[0-9]+/reviews)$`)
+var conditionalPaths = regexp.MustCompile(`/(orgs/[^/]+/teams/[^/]+/members|users/[^/]+|repos/[^/]+/[^/]+/pulls/[0-9]+/reviews|repos/[^/]+/[^/]+/issues/[0-9]+/labels)$`)
 
 // keptHeaders are the response headers kept with a body: what go-github
 // reads besides it (the next page of a listing, and how to decode it).

@@ -165,6 +165,7 @@ type reviewInput struct {
 	Author    string   `json:"author"`
 	Approvers []string `json:"approvers"`
 	Owners    []string `json:"owners"`
+	Labels    []string `json:"labels"`
 }
 
 // FinishReview records how review id ended, and the targets it evaluated.
@@ -172,7 +173,7 @@ func (s *Store) FinishReview(ctx context.Context, id int64, r server.ReviewEnd) 
 	var input, state []byte
 	var err error
 	if r.Input != nil {
-		if input, err = json.Marshal(reviewInput{Author: r.Input.Author, Approvers: r.Input.Approvers, Owners: r.Input.Owners}); err != nil {
+		if input, err = json.Marshal(reviewInput{Author: r.Input.Author, Approvers: r.Input.Approvers, Owners: r.Input.Owners, Labels: r.Input.Labels}); err != nil {
 			return fmt.Errorf("encode review %d input: %w", id, err)
 		}
 	}

@@ -28,17 +28,18 @@ type Evaluation struct {
 
 // Evaluate reviews pr: it lists the changed files, validates the rules
 // files among them as pr proposes them, and runs the review over the changed
-// files with the platform's review input. An invalid proposed rules file is
-// Failed; anything that keeps the review from running is Errored, with its
-// cause logged, never in the outcome. The change's warnings (see
+// files with the platform's review input. A label of pr's that blocking
+// names, or an invalid proposed rules file, is Failed (see OutcomeOf);
+// anything that keeps the review from running is Errored, with its cause
+// logged, never in the outcome. The change's warnings (see
 // Change.Warnings) are added to the review's own (such as files no rule
 // covers), whatever the outcome, and logged.
 //
 // The changed files, the review input, and the rules are independent, so
 // they are read concurrently; the review then reuses the rules fetch (see
 // Change).
-func Evaluate(ctx context.Context, pr Change, log *slog.Logger) Evaluation {
-	ev := evaluate(ctx, pr, log)
+func Evaluate(ctx context.Context, pr Change, blocking []string, log *slog.Logger) Evaluation {
+	ev := evaluate(ctx, pr, blocking, log)
 	ev.Outcome.Warnings = append(ev.Outcome.Warnings, pr.Warnings()...)
 	for _, w := range ev.Outcome.Warnings {
 		log.Warn("review warning", "warning", w)
@@ -47,7 +48,7 @@ func Evaluate(ctx context.Context, pr Change, log *slog.Logger) Evaluation {
 }
 
 // evaluate is Evaluate's evaluation before the change's warnings.
-func evaluate(ctx context.Context, pr Change, log *slog.Logger) Evaluation {
+func evaluate(ctx context.Context, pr Change, blocking []string, log *slog.Logger) Evaluation {
 	var input *approval.ReviewInput
 	fail := func(step string, err error) Evaluation {
 		log.Error("review failed", "step", step, "error", err)
@@ -100,21 +101,32 @@ func evaluate(ctx context.Context, pr Change, log *slog.Logger) Evaluation {
 	for _, p := range slices.Sorted(maps.Keys(violations)) {
 		log.Warn("proposed rules file invalid", "path", p, "violations", fmt.Sprint(violations[p]))
 	}
-	return Evaluation{Outcome: OutcomeOf(state, violations), Input: input, State: state}
+	blocked := approval.BlockingLabels(in.Labels, blocking)
+	if len(blocked) > 0 {
+		log.Info("blocking labels found", "labels", blocked)
+	}
+	return Evaluation{Outcome: OutcomeOf(state, violations, blocked), Input: input, State: state}
 }
 
 // OutcomeOf is what a review means for a change, on every platform and in
-// the CLI alike: a change proposing an invalid rules file (proposed, as
-// Engine.ValidateProposed reports it) is Failed whatever its approvals,
-// and otherwise the review state decides (approval.ReviewState.Outcome).
-// Either way the review's warnings are the outcome's.
-func OutcomeOf(state *approval.ReviewState, proposed map[string][]error) approval.Outcome {
-	if len(proposed) > 0 {
-		o := approval.InvalidRulesOutcome(slices.Sorted(maps.Keys(proposed)))
-		o.Warnings = slices.Clone(state.Warnings)
-		return o
+// the CLI alike: a change carrying blocking labels (blocked, as
+// approval.BlockingLabels reports them) is Failed whatever its approvals or
+// rules files; otherwise a change proposing an invalid rules file (proposed,
+// as Engine.ValidateProposed reports it) is Failed whatever its approvals;
+// otherwise the review state decides (approval.ReviewState.Outcome). Either
+// way the review's warnings are the outcome's.
+func OutcomeOf(state *approval.ReviewState, proposed map[string][]error, blocked []string) approval.Outcome {
+	var o approval.Outcome
+	switch {
+	case len(blocked) > 0:
+		o = approval.BlockedOutcome(blocked)
+	case len(proposed) > 0:
+		o = approval.InvalidRulesOutcome(slices.Sorted(maps.Keys(proposed)))
+	default:
+		return state.Outcome()
 	}
-	return state.Outcome()
+	o.Warnings = slices.Clone(state.Warnings)
+	return o
 }
 
 // failureSummary names why a review could not run, without quoting the

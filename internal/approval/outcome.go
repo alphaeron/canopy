@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -20,7 +21,8 @@ const (
 	// Pending: the review ran cleanly but approvals are still missing.
 	Pending Verdict = "pending"
 	// Failed: the review ran, and the change itself is unacceptable: it
-	// proposes an invalid rules file. Only a change to it fixes that.
+	// carries a blocking label, which only removing the label fixes, or it
+	// proposes an invalid rules file, which only a change to it fixes.
 	Failed Verdict = "failed"
 	// Errored: the review could not produce a valid result
 	// (StatusError: a platform failure, a listing too large to
@@ -120,6 +122,43 @@ func plural(n int, noun string) string {
 func InvalidRulesOutcome(paths []string) Outcome {
 	summary := plural(len(paths), "invalid proposed rules file")
 	return Outcome{Verdict: Failed, Summary: summary, Items: paths}
+}
+
+// BlockedOutcome is the outcome of a change carrying blocking labels
+// (found, as BlockingLabels returns them): Failed, whatever its approvals
+// or rules files, e.g. `"do not merge" label found`. Only removing the
+// labels fixes it.
+func BlockedOutcome(found []string) Outcome {
+	quoted := make([]string, len(found))
+	for i, l := range found {
+		quoted[i] = strconv.Quote(l)
+	}
+	noun := " label found"
+	if len(found) > 1 {
+		noun = " labels found"
+	}
+	return Outcome{Verdict: Failed, Summary: strings.Join(quoted, ", ") + noun}
+}
+
+// BlockingLabels returns the entries of blocking that one of labels names,
+// in blocking's order and spelled as blocking spells them. Label names
+// compare case-insensitively, as GitHub compares them, ignoring
+// surrounding space; an empty blocking entry names no label.
+func BlockingLabels(labels, blocking []string) []string {
+	var found []string
+	for _, b := range blocking {
+		b = strings.TrimSpace(b)
+		if b == "" {
+			continue
+		}
+		for _, l := range labels {
+			if strings.EqualFold(strings.TrimSpace(l), b) {
+				found = append(found, b)
+				break
+			}
+		}
+	}
+	return found
 }
 
 // errorSummary names why a review errored without quoting the error, which

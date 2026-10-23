@@ -345,8 +345,15 @@ const (
 //     up once, through ctx, which must outlive the review. A failed lookup
 //     counts the user as inactive: only a user GitHub confirms is active.
 //   - Owners: the repository's owner, who reviews the files no rule covers.
+//   - Labels: the pull request's labels when the review runs, not as the
+//     webhook reported them: GitHub does not order webhooks, so a label
+//     removed since must not block the pull request.
 func (r *Source) ReviewInput(ctx context.Context) (approval.ReviewInput, error) {
 	approvers, err := r.approvers(ctx)
+	if err != nil {
+		return approval.ReviewInput{}, err
+	}
+	labels, err := r.labels(ctx)
 	if err != nil {
 		return approval.ReviewInput{}, err
 	}
@@ -355,7 +362,22 @@ func (r *Source) ReviewInput(ctx context.Context) (approval.ReviewInput, error) 
 		Approvers: approvers,
 		IsActive:  r.activity(ctx),
 		Owners:    []string{r.pr.owner},
+		Labels:    labels,
 	}, nil
+}
+
+// labels lists the pull request's label names, sorted.
+func (r *Source) labels(ctx context.Context) ([]string, error) {
+	labels, err := collect(r.client.Issues.ListLabelsByIssueIter(ctx, r.pr.owner, r.pr.repo, r.pr.number, &github.ListOptions{PerPage: perPage}))
+	if err != nil {
+		return nil, fmt.Errorf("list labels of %s: %w", r.pr, err)
+	}
+	out := make([]string, 0, len(labels))
+	for _, l := range labels {
+		out = append(out, l.GetName())
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 // approvers lists the reviewers whose latest decisive review approves,

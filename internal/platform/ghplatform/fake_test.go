@@ -37,6 +37,7 @@ type fakeGitHub struct {
 	head        map[string]string             // files at the head revision: path to contents
 	prPages     [][]*github.CommitFile        // the pull request's files, page by page; the comparison lists them all
 	reviewPages [][]*github.PullRequestReview // the pull request's reviews, page by page
+	labels      []*github.Label               // the pull request's labels
 	teams       map[string][]string           // "org/slug" to member logins
 	users       map[string]bool               // known logins to whether they are suspended
 
@@ -159,6 +160,9 @@ func (f *fakeGitHub) serve(t *testing.T) string {
 	})
 	mux.HandleFunc("GET /repos/o/r/pulls/7/reviews", func(w http.ResponseWriter, r *http.Request) {
 		paged(t, w, r, srv.URL, f.reviewPages)
+	})
+	mux.HandleFunc("GET /repos/o/r/issues/7/labels", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, f.labels)
 	})
 	mux.HandleFunc("GET /repos/o/r/contents/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		content, ok := f.head[r.PathValue("path")]

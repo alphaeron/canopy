@@ -159,7 +159,8 @@ type PullRequest interface {
   self-approval (so leave the author's own reviews out: authoring is their approval); the
   approvers, each reviewer's latest decisive review (a later change request or dismissal cancels an
   approval, comments change nothing, approvals before the latest push still count); `IsActive`; and
-  the repository owners, the fallback reviewers. Names needn't be canonical. If an activity lookup
+  the repository owners, the fallback reviewers; and the change's labels, read when the review runs
+  (a blocking label fails the change whatever its approvals). Names needn't be canonical. If an activity lookup
   fails, count the user as inactive: only a user the platform confirms is active.
 - **`Warnings`**: what reading the pull request found worth reporting that does not change the
   verdict (GitHub: a pull request too large for its file listing). The server calls it once the

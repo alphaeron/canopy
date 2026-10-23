@@ -74,6 +74,29 @@ func TestEvaluate(t *testing.T) {
 			want: approval.Outcome{Verdict: approval.Failed, Summary: "1 invalid proposed rules file", Items: []string{"svc/RULES"}},
 		},
 		{
+			name: "a blocking label fails even when approved",
+			setup: func(pr *stubChange) {
+				pr.input = approval.ReviewInput{Approvers: []string{"lead"}, Labels: []string{"bug", "Do Not Merge"}}
+			},
+			want: approval.Outcome{Verdict: approval.Failed, Summary: `"do not merge" label found`},
+		},
+		{
+			name: "a blocking label fails ahead of an invalid proposed rules file",
+			setup: func(pr *stubChange) {
+				pr.input = approval.ReviewInput{Labels: []string{"wip", "do not merge"}}
+				pr.changedSet = []string{"main.go", "svc/RULES"}
+				pr.head = map[string]string{"svc/RULES": "- [not: a rule\n"}
+			},
+			want: approval.Outcome{Verdict: approval.Failed, Summary: `"do not merge", "wip" labels found`},
+		},
+		{
+			name: "a label no one blocks on changes nothing",
+			setup: func(pr *stubChange) {
+				pr.input = approval.ReviewInput{Approvers: []string{"lead"}, Labels: []string{"do not merge later"}}
+			},
+			want: approval.Outcome{Verdict: approval.Passed, Summary: "1 file approved"},
+		},
+		{
 			name:  "too many changed files",
 			setup: func(pr *stubChange) { pr.changedErr = fmt.Errorf("listing: %w", approval.ErrFileListIncomplete) },
 			want:  approval.Outcome{Verdict: approval.Errored, Summary: "too many changed files to evaluate completely"},
@@ -117,7 +140,7 @@ func TestEvaluate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			pr := newStubChange()
 			tt.setup(pr)
-			if got := Evaluate(t.Context(), pr, slog.New(slog.DiscardHandler)).Outcome; !reflect.DeepEqual(got, tt.want) {
+			if got := Evaluate(t.Context(), pr, []string{"do not merge", "wip"}, slog.New(slog.DiscardHandler)).Outcome; !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("outcome = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -131,7 +154,7 @@ func TestEvaluateEnforcesTheBaseRules(t *testing.T) {
 	pr.changedSet = []string{"main.go", rulesfile.FileName}
 	pr.head = map[string]string{rulesfile.FileName: "- \".*\":\n  name: Root\n  approvers:\n    - target: dev\n      required_count: 1\n"}
 	pr.input = approval.ReviewInput{Author: "dev", Approvers: []string{"dev"}}
-	if got := Evaluate(t.Context(), pr, slog.New(slog.DiscardHandler)).Outcome.Verdict; got != approval.Pending {
+	if got := Evaluate(t.Context(), pr, []string{"do not merge", "wip"}, slog.New(slog.DiscardHandler)).Outcome.Verdict; got != approval.Pending {
 		t.Errorf("verdict = %s, want pending: the proposed rules must not apply before merge", got)
 	}
 }

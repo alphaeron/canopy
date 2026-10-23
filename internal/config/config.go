@@ -81,6 +81,11 @@ type Config struct {
 	// 90 days. A change applies to links signed from then on: each link
 	// carries its own expiry.
 	LinkLifetime time.Duration `mapstructure:"link_lifetime"`
+	// BlockingLabels are the labels that fail a change carrying any of
+	// them, whatever its approvals, e.g. "do not merge"; compared
+	// case-insensitively. The environment variable takes a comma-separated
+	// list. Empty, the default, blocks on no label.
+	BlockingLabels []string `mapstructure:"blocking_labels"`
 	// GitHub configures the GitHub platform for the review server.
 	GitHub GitHub `mapstructure:"github"`
 	// Path is the file the configuration was read from, when one existed.

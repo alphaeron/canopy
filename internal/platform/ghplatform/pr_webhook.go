@@ -17,15 +17,15 @@ import (
 )
 
 // Webhook events and actions that start a review: a pull request opened,
-// updated, reopened, marked ready, or moved to another base branch, and a
-// review submitted or dismissed.
+// updated, reopened, marked ready, moved to another base branch, labeled,
+// or unlabeled, and a review submitted or dismissed.
 const (
 	eventPullRequest       = "pull_request"
 	eventPullRequestReview = "pull_request_review"
 )
 
 var (
-	pullRequestActions = []string{"opened", "synchronize", "reopened", "ready_for_review", "edited"}
+	pullRequestActions = []string{"opened", "synchronize", "reopened", "ready_for_review", "edited", "labeled", "unlabeled"}
 	reviewActions      = []string{"submitted", "dismissed"}
 )
 

@@ -129,6 +129,7 @@ func run() error {
 		PublicURL:       cfg.PublicURL,
 		LinkKey:         []byte(cfg.LinkKey),
 		LinkLifetime:    cfg.LinkLifetime,
+		BlockingLabels:  cfg.BlockingLabels,
 	}, platform)
 	if err != nil {
 		return err

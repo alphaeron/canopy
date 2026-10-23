@@ -74,6 +74,10 @@ type Options struct {
 	// A link leaked from a status, a log, or a screenshot stops working, as
 	// does one held by someone who has since lost access to the repository.
 	LinkLifetime time.Duration
+	// BlockingLabels are the labels that fail a pull request carrying any
+	// of them, whatever its approvals (see review.Evaluate); compared
+	// case-insensitively. Empty blocks on no label.
+	BlockingLabels []string
 }
 
 // Bounds on recording: how long the calls a webhook or a review waits for
@@ -375,7 +379,7 @@ func (s *Server) review(ctx context.Context, j job, current func() bool) {
 	id := s.startRecord(ctx, j, log)
 	s.start(ctx, j, link, log)
 	ctx = approval.WithProgress(ctx, func(p approval.Progress) { s.live.progress(j.live, p) })
-	ev := review.Evaluate(ctx, j.pr, log)
+	ev := review.Evaluate(ctx, j.pr, s.opts.BlockingLabels, log)
 	end := ReviewEnd{
 		Outcome:  ev.Outcome,
 		Input:    ev.Input,

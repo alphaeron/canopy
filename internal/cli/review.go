@@ -29,7 +29,8 @@ Every file in the working tree is reviewed, or only changed files with
 --approver simulates approvals and --author the change's author, so
 self-approval rules are evaluated as they would be on a pull or merge request.
 Every approver counts as active. A file no rule covers falls back to the
---owner repository owners.`,
+--owner repository owners. --label simulates the change's labels: one that
+blocking_labels in the configuration names fails the review.`,
 	Annotations: map[string]string{"arg": "regular expressions selecting the files to review (every file when omitted)"},
 	// A review that ran into errors is a result, not a usage mistake.
 	SilenceUsage: true,
@@ -43,11 +44,12 @@ type reviewOptions struct {
 	author    string
 	approvers []string
 	owners    []string
+	labels    []string
 }
 
 func reviewOptionsFrom(v tui.Values) (reviewOptions, error) {
 	o := reviewOptions{patterns: v.Args, changed: v.Bool("changed"), author: v.Flag("author")}
-	for name, dst := range map[string]*[]string{"approver": &o.approvers, "owner": &o.owners} {
+	for name, dst := range map[string]*[]string{"approver": &o.approvers, "owner": &o.owners, "label": &o.labels} {
 		list, err := splitList(v.Flag(name))
 		if err != nil {
 			return reviewOptions{}, fmt.Errorf("--%s: %w", name, err)
@@ -119,8 +121,8 @@ func runReview(ctx context.Context, opts reviewOptions, log *slog.Logger) (revie
 
 // reviewWith is runReview on an open engine. As on a hosted platform, the
 // rules files the change proposes (here, those the working tree changes)
-// are validated, and an invalid one fails the review whatever its
-// approvals (review.OutcomeOf).
+// are validated, and an invalid one, or a label blockingLabels names, fails
+// the review whatever its approvals (review.OutcomeOf).
 func reviewWith(ctx context.Context, engine *review.Engine, opts reviewOptions) (reviewResult, error) {
 	files, err := engine.Files(ctx, review.Options{ChangedOnly: opts.changed, Patterns: opts.patterns})
 	if err != nil {
@@ -135,7 +137,8 @@ func reviewWith(ctx context.Context, engine *review.Engine, opts reviewOptions) 
 		return reviewResult{}, err
 	}
 	state := engine.Review(ctx, files, opts.input())
-	return reviewResult{state: state, outcome: review.OutcomeOf(state, proposed)}, nil
+	blocked := approval.BlockingLabels(opts.labels, blockingLabels)
+	return reviewResult{state: state, outcome: review.OutcomeOf(state, proposed, blocked)}, nil
 }
 
 // input is the review input the options describe. The local platform has
@@ -145,6 +148,7 @@ func (o reviewOptions) input() approval.ReviewInput {
 		Author:    o.author,
 		Approvers: o.approvers,
 		Owners:    o.owners,
+		Labels:    o.labels,
 	}
 }
 
@@ -231,6 +235,7 @@ func reviewSummaryDetail(res reviewResult, opts reviewOptions, counts map[approv
 		{Label: "Author", Value: opts.author},
 		{Label: "Approvals", Value: strings.Join(opts.approvers, ", ")},
 		{Label: "Owners", Value: strings.Join(opts.owners, ", ")},
+		{Label: "Labels", Value: strings.Join(opts.labels, ", ")},
 	}}
 	var rows []tui.Row
 	for _, s := range []approval.Status{approval.StatusError, approval.StatusUnresolved, approval.StatusMissingApprovers, approval.StatusSatisfied} {
@@ -288,5 +293,6 @@ func init() {
 	reviewCmd.Flags().String("author", "", "the change's author, whose approvals count only under self-approve rules")
 	reviewCmd.Flags().StringSlice("approver", nil, "a user or group that has approved (repeatable)")
 	reviewCmd.Flags().StringSlice("owner", nil, "a repository owner, who approves files no rule covers (repeatable)")
+	reviewCmd.Flags().StringSlice("label", nil, "a label on the change; one in blocking_labels fails the review (repeatable)")
 	rootCmd.AddCommand(reviewCmd)
 }

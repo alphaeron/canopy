@@ -173,6 +173,8 @@ func TestPRWebhookChange(t *testing.T) {
 	}{
 		{name: "opened", event: "pull_request", body: withAction("opened"), reviewable: true},
 		{name: "synchronize", event: "pull_request", body: withAction("synchronize"), reviewable: true},
+		{name: "labeled", event: "pull_request", body: withAction("labeled"), reviewable: true},
+		{name: "unlabeled", event: "pull_request", body: withAction("unlabeled"), reviewable: true},
 		{name: "closed", event: "pull_request", body: withAction("closed")},
 		{name: "title edited", event: "pull_request", body: withAction("edited")},
 		{name: "base branch changed", event: "pull_request", body: marshal(baseChanged), reviewable: true},

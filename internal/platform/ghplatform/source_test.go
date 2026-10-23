@@ -292,7 +292,8 @@ func TestGitHubReviewInput(t *testing.T) {
 		reviewPages: [][]*github.PullRequestReview{{
 			{User: &github.User{Login: new("Ann")}, State: new("APPROVED")},
 		}},
-		users: map[string]bool{"ann": false, "sus": true},
+		users:  map[string]bool{"ann": false, "sus": true},
+		labels: []*github.Label{{Name: "wip"}, {Name: "do not merge"}},
 	}
 	in, err := testSource(fake.client(t)).ReviewInput(t.Context())
 	if err != nil {
@@ -300,6 +301,9 @@ func TestGitHubReviewInput(t *testing.T) {
 	}
 	if in.Author != "author" || !reflect.DeepEqual(in.Approvers, []string{"ann"}) || !reflect.DeepEqual(in.Owners, []string{"o"}) {
 		t.Errorf("ReviewInput = author %q, approvers %v, owners %v; want author, [ann], [o]", in.Author, in.Approvers, in.Owners)
+	}
+	if want := []string{"do not merge", "wip"}; !reflect.DeepEqual(in.Labels, want) {
+		t.Errorf("ReviewInput labels = %v, want %v", in.Labels, want)
 	}
 	for login, want := range map[string]bool{"ann": true, "sus": false, "ghost": false, "org/team": false} {
 		if got := in.IsActive(login); got != want {

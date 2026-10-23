@@ -114,3 +114,36 @@ func TestOutcomeDescription(t *testing.T) {
 		})
 	}
 }
+
+func TestBlockingLabels(t *testing.T) {
+	tests := []struct {
+		name             string
+		labels, blocking []string
+		want             []string
+	}{
+		{name: "none configured", labels: []string{"do not merge"}},
+		{name: "no labels", blocking: []string{"do not merge"}},
+		{name: "case and space differ", labels: []string{"bug", " Do Not Merge"}, blocking: []string{"do not merge"}, want: []string{"do not merge"}},
+		{name: "in blocking's order", labels: []string{"wip", "hold"}, blocking: []string{"hold", "", "wip", "nope"}, want: []string{"hold", "wip"}},
+		{name: "names must match whole", labels: []string{"do not merge yet"}, blocking: []string{"do not merge"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := BlockingLabels(tt.labels, tt.blocking); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("BlockingLabels(%q, %q) = %q, want %q", tt.labels, tt.blocking, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBlockedOutcome(t *testing.T) {
+	for found, want := range map[string]string{
+		"do not merge":     `"do not merge" label found`,
+		"do not merge,wip": `"do not merge", "wip" labels found`,
+	} {
+		o := BlockedOutcome(strings.Split(found, ","))
+		if o.Verdict != Failed || o.Summary != want {
+			t.Errorf("BlockedOutcome(%s) = %s %q, want failed %q", found, o.Verdict, o.Summary, want)
+		}
+	}
+}
