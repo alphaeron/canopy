@@ -5,8 +5,8 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // FileMatch pairs one file in the universe with the rules that matched it.

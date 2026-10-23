@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 func TestReviewStateOutcome(t *testing.T) {

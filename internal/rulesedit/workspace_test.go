@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // newTestWorkspace writes rules as rules files under a temp root and returns

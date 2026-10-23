@@ -3,8 +3,8 @@ package server
 import (
 	"context"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/review"
 )
 
 // PullRequest is a pull request (or merge request) on a hosted platform,

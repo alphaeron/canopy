@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	huh "charm.land/huh/v2"
 
-	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/canopy/internal/brand"
 )
 
 // allChoice is the label for the empty value of a choice parameter: no

@@ -7,8 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/alphaeron/kit/internal/rulesedit"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesedit"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 func TestRuleFormOffersRulesFiles(t *testing.T) {

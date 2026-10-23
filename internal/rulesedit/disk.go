@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 	"gopkg.in/yaml.v3"
 )
 

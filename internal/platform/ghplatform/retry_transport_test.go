@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/canopy/internal/approval"
 )
 
 func TestRetryTransport(t *testing.T) {

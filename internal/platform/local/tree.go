@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/gitrepo"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/gitrepo"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // worktree is the local working tree as an approval.Tree: committed files

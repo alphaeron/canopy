@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/canopy/internal/brand"
 )
 
 // Route is a navigable destination in the TUI. Each route is one CLI

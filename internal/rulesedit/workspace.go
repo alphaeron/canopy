@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/brand"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // ErrNoRulesFiles reports that an operation needs a rules file and the

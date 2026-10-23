@@ -6,7 +6,7 @@ import (
 	"io/fs"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // TestRulesFileErrors pins that every rules file failure is found by path, however

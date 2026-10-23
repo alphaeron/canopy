@@ -7,8 +7,8 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/alphaeron/kit/internal/parallel"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/parallel"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // RuleChain maps each changed file to its own localized, ordered rule

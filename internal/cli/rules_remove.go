@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/rulesedit"
-	"github.com/alphaeron/kit/internal/rulesfile"
-	"github.com/alphaeron/kit/internal/tui"
+	"github.com/alphaeron/canopy/internal/rulesedit"
+	"github.com/alphaeron/canopy/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/tui"
 )
 
 // rulesRemoveCmd deletes one rule, found by its pattern as for rules edit

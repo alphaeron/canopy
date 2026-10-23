@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/brand"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // stubSource is an in-memory Source for testing the Engine without touching

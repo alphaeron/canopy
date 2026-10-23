@@ -5,7 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // ExecutableRule is a rulesfile.Rule as the review algorithm runs it: it

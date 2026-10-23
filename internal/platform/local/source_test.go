@@ -10,8 +10,8 @@ import (
 	git "github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/gitrepo"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/gitrepo"
 )
 
 // newScratchRepo creates a go-git repository in a temp dir, seeded with the

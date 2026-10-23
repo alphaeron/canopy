@@ -3,7 +3,7 @@ package review
 import (
 	"context"
 
-	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/canopy/internal/approval"
 )
 
 // Source is the only seam between the Engine and where the files and rules

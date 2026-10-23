@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/review"
-	"github.com/alphaeron/kit/internal/rulesfile"
-	"github.com/alphaeron/kit/internal/tui"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/review"
+	"github.com/alphaeron/canopy/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/tui"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
 )

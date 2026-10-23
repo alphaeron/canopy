@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // stubFetcher is a controllable Fetcher for exercising the full

@@ -3,7 +3,7 @@ package approval
 import (
 	"slices"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // RuleFiles is one rule with every file it applies to.

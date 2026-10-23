@@ -11,8 +11,8 @@ import (
 	git "github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
 
-	"github.com/alphaeron/kit/internal/gitrepo"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/gitrepo"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 func writeTestFile(t *testing.T, dir, p, content string) {

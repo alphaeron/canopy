@@ -13,7 +13,7 @@ import (
 	huh "charm.land/huh/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/canopy/internal/brand"
 )
 
 func keyPress(s string) tea.KeyPressMsg {

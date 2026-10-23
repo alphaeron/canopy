@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // fakeResolver is a platform resolver with case-insensitive names, groups

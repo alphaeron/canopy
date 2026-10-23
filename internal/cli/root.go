@@ -11,10 +11,10 @@ import (
 	"github.com/go-git/go-git/v6"
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/config"
-	"github.com/alphaeron/kit/internal/gitrepo"
-	"github.com/alphaeron/kit/internal/tui"
+	"github.com/alphaeron/canopy/internal/brand"
+	"github.com/alphaeron/canopy/internal/config"
+	"github.com/alphaeron/canopy/internal/gitrepo"
+	"github.com/alphaeron/canopy/internal/tui"
 )
 
 // gitRepo is the repository wrapper the CLI's commands consume. It is an

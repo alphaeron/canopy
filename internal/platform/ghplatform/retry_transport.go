@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/canopy/internal/approval"
 )
 
 // Rate limit retries: how often a request is retried, the longest

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/canopy/internal/brand"
 )
 
 // homeRoutes is a small command tree: a page, a group with subcommands, and

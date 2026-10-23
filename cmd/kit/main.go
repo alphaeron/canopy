@@ -3,7 +3,7 @@
 // PersistentPreRunE, once cobra has parsed every flag.
 package main
 
-import "github.com/alphaeron/kit/internal/cli"
+import "github.com/alphaeron/canopy/internal/cli"
 
 func main() {
 	cli.Execute()

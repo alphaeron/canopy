@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/alphaeron/kit/internal/logx"
-	"github.com/alphaeron/kit/internal/parallel"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/logx"
+	"github.com/alphaeron/canopy/internal/parallel"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // Tree is one revision of a repository's files as a platform stores them:

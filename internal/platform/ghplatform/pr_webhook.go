@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/go-github/v93/github"
 
-	"github.com/alphaeron/kit/internal/config"
-	"github.com/alphaeron/kit/internal/server"
+	"github.com/alphaeron/canopy/internal/config"
+	"github.com/alphaeron/canopy/internal/server"
 )
 
 // Webhook events and actions that start a review: a pull request opened,

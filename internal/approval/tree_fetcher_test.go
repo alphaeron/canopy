@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // mapTree is an in-memory Tree that records which paths were read, in

@@ -13,10 +13,10 @@ import (
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/gitrepo"
-	"github.com/alphaeron/kit/internal/logx"
-	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/gitrepo"
+	"github.com/alphaeron/canopy/internal/logx"
+	"github.com/alphaeron/canopy/internal/review"
 )
 
 // Source implements review.Source against a local go-git checkout. The file

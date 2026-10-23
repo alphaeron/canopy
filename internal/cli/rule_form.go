@@ -8,9 +8,9 @@ import (
 
 	huh "charm.land/huh/v2"
 
-	"github.com/alphaeron/kit/internal/rulesedit"
-	"github.com/alphaeron/kit/internal/rulesfile"
-	"github.com/alphaeron/kit/internal/tui"
+	"github.com/alphaeron/canopy/internal/rulesedit"
+	"github.com/alphaeron/canopy/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/tui"
 )
 
 // newRuleSeed is the rule editor's seed for a new rule, which is a union

@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 func TestRuleTitles(t *testing.T) {

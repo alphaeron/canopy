@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // ReviewState is the complete, renderable outcome of one review run.

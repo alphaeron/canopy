@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // OnceFetcher runs Fetcher once and returns that result, error included, on

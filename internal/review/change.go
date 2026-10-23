@@ -3,7 +3,7 @@ package review
 import (
 	"context"
 
-	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/canopy/internal/approval"
 )
 
 // Change is a proposed change on a hosted platform (a pull request, a merge

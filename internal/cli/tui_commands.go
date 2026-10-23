@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/rulesedit"
-	"github.com/alphaeron/kit/internal/tui"
+	"github.com/alphaeron/canopy/internal/brand"
+	"github.com/alphaeron/canopy/internal/rulesedit"
+	"github.com/alphaeron/canopy/internal/tui"
 )
 
 // routeFor is c's TUI route opened with v. Every command `--help` lists

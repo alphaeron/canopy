@@ -1,4 +1,4 @@
-module github.com/alphaeron/kit
+module github.com/alphaeron/canopy
 
 go 1.27.2
 

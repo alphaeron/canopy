@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 func TestGetFileRuleChainLayersAndByRule(t *testing.T) {

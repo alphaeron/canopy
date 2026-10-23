@@ -18,8 +18,8 @@ import (
 
 	"github.com/google/go-github/v93/github"
 
-	"github.com/alphaeron/kit/internal/platform/platformtest"
-	"github.com/alphaeron/kit/internal/server"
+	"github.com/alphaeron/canopy/internal/platform/platformtest"
+	"github.com/alphaeron/canopy/internal/server"
 )
 
 // fakeGitHub answers the REST endpoints the platform uses for repository

@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/canopy/internal/brand"
 )
 
 func TestCommandLine(t *testing.T) {

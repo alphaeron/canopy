@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/alphaeron/kit/internal/logx"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/logx"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // Evaluator orchestrates a code review: it fetches the repository's rules,

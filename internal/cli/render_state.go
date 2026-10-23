@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/rulesfile"
-	"github.com/alphaeron/kit/internal/tui"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/tui"
 )
 
 // chainTabs are a file's Chain and Trace views.

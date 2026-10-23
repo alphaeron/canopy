@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // ExecutableTarget pairs an approver target with the self-approval policy of

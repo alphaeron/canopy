@@ -1,7 +1,7 @@
 package approval
 
 import (
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // combineStrategy merges the targets accumulated from the rules above with

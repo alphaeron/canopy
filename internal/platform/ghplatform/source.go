@@ -15,11 +15,11 @@ import (
 
 	"github.com/google/go-github/v93/github"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/logx"
-	"github.com/alphaeron/kit/internal/rulesfile"
-	"github.com/alphaeron/kit/internal/server"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/brand"
+	"github.com/alphaeron/canopy/internal/logx"
+	"github.com/alphaeron/canopy/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/server"
 )
 
 // maxListedFiles is the most files GitHub lists for one pull request; a

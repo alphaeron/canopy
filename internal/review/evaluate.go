@@ -9,7 +9,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/canopy/internal/approval"
 )
 
 // Evaluate reviews pr: it lists the changed files, validates the rules

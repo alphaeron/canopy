@@ -4,7 +4,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/canopy/internal/brand"
 )
 
 // FileName is the name every rules file has, in any directory.

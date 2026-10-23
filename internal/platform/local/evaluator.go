@@ -6,8 +6,8 @@ package local
 import (
 	"log/slog"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/gitrepo"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/gitrepo"
 )
 
 // NewEvaluator is the local platform: rules from repo's working tree, and

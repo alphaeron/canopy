@@ -1,6 +1,6 @@
 package approval
 
-import "github.com/alphaeron/kit/internal/rulesfile"
+import "github.com/alphaeron/canopy/internal/rulesfile"
 
 // FileState represents the state of a single file in the review. Files
 // whose rule chains match share their Layers and Required (see

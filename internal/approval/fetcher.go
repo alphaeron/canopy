@@ -3,7 +3,7 @@ package approval
 import (
 	"context"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // Fetcher retrieves the review rules that apply to a repository. Like every

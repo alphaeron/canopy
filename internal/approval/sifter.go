@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // GetFileRuleChain builds the chain of rules that applies for each specified

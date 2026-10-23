@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"slices"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // ErrRuleNotFound reports that no rule matches what identifies the rule to

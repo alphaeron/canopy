@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/canopy/internal/brand"
 )
 
 // withEnv sets the named variables for the duration of the test, restoring

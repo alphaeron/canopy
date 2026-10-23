@@ -1,6 +1,6 @@
 package review
 
-import "github.com/alphaeron/kit/internal/rulesfile"
+import "github.com/alphaeron/canopy/internal/rulesfile"
 
 // CoverageReport is the pure-data outcome of Engine.Coverage: the file
 // universe, the covered count and percentage, the per-rule breakdown, and

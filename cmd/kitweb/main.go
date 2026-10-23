@@ -16,10 +16,10 @@ import (
 	"runtime/debug"
 	"syscall"
 
-	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/config"
-	"github.com/alphaeron/kit/internal/platform/ghplatform"
-	"github.com/alphaeron/kit/internal/server"
+	"github.com/alphaeron/canopy/internal/brand"
+	"github.com/alphaeron/canopy/internal/config"
+	"github.com/alphaeron/canopy/internal/platform/ghplatform"
+	"github.com/alphaeron/canopy/internal/server"
 )
 
 // platforms builds each hosted platform the server can run, by name. A new

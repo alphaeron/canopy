@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // stubWebhook is a PRWebhook whose deliveries verify with the header

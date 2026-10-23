@@ -15,10 +15,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/logx"
-	"github.com/alphaeron/kit/internal/parallel"
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/logx"
+	"github.com/alphaeron/canopy/internal/parallel"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // Options configure one Match or Coverage run. A zero-value struct means:

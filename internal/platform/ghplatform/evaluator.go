@@ -8,7 +8,7 @@ package ghplatform
 import (
 	"log/slog"
 
-	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/canopy/internal/approval"
 )
 
 // newEvaluator is the GitHub platform reading rules from tree and resolving

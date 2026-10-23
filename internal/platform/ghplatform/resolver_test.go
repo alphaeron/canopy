@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/go-github/v93/github"
 
-	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/canopy/internal/approval"
 )
 
 // teamAPI serves GET /orgs/acme/teams/backend/members in two pages, and 404

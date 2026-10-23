@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alphaeron/kit/internal/approval"
-	"github.com/alphaeron/kit/internal/brand"
-	"github.com/alphaeron/kit/internal/review"
-	"github.com/alphaeron/kit/internal/tui"
+	"github.com/alphaeron/canopy/internal/approval"
+	"github.com/alphaeron/canopy/internal/brand"
+	"github.com/alphaeron/canopy/internal/review"
+	"github.com/alphaeron/canopy/internal/tui"
 )
 
 // repoOverview is the home page's root row: the repository at a glance,

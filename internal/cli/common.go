@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alphaeron/kit/internal/platform/local"
-	"github.com/alphaeron/kit/internal/review"
+	"github.com/alphaeron/canopy/internal/platform/local"
+	"github.com/alphaeron/canopy/internal/review"
 )
 
 // openEngine builds the match engine every command evaluates with: the

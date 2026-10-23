@@ -25,7 +25,7 @@ import (
 
 	"github.com/spf13/viper"
 
-	"github.com/alphaeron/kit/internal/brand"
+	"github.com/alphaeron/canopy/internal/brand"
 )
 
 // Config is the fully resolved configuration for one process. Fields are

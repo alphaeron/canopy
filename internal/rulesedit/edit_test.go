@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/alphaeron/kit/internal/rulesfile"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 )
 
 // TestAddAllowsRepeatedPatterns pins that add appends a pattern the rules

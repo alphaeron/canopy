@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/go-github/v93/github"
 
-	"github.com/alphaeron/kit/internal/approval"
+	"github.com/alphaeron/canopy/internal/approval"
 )
 
 // githubName is what GitHub allows in a login, organization, or team slug

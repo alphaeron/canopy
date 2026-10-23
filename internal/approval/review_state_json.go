@@ -1,6 +1,6 @@
 package approval
 
-import "github.com/alphaeron/kit/internal/rulesfile"
+import "github.com/alphaeron/canopy/internal/rulesfile"
 
 // reviewJSON is the JSON form of a review (see ReviewState.MarshalJSON).
 type reviewJSON struct {
