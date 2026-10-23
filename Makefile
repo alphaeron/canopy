@@ -1,4 +1,4 @@
-.PHONY: test cover cover-html fmt lint vulncheck smoke smoke-serve deadcode doc doc-all doc-serve
+.PHONY: test e2e cover cover-html fmt lint vulncheck smoke smoke-serve deadcode doc doc-all doc-serve
 
 test:
 	@go test -v ./...
@@ -9,6 +9,11 @@ cover:
 
 cover-html: cover
 	@go tool cover -html=coverage.out
+
+# e2e runs each platform's end-to-end tests (internal/platform/<platform>/e2e):
+# the review server as an app against an in-process fake of the platform.
+e2e:
+	@go test -race -count=1 ./internal/platform/.../e2e
 
 smoke:
 	@tmp=$$(mktemp -d) && trap "rm -rf $$tmp" EXIT && \

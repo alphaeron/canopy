@@ -298,5 +298,13 @@ that can be configured from a `platformtest.Fixture` and that counts requests pe
 - that one tree listing is shared between `AllFiles` and the fetch;
 - rejecting incomplete events.
 
+**A hosted platform has end-to-end tests too**, in `internal/platform/<platform>/e2e` (a `doc.go`
+and test files; `make e2e` runs every platform's). They run the real review server as the platform's app
+against an in-process fake of the platform that keeps state and sends signed webhooks. Each case
+stages a repository, starts the server, takes steps as users would (open a pull request, push,
+review), and checks the status the server reports after each one. Then it tears everything down. See
+`ghplatform/e2e`: its fake GitHub handles App JWTs, installation tokens and user tokens, and only
+the app may create check runs.
+
 **Before you're done:** `go test -race ./internal/platform/...`, `golangci-lint run` and
 `make deadcode`.
