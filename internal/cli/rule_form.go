@@ -56,14 +56,19 @@ func (a *approversText) Set(text string) {
 // values to seed it. The pattern validates that it compiles, the name must
 // be non-empty, and the approver list is a free-text field. When rulesFiles
 // is non-empty the form starts with a rules file picker bound to f.RulesFile
-// (which seeds the selection). Esc or the cancel binding aborts the form
-// without touching the caller's value.
-func newRuleForm(f *rulesfile.Rule, rulesFiles []string) *huh.Form {
+// (which seeds the selection). A non-empty note, such as brokenNote, heads
+// the form so a warning is read in the form rather than printed above it.
+// Esc or the cancel binding aborts the form without touching the caller's
+// value.
+func newRuleForm(f *rulesfile.Rule, rulesFiles []string, note string) *huh.Form {
 	strategies := make([]huh.Option[rulesfile.RuleCombineStrategy], 0, 3)
 	for _, s := range rulesfile.RuleCombineStrategies() {
 		strategies = append(strategies, huh.NewOption(s.String(), s))
 	}
 	fields := []huh.Field{}
+	if note != "" {
+		fields = append(fields, huh.NewNote().Title("warning").Description(tui.Clean(note)))
+	}
 	if len(rulesFiles) > 0 {
 		// The target rules file comes first: it decides where the rule lives.
 		opts := make([]huh.Option[string], len(rulesFiles))
@@ -122,10 +127,11 @@ func newRuleForm(f *rulesfile.Rule, rulesFiles []string) *huh.Form {
 // validation blocks submission with an empty pattern, an empty name, or a
 // pattern that does not compile, so on a nil error the pattern is compiled
 // and the name is non-empty. A non-empty rulesFiles adds a rules file picker,
-// and the chosen file is returned in RulesFile.
-func runRuleForm(f rulesfile.Rule, rulesFiles []string) (rulesfile.Rule, error) {
+// and the chosen file is returned in RulesFile; a non-empty note heads the
+// form (see newRuleForm).
+func runRuleForm(f rulesfile.Rule, rulesFiles []string, note string) (rulesfile.Rule, error) {
 	fields := f
-	submitted, err := tui.RunForm(newRuleForm(&fields, rulesFiles))
+	submitted, err := tui.RunForm(newRuleForm(&fields, rulesFiles, note))
 	if err != nil {
 		return f, err
 	}
@@ -145,7 +151,7 @@ func newRuleFormPage(name string, seed rulesfile.Rule, rulesFiles []string, subm
 		summary = "rule " + seed.Name
 	}
 	fields := &seed
-	return tui.NewFormPage(name, summary, newRuleForm(fields, rulesFiles), func(ctx context.Context) (string, error) {
+	return tui.NewFormPage(name, summary, newRuleForm(fields, rulesFiles, ""), func(ctx context.Context) (string, error) {
 		return submit(ctx, *fields)
 	})
 }

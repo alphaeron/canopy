@@ -23,22 +23,25 @@ var rulesAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a rule to a rules file",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s, err := openWorkspace(cmd.Context(), cliLog())
+		mode, _ := resolveOutputMode(cmd)
+		interactive := mode == modeTUI && !cmd.Flags().Changed("pattern")
+		s, err := openWorkspace(cmd.Context(), workspaceLog(interactive))
 		if err != nil {
 			return err
 		}
-		if err := warnBroken(os.Stderr, s); err != nil {
-			return err
+		if !interactive {
+			if err := warnBroken(os.Stderr, s); err != nil {
+				return err
+			}
 		}
 		fileFlag, _ := cmd.Flags().GetString("file")
 		target, err := resolveFile(s, fileFlag)
 		if err != nil {
 			return err
 		}
-		mode, _ := resolveOutputMode(cmd)
 
 		var fields rulesfile.Rule
-		if mode == modeTUI && !cmd.Flags().Changed("pattern") {
+		if interactive {
 			seed := newRuleSeed()
 			var choices []string
 			if target == "" {
@@ -47,7 +50,7 @@ var rulesAddCmd = &cobra.Command{
 				}
 				seed.RulesFile = nearestRulesFile(s)
 			}
-			fields, err = runRuleForm(seed, choices)
+			fields, err = runRuleForm(seed, choices, brokenNote(s))
 			if errors.Is(err, tui.ErrAborted) {
 				fmt.Fprintln(os.Stderr, "add aborted")
 				return nil

@@ -27,17 +27,27 @@ var rulesRemoveCmd = &cobra.Command{
 		pattern := args[0]
 		force, _ := cmd.Flags().GetBool("force")
 		mode, _ := resolveOutputMode(cmd)
-		s, err := openWorkspace(cmd.Context(), cliLog())
+		interactive := mode == modeTUI
+		s, err := openWorkspace(cmd.Context(), workspaceLog(interactive))
 		if err != nil {
 			return err
 		}
-		if err := warnBroken(os.Stderr, s); err != nil {
-			return err
+		if !interactive {
+			if err := warnBroken(os.Stderr, s); err != nil {
+				return err
+			}
 		}
-		target, err := ruleTarget(s, valuesFrom(cmd, args), pattern, mode == modeTUI)
+		target, err := ruleTarget(s, valuesFrom(cmd, args), pattern, interactive)
 		if errors.Is(err, tui.ErrAborted) {
 			fmt.Fprintln(os.Stderr, "remove aborted")
 			return nil
+		}
+		// The rule picker has closed, so the warning no longer lands above
+		// it; it comes before the confirmation, or explains a missing rule.
+		if interactive {
+			if werr := warnBroken(os.Stderr, s); werr != nil {
+				return werr
+			}
 		}
 		if err != nil {
 			return err

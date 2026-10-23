@@ -26,25 +26,34 @@ var rulesEditCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pattern := args[0]
 		mode, _ := resolveOutputMode(cmd)
-		s, err := openWorkspace(cmd.Context(), cliLog())
+		interactive := mode == modeTUI
+		s, err := openWorkspace(cmd.Context(), workspaceLog(interactive))
 		if err != nil {
 			return err
 		}
-		if err := warnBroken(os.Stderr, s); err != nil {
-			return err
+		if !interactive {
+			if err := warnBroken(os.Stderr, s); err != nil {
+				return err
+			}
 		}
-		target, err := ruleTarget(s, valuesFrom(cmd, args), pattern, mode == modeTUI)
+		target, err := ruleTarget(s, valuesFrom(cmd, args), pattern, interactive)
 		if errors.Is(err, tui.ErrAborted) {
 			fmt.Fprintln(os.Stderr, "edit aborted")
 			return nil
 		}
 		if err != nil {
+			if interactive {
+				// A skipped rules file may be why the rule was not found.
+				if werr := warnBroken(os.Stderr, s); werr != nil {
+					return werr
+				}
+			}
 			return err
 		}
 
 		fields := editSeed(target)
-		if mode == modeTUI {
-			fields, err = runRuleForm(fields, nil)
+		if interactive {
+			fields, err = runRuleForm(fields, nil, brokenNote(s))
 			if errors.Is(err, tui.ErrAborted) {
 				fmt.Fprintln(os.Stderr, "edit aborted")
 				return nil

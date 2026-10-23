@@ -55,6 +55,17 @@ func loadWorkspace(ctx context.Context, repo *gitRepo, engine *review.Engine) (*
 	return &rulesedit.Workspace{Root: root, Rules: rules, Broken: broken, Validator: engine.Source.Evaluator()}, nil
 }
 
+// workspaceLog is the logger a rules command opens its workspace with:
+// cliLog(), or quietLog when an interactive prompt follows, so no log line
+// lands above the prompt. Such a command shows the skipped rules files in
+// the prompt (brokenNote) or after it (warnBroken) instead.
+func workspaceLog(interactive bool) *slog.Logger {
+	if interactive {
+		return quietLog
+	}
+	return cliLog()
+}
+
 // warnBroken tells the user, on w (stderr, so stdout stays parseable), which
 // rules files s skipped because they cannot be read or parsed.
 func warnBroken(w io.Writer, s *rulesedit.Workspace) error {
