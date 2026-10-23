@@ -36,7 +36,7 @@ func (unionStrategy) apply(current, incoming ExecutableTargets) ExecutableTarget
 	return append(combined, incoming...)
 }
 
-func (unionStrategy) note() string { return "union strategy - approvers combined with OR logic" }
+func (unionStrategy) note() string { return "union strategy - approvers added to those required above" }
 
 func (unionStrategy) effect() string { return "adds its approvers to those required above" }
 
@@ -58,7 +58,7 @@ func (intersectStrategy) apply(current, incoming ExecutableTargets) ExecutableTa
 }
 
 func (intersectStrategy) note() string {
-	return "intersection strategy - approvers combined with AND logic"
+	return "intersection strategy - only approvers shared with those required above kept"
 }
 
 func (intersectStrategy) effect() string { return "keeps only approvers also required above" }

@@ -1,5 +1,26 @@
 # Canopy - A Modular Code Review Tool
 
+Canopy decides who must approve a change from `RULES` files kept in the repository. It ships as two binaries: `canopy`, a CLI that previews and edits the rules of a local checkout, and `canopyweb`, a review server that reviews pull requests on a hosted platform (GitHub) and reports the outcome back as a status.
+
+## Usage
+
+```sh
+go install ./cmd/canopy      # the CLI
+go build ./cmd/canopyweb     # the review server (see Review Server)
+```
+
+Every `canopy` command runs against the git repository containing the current directory. Run bare on a terminal, `canopy` opens a TUI listing every command; `--json` prints any command's result as JSON instead, and `-v` enables debug logging.
+
+| Command | Purpose |
+|---|---|
+| `canopy init [path]` | Create a `RULES` file, optionally with a first rule (`--pattern`, `--approver 'target count'`, ...) |
+| `canopy rules list` / `files` / `get` | List the rules, list the `RULES` files, or show the rules for files or patterns |
+| `canopy rules add` / `edit` / `remove` | Change a rule in a `RULES` file |
+| `canopy match` | Match files against the rules (`--changed`, `--scope`, `--diff`, `--by-scope`) |
+| `canopy coverage` | Report how much of the repository the rules cover |
+| `canopy validate` | Validate `RULES` files as the review's platform does |
+| `canopy review [pattern...]` | Evaluate who must approve each file, given `--author`, `--approver`, `--owner`, and `--label`; the exit status is the verdict |
+
 ## Architecture
 
 ### Root as Global Authority
@@ -61,7 +82,7 @@ Each directory in the repository can host a `RULES` file to localize approval ru
     ignore_parent_dirs: false
 
     # Controls how rules merge when multiple pattern matches collide across directories
-    # Options: union, override, intersect
+    # Options: union, override, intersect; omitted, the rule overrides
     combine_strategy: "union"
 
     # If true, this rule will NOT apply to nested subdirectories
@@ -141,23 +162,23 @@ The runtime application evaluates a change (a GitHub pull request, or the local 
    2. SIFT PHASE   ──► Match target files against rule patterns; process configuration scoping
           │
           ▼
-   3. APPROVE PHASE ──► Compute final approval metrics, check self-approval rights, verify signatures
+   3. APPROVE PHASE ──► Resolve approver targets, check self-approval rights, compute final approval metrics
 ```
 
 ### Phase Breakdown
 
 #### Phase 1: Fetch
-1. List the change's file paths through the platform, counting a renamed file at both its old and new paths. (GitHub: the pull request's files through the API; the webhook does not carry them. Local: the working tree's status against `HEAD`.)
+1. List the change's file paths through the platform, counting a renamed file at both its old and new paths. (GitHub: the comparison of the base and head commits the webhook names, which does not carry the files itself; see [Database](#database) for large pull requests. Local: the working tree's status against `HEAD`.)
 2. For each unique file path, systematically map the trajectory from its local leaf directory vertically upward to the root repository level.
 3. Read the `RULES` files along the path sequentially.
-4. If a file specifies `settings.ignore_parent_dirs: true`, halt tree traversal immediately.
+4. If a rule specifies `ignore_parent_dirs: true`, halt tree traversal immediately.
 
 #### Phase 2: Sift
 1. Traverse the collected configurations chronologically from Top to Bottom (Root down to Leaf).
 2. Assess every localized rule block against the targeted file:
    * Skip the rule block completely if `current_directory_only: true` and the file is nested.
    * Match the rule's `pattern`, a regular expression, against the file's full repository-relative path.
-3. If a pattern matches, reference the file's `combine_strategy`:
+3. If a pattern matches, reference the rule's `combine_strategy`:
    * If `override`, purge all rule criteria accumulated from higher ancestral folders for this pattern space and insert the current criteria.
    * If `union`, append the rule constraints directly into the active evaluation array.
    * If `intersect`, keep only the criteria present in both the parent accumulation and the current rule.
@@ -168,7 +189,7 @@ The runtime application evaluates a change (a GitHub pull request, or the local 
    * Resolve each `approvers` target to its member set through the platform (GitHub: `org/team-slug` targets expand to the team's members).
    * Apply the self-approval policy: if `self_approve` is `false`, slice the PR Author out of the eligible approver matching array.
    * Increment counts when an active approver matches a member identity target.
-   * If a rule's targets have all been pruned away (inactive members, excluded author, or unresolvable targets), the rule is **skipped and the skip is recorded as an error**; it still falls back to the preceding rule's criteria, but the final overall state terminates `error` regardless of that fallback.
+   * If a rule's targets have all been pruned away (inactive members, excluded author, or targets the platform does not know), the rule is **skipped and the skip is recorded as an error**; it still falls back to the preceding rule's criteria, but the final overall state terminates `error` regardless of that fallback.
 3. Mark a rule block as **Satisfied** once each target's internal `actual_count >= required_count`.
 4. Report the result back on the platform — passing only if all rules across all files resolve to a **Satisfied** state. GitHub: a completed check run named `canopy` on the pull request's head commit. Its title summarizes the outcome in one line, and its summary lists in full what the outcome is about (the approvers still needed, or the invalid `RULES` files) and any warnings, such as files no rule covers or a very large pull request. Its conclusion is `success` when the review is satisfied, `action_required` while approvals are missing, and `failure` when the pull request carries a blocking label, proposes an invalid `RULES` file, or the review could not produce a valid result: an internal `error` status (a GitHub failure, a listing too large to evaluate, a skipped or unsatisfiable rule) or a review that could not run or timed out; the title tells these apart. Each report is a new check run, and GitHub shows the latest. Require the `canopy` check in branch protection to block merging until it succeeds. The review never comments on the pull request.
 
@@ -246,3 +267,7 @@ Each review also marks its check run in progress before it evaluates, so a pull 
 With `database_url` set, the server keeps what it reads from GitHub that cannot go stale (base tree listings by commit, rules files by blob SHA) in PostgreSQL, shared by every replica, behind its in-memory cache, and records every verified webhook delivery and every review: its pull request and revisions, approvals, owners, and labels, the full review state, the outcome it published, the approver targets it evaluated, and its timings. The record is never read back to decide a review. A team's members, a user, and a pull request's reviews and labels can change, so they are read from GitHub on every review; the last answer is kept with its ETag and used only when GitHub confirms it is unchanged (a `304 Not Modified`, which does not count against the rate limit). Cached rows are authenticated with `database_key`, which never reaches the database, and a rules file is checked against its SHA, so write access to the database alone cannot change the rules or team members a review sees. The server prunes the cache hourly (tree listings and team, user, review, and label responses after a week, rules files after a month; a pruned entry costs one more read from GitHub) and the ordering of a pull request after a month without reviews; the record of deliveries and reviews is kept. The server creates its tables at startup; while the project is in development, a schema change means recreating the database.
 
 A pull request's changed files come from GitHub's comparison of the base and head commits the webhook names, never from the pull request's file listing, which GitHub answers for whatever the head is by then. A comparison listing as many files as GitHub lists (300), or none, is confirmed from the merge-base and head trees, with a warning that it is large when it was cut short; a base tree too large for one listing is listed a directory at a time. One that still cannot be listed completely errors rather than being reviewed incompletely.
+
+## Development
+
+The `Makefile` wraps the common tasks: `make test`, `make lint` (golangci-lint), `make e2e` (each hosted platform's end-to-end tests), `make smoke` and `make smoke-serve` (build each binary and exercise it), `make deadcode`, `make vulncheck`, and `make doc` / `make doc-serve` for the package documentation. To add a review platform, see [internal/platform/README.md](internal/platform/README.md).

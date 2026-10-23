@@ -23,7 +23,8 @@ type Change interface {
 	// self-approval (see approval.ReviewInput.Author); its approvers, worked
 	// out from the reviews it has (each reviewer's latest decisive review
 	// counts); the repository owners
-	// who review files no rule covers; and IsActive. Names need not be
+	// who review files no rule covers; IsActive; and its labels, read when
+	// the review runs (see approval.ReviewInput.Labels). Names need not be
 	// canonical: the review canonicalizes them with the platform's
 	// resolver.
 	//

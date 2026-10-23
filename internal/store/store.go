@@ -1,7 +1,8 @@
 // Package store is the review server's PostgreSQL database: caches of
 // immutable or revalidated platform data (a server.RepoStore), and the
 // record of the webhooks the server received and the reviews it ran (a
-// server.Recorder). schema.sql documents each table and what may and may
+// server.Recorder, read back for review pages as a server.ReviewHistory).
+// schema.sql documents each table and what may and may
 // not be read from it.
 package store
 

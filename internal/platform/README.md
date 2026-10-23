@@ -81,7 +81,7 @@ type ApproverResolver interface {
   resolver can then serve every review without its group membership going stale.
   To spare the rate limit, make the requests conditional instead, below the resolver: GitHub's
   installation client keeps the last answer for a team's members, a user, and a pull request's
-  reviews in the server's `RepoCache` with its ETag, and serves it only when GitHub answers
+  reviews and labels in the server's `RepoCache` with its ETag, and serves it only when GitHub answers
   `304 Not Modified` (`ghplatform/conditional_transport.go`). Never serve such an answer without
   that confirmation.
 - **Validate before calling the API.** `RULES` files are untrusted input. If your platform has
@@ -151,7 +151,8 @@ type PullRequest interface {
     review.Change // review.Source + ReviewInput(ctx) and Warnings()
     Key() string
     Info() server.PullRequestInfo
-    Report(ctx context.Context, o approval.Outcome) error
+    Start(ctx context.Context, detailsURL string) error
+    Report(ctx context.Context, o approval.Outcome, detailsURL string) error
 }
 ```
 
@@ -175,6 +176,12 @@ type PullRequest interface {
   scope, the repository lower-cased as `Key` names it, the number, base and head revisions,
   author, and the event and action that requested the review (GitHub:
   `pull_request.synchronize`). From the event alone, without calling the platform.
+- **`Start`**: publish that a review is running, in a state of its own, under the same name
+  `Report` uses, so the next report replaces it (GitHub: an in-progress check run). The server
+  calls it before it evaluates.
+- **`detailsURL`**: the review page (see the top-level README's "Review pages"), or `""` when
+  the server serves none. `Start` and `Report` link the status to it when it is set (GitHub: the
+  check run's details URL, and a note at the end of its summary).
 - **`Report`**: publish `o` as the pull request's status, replacing the earlier one (one name per
   platform; GitHub: a completed check run named `canopy` on the head commit, a new one per report).
   Map `approval.Passed`, `approval.Pending`, and `approval.Failed` to distinct states, and
@@ -295,7 +302,7 @@ func TestGitLabResolverMeetsTheResolverContract(t *testing.T) {
 |---|---|
 | `RunSourceContract` | `AllFiles` is the revision the platform reads rules from (`BaseRevision` or `HeadRevision`); `ChangedFiles` covers a modify, an add, a delete and both sides of a rename, and is empty with no change; diffs show each change and are `""` for untouched paths; the evaluator fetches the rules files |
 | `RunReviewInputContract` | *(hosted)* the author is reported; approvals are each reviewer's latest decision, sorted and deduplicated; change requests and dismissals cancel, comments don't; the author's own approval is left out |
-| `RunStatusReporterContract` | *(hosted)* one report per call; passed, pending, and failed in distinct states, and errored neither passed nor pending; a later report replaces the earlier one; an oversized summary is cut, not rejected |
+| `RunStatusReporterContract` | *(hosted)* one report per call; passed, pending, and failed in distinct states, and errored neither passed nor pending; a later report replaces the earlier one; a start is a running state of its own that a report replaces, both linking the review page; an oversized summary is cut, not rejected |
 | `RunTreeContract` | `Files` is complete and sorted; `ReadFile` round-trips contents; a missing path is `fs.ErrNotExist` |
 | `RunResolverContract` | a user resolves to itself; `Canonical` is idempotent; a group resolves to its members; an unknown group is `ErrUnknownTarget`; a malformed target is rejected offline, without an API call |
 
