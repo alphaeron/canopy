@@ -1,4 +1,4 @@
-.PHONY: test e2e cover cover-html fmt lint vulncheck smoke smoke-serve deadcode doc doc-all doc-serve docs release-check snapshot
+.PHONY: test e2e cover cover-html fmt lint vulncheck smoke smoke-serve deadcode doc doc-all doc-serve docs release-check snapshot image local-up local-down tf-check
 
 test:
 	@go test -v ./...
@@ -73,3 +73,28 @@ release-check:
 # Windows and macOS installers are built only by the release workflow.
 snapshot:
 	@$(GORELEASER) release --snapshot --clean $(if $(shell command -v snapcraft),,--skip=snapcraft)
+
+# Deployment of the review server (see deploy/README.md).
+IMAGE ?= canopyweb:dev
+PLATFORMS ?= linux/arm64
+
+# image builds the canopyweb container image (Dockerfile) for PLATFORMS.
+image:
+	@docker buildx build --platform $(PLATFORMS) -t $(IMAGE) --load .
+
+# local-up starts canopyweb, PostgreSQL, and LocalStack (deploy/local);
+# local-down stops them and deletes their data.
+local-up:
+	@deploy/local/up.sh
+
+local-down:
+	@deploy/local/down.sh
+
+# tf-check checks the Terraform's formatting and validates each environment
+# without touching any state.
+tf-check:
+	@terraform fmt -check -recursive deploy/terraform
+	@for env in deploy/terraform/envs/*/; do \
+		terraform -chdir=$$env init -backend=false -input=false >/dev/null && \
+		terraform -chdir=$$env validate || exit 1; \
+	done

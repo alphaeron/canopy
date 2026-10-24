@@ -1,0 +1,66 @@
+# The local environment: canopyweb, PostgreSQL, and LocalStack for the AWS
+# services it uses. Start it with deploy/local/up.sh (make local-up), which
+# provisions LocalStack with Terraform and passes the secrets to canopyweb.
+name: canopy
+
+services:
+  localstack:
+    image: localstack/localstack:2026.10.2
+    ports:
+      - "127.0.0.1:4566:4566"
+    environment:
+      SERVICES: secretsmanager,sts
+      # Recent LocalStack images need an auth token (a free account has one).
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:4566/_localstack/health"]
+      interval: 2s
+      retries: 30
+
+  postgres:
+    image: postgres:17.11
+    ports:
+      - "127.0.0.1:55432:5432"
+    environment:
+      POSTGRES_USER: canopy
+      POSTGRES_PASSWORD: canopy
+      POSTGRES_DB: canopy
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "canopy"]
+      interval: 2s
+      retries: 30
+
+  canopyweb:
+    build:
+      context: ../..
+    read_only: true
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CANOPY_VERBOSE: "true"
+      CANOPY_PUBLIC_URL: http://localhost:8080
+      CANOPY_DATABASE_URL: postgres://canopy:canopy@postgres:5432/canopy?sslmode=disable
+      # From Secrets Manager, passed through by up.sh.
+      CANOPY_GITHUB_APP_ID:
+      CANOPY_GITHUB_PRIVATE_KEY:
+      CANOPY_GITHUB_WEBHOOK_SECRET:
+      CANOPY_DATABASE_KEY:
+      CANOPY_LINK_KEY:
+
+  # The AWS CLI against LocalStack: docker compose run --rm awscli <command>.
+  awscli:
+    image: amazon/aws-cli:2.38.5
+    profiles: [tools]
+    environment:
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+
+volumes:
+  postgres:

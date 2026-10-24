@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (git-ignored) and fill in.
+public_url      = "https://canopy.example.com"
+certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+image_tag       = "v0.1.0"
+
+# 0 for the first apply; see deploy/README.md.
+desired_count = 0
+
+canopy_environment = {
+  CANOPY_BLOCKING_LABELS = "do not merge"
+}

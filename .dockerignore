@@ -1,0 +1,8 @@
+.git
+.github
+build
+dist
+deploy
+docs
+*.out
+*.test

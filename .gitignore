@@ -26,3 +26,13 @@ dist/
 
 # Generated documentation (make docs, internal/docgen)
 build/
+
+# Terraform working files, state, and per-deployment settings (deploy/)
+.terraform/
+*.tfstate
+*.tfstate.*
+deploy/terraform/envs/*/backend.hcl
+deploy/terraform/envs/*/terraform.tfvars
+
+# Local environment data (deploy/local/up.sh)
+deploy/local/.data/
