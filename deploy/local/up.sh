@@ -1,4 +1,5 @@
 #!/bin/sh
+
 # up.sh — starts the local environment (compose.yaml). It starts LocalStack
 # and PostgreSQL, applies deploy/terraform/envs/local to LocalStack, reads
 # the secrets back from Secrets Manager as ECS would inject them, and starts
@@ -8,14 +9,16 @@
 # TF_VAR_github_webhook_secret, it configures a throw-away GitHub App: the
 # server runs and verifies webhooks signed with the secret
 # "local-webhook-secret", but cannot call GitHub.
-set -eu
+set -eux
 
 here=$(cd "$(dirname "$0")" && pwd)
 tf="$here/../terraform/envs/local"
 data="$here/.data"
 compose() { docker compose -f "$here/compose.yaml" "$@"; }
 
-compose up -d --wait localstack postgres
+compose up -d localstack postgres
+
+sleep 15
 
 if [ -z "${TF_VAR_github_private_key:-}" ]; then
 	mkdir -p "$data"

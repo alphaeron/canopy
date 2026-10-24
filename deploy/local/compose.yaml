@@ -7,20 +7,19 @@ services:
   localstack:
     image: localstack/localstack:2026.10.2
     ports:
-      - "127.0.0.1:4566:4566"
+      - "4566:4566"
     environment:
+      DEBUG: 1
       SERVICES: secretsmanager,sts
       # Recent LocalStack images need an auth token (a free account has one).
-      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
-    healthcheck:
-      test: ["CMD", "curl", "-fs", "http://localhost:4566/_localstack/health"]
-      interval: 2s
-      retries: 30
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
+    volumes:
+      - "~/.docker/run/docker.sock:/var/run/docker.sock"
 
   postgres:
     image: postgres:17.11
     ports:
-      - "127.0.0.1:55432:5432"
+      - "55432:5432"
     environment:
       POSTGRES_USER: canopy
       POSTGRES_PASSWORD: canopy
@@ -37,7 +36,7 @@ services:
       context: ../..
     read_only: true
     ports:
-      - "127.0.0.1:8080:8080"
+      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
