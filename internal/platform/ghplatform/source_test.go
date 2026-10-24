@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -50,7 +51,10 @@ func TestGitHubTruncatedTreeFailsClosed(t *testing.T) {
 // TestGitHubSourceListsBaseTreeOnce: the file universe and the rules fetch
 // share one base tree listing.
 func TestGitHubSourceListsBaseTreeOnce(t *testing.T) {
-	fake := &fakeGitHub{base: map[string]string{rulesfile.FileName: "- \".*\":\n  name: \"Root\"\n"}}
+	fake := &fakeGitHub{
+		base:    map[string]string{rulesfile.FileName: "- \".*\":\n  name: \"Root\"\n"},
+		prPages: [][]*github.CommitFile{{{Filename: new("a.go")}}},
+	}
 	src := testSource(fake.client(t))
 
 	if _, err := src.AllFiles(t.Context()); err != nil {
@@ -61,6 +65,36 @@ func TestGitHubSourceListsBaseTreeOnce(t *testing.T) {
 	}
 	if got := fake.callCount("tree"); got != 1 {
 		t.Errorf("tree listings = %d, want 1", got)
+	}
+}
+
+// TestGitHubFetchReadsOnlyApplicableRules: the rules fetch reads the rules
+// files in the directories of the changed files, the root's included, and
+// neither reads nor fails on any other.
+func TestGitHubFetchReadsOnlyApplicableRules(t *testing.T) {
+	const rules = "- \".*\":\n  name: \"R\"\n"
+	fake := &fakeGitHub{
+		base: map[string]string{
+			rulesfile.FileName:               rules,
+			rulesfile.PathInDir("svc"):       rules,
+			rulesfile.PathInDir("svc/api"):   rules,
+			rulesfile.PathInDir("svc/other"): "not: [valid",
+			rulesfile.PathInDir("docs"):      rules,
+			"svc/api/handler.go":             "",
+			"svc/other/x.go":                 "",
+		},
+		prPages: [][]*github.CommitFile{{{Filename: new("svc/api/handler.go")}, {Filename: new("svc/api/v2/new.go")}}},
+	}
+	got, err := testSource(fake.client(t)).Evaluator().Fetch.Execute(t.Context())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	want := []string{rulesfile.FileName, rulesfile.PathInDir("svc"), rulesfile.PathInDir("svc/api")}
+	if paths := got.Paths(); !slices.Equal(paths, want) {
+		t.Errorf("rules files = %v, want %v", paths, want)
+	}
+	if n := fake.callCount("blob"); n != len(want) {
+		t.Errorf("blob reads = %d, want %d", n, len(want))
 	}
 }
 
@@ -81,7 +115,7 @@ func TestGitHubSourceIsOnTheGitHubPlatform(t *testing.T) {
 	if !ok {
 		t.Fatalf("once fetcher's fetcher = %T, want *approval.TreeFetcher", once.Fetcher)
 	}
-	if tree, ok := fetch.Tree.(*baseTree); !ok || tree != src.tree || tree.owner != "o" || tree.repo != "r" || tree.sha != "base" {
+	if rules, ok := fetch.Tree.(*applicableRules); !ok || rules.tree != src.tree || src.tree.owner != "o" || src.tree.repo != "r" || src.tree.sha != "base" {
 		t.Errorf("fetch tree = %#v, want the source's base tree of o/r@base", fetch.Tree)
 	}
 	if _, ok := src.Evaluator().Resolver.(*ApproverResolver); !ok {
@@ -399,5 +433,24 @@ func TestCheckSummary(t *testing.T) {
 	long := checkSummary(approval.Outcome{Summary: strings.Repeat("ü", 100_000), Items: make([]string, 100_000)}, maxCheckSummary)
 	if len(long) > maxCheckSummary {
 		t.Errorf("checkSummary of a huge outcome is %d bytes, over GitHub's limit", len(long))
+	}
+}
+
+// TestGitHubQueueCreatesAQueuedCheckRun: Queue publishes a queued check run
+// under the review's name on the head revision, linking the review page.
+func TestGitHubQueueCreatesAQueuedCheckRun(t *testing.T) {
+	fake := &fakeGitHub{}
+	const link = "https://canopy.example.com/reviews/o/r/7/head?sig=x"
+	if err := testSource(fake.client(t)).Queue(t.Context(), link); err != nil {
+		t.Fatalf("Queue: %v", err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.checkRuns) != 1 {
+		t.Fatalf("check runs = %d, want 1", len(fake.checkRuns))
+	}
+	run := fake.checkRuns[0]
+	if run.Name != checkName || run.HeadSHA != "head" || run.GetStatus() != "queued" || run.GetDetailsURL() != link || run.GetOutput().GetTitle() != queuedTitle {
+		t.Errorf("check run = %+v, want a queued %s run on head linking %s", run, checkName, link)
 	}
 }

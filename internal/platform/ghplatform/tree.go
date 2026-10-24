@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"path"
 	"slices"
 	"sync"
 
@@ -75,6 +76,52 @@ func (b *baseTree) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	}
 	b.cache.PutBlob(sha, data)
 	return data, nil
+}
+
+// applicableRules is a pull request's base tree as its rules fetch sees it:
+// only the rules files that can apply to a changed file, those in a
+// directory the file is in at any depth (the root included). A rules file applies
+// only to files at or below its directory (see approval.GetFileRuleChain),
+// so the review's rules are the same as from the whole tree, but a large
+// repository's other rules files are neither read nor counted against the
+// installation's rate limit, and a broken one elsewhere does not fail the
+// review. The tree is listed while the changed files are, so the listing
+// adds no time to a review whose changes take longer to list.
+type applicableRules struct {
+	tree    *baseTree
+	changed func(context.Context) ([]string, error)
+}
+
+// Files lists the rules files in the directories the changed files are in.
+func (a *applicableRules) Files(ctx context.Context) ([]string, error) {
+	var (
+		wg                  sync.WaitGroup
+		files, changed      []string
+		filesErr, changeErr error
+	)
+	wg.Go(func() { files, filesErr = a.tree.Files(ctx) })
+	wg.Go(func() { changed, changeErr = a.changed(ctx) })
+	wg.Wait()
+	if err := errors.Join(filesErr, changeErr); err != nil {
+		return nil, err
+	}
+	dirs := map[string]bool{}
+	for _, f := range changed {
+		for d := path.Dir(f); !dirs[d]; d = path.Dir(d) {
+			dirs[d] = true
+			if d == "." {
+				break
+			}
+		}
+	}
+	return slices.DeleteFunc(files, func(p string) bool {
+		return !rulesfile.IsRulesFile(p) || !dirs[path.Dir(p)]
+	}), nil
+}
+
+// ReadFile reads path from the base tree.
+func (a *applicableRules) ReadFile(ctx context.Context, path string) ([]byte, error) {
+	return a.tree.ReadFile(ctx, path)
 }
 
 // readBlob reads the blob sha, at path in the tree, through the API. The git

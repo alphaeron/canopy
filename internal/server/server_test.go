@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -100,7 +101,11 @@ type stubPullRequest struct {
 	startOnce sync.Once
 	mu        sync.Mutex
 	reports   []approval.Outcome
+	queues    int           // Queue calls
+	statuses  []string      // "queued", "running", or "reported", for each call in order
 	starts    int           // Start calls
+	queued    chan struct{} // closed on the first Queue call
+	running   chan struct{} // closed on the first Start call
 	links     []string      // the details URL of each Start and Report, in order
 	done      chan struct{} // closed on the first report
 }
@@ -112,6 +117,8 @@ func newStubPullRequest() *stubPullRequest {
 		changed: []string{"main.go"},
 		done:    make(chan struct{}),
 		started: make(chan struct{}),
+		queued:  make(chan struct{}),
+		running: make(chan struct{}),
 	}
 }
 
@@ -167,10 +174,25 @@ func (c *stubPullRequest) ReadHead(_ context.Context, path string) ([]byte, erro
 	return []byte(data), nil
 }
 
+func (c *stubPullRequest) Queue(context.Context, string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.queues++
+	c.statuses = append(c.statuses, "queued")
+	if c.queues == 1 {
+		close(c.queued)
+	}
+	return nil
+}
+
 func (c *stubPullRequest) Start(_ context.Context, detailsURL string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.starts++
+	c.statuses = append(c.statuses, "running")
+	if c.starts == 1 {
+		close(c.running)
+	}
 	c.links = append(c.links, detailsURL)
 	return nil
 }
@@ -179,6 +201,7 @@ func (c *stubPullRequest) Report(_ context.Context, o approval.Outcome, detailsU
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reports = append(c.reports, o)
+	c.statuses = append(c.statuses, "reported")
 	c.links = append(c.links, detailsURL)
 	if len(c.reports) == 1 {
 		close(c.done)
@@ -298,6 +321,79 @@ func TestWebhookReviewsAndReportsOnce(t *testing.T) {
 	defer c.mu.Unlock()
 	if len(c.reports) != 1 || c.reports[0].Verdict != approval.Passed {
 		t.Errorf("reports = %+v, want one passed report", c.reports)
+	}
+}
+
+// TestIdleReviewPublishesNoQueuedStatus: a review a free worker starts at
+// once goes straight to running, spending no request on a queued status.
+func TestIdleReviewPublishesNoQueuedStatus(t *testing.T) {
+	c := newStubPullRequest()
+	s := newTestServer(t, testOptions(), &stubWebhook{name: "stub", changes: map[string]PullRequest{"pr": c}})
+
+	if code, _ := post(t, s, "/webhooks/stub", "pr", "ok"); code != http.StatusAccepted {
+		t.Fatalf("webhook = %d, want 202", code)
+	}
+	c.wait(t)
+	s.marks.Wait()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if want := []string{"running", "reported"}; !slices.Equal(c.statuses, want) {
+		t.Errorf("statuses = %v, want %v", c.statuses, want)
+	}
+}
+
+// TestWaitingReviewIsMarkedQueued: a review waiting behind a busy worker
+// shows as queued, then running, then reported, in that order.
+func TestWaitingReviewIsMarkedQueued(t *testing.T) {
+	busy := newStubPullRequest()
+	busy.block, busy.key, busy.release = true, "busy", make(chan struct{})
+	waiting := newStubPullRequest()
+	waiting.key = "waiting"
+	s := newTestServer(t, testOptions(), &stubWebhook{name: "stub", changes: map[string]PullRequest{"busy": busy, "waiting": waiting}})
+
+	if code, _ := post(t, s, "/webhooks/stub", "busy", "ok"); code != http.StatusAccepted {
+		t.Fatalf("busy webhook = %d, want 202", code)
+	}
+	<-busy.started // the only worker is taken
+	if code, _ := post(t, s, "/webhooks/stub", "waiting", "ok"); code != http.StatusAccepted {
+		t.Fatalf("waiting webhook = %d, want 202", code)
+	}
+	select {
+	case <-waiting.queued:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the waiting review was never marked queued")
+	}
+	close(busy.release)
+	waiting.wait(t)
+	waiting.mu.Lock()
+	defer waiting.mu.Unlock()
+	if want := []string{"queued", "running", "reported"}; !slices.Equal(waiting.statuses, want) {
+		t.Errorf("statuses = %v, want %v", waiting.statuses, want)
+	}
+}
+
+// TestReviewStartsWhileItEvaluates: the running status is published while
+// the review evaluates, not before, and the report follows it.
+func TestReviewStartsWhileItEvaluates(t *testing.T) {
+	c := newStubPullRequest()
+	c.block, c.release = true, make(chan struct{})
+	s := newTestServer(t, testOptions(), &stubWebhook{name: "stub", changes: map[string]PullRequest{"pr": c}})
+
+	if code, _ := post(t, s, "/webhooks/stub", "pr", "ok"); code != http.StatusAccepted {
+		t.Fatalf("webhook = %d, want 202", code)
+	}
+	<-c.started
+	select {
+	case <-c.running:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the review was not published as running while it evaluated")
+	}
+	close(c.release)
+	c.wait(t)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if want := []string{"running", "reported"}; !slices.Equal(c.statuses, want) {
+		t.Errorf("statuses = %v, want %v", c.statuses, want)
 	}
 }
 
@@ -539,4 +635,35 @@ func TestSupersededReviewDoesNotReport(t *testing.T) {
 	}
 	cancel()
 	r.wait()
+}
+
+// prefetchingWebhook is a stubWebhook that is a Prefetcher: a "push" event
+// calls for work, which closes ran.
+type prefetchingWebhook struct {
+	*stubWebhook
+	ran chan struct{}
+}
+
+func (p *prefetchingWebhook) Prefetch(event string, _ []byte) (func(context.Context), bool) {
+	if event != "push" {
+		return nil, false
+	}
+	return func(context.Context) { close(p.ran) }, true
+}
+
+// TestWebhookThatStartsNoReviewPrefetches: a webhook that starts no review
+// runs the work its Prefetcher platform calls for, in the background.
+func TestWebhookThatStartsNoReviewPrefetches(t *testing.T) {
+	p := &prefetchingWebhook{stubWebhook: &stubWebhook{name: "stub"}, ran: make(chan struct{})}
+	s := newTestServer(t, testOptions(), p)
+
+	code, body := post(t, s, "/webhooks/stub", "push", "ok")
+	if code != http.StatusAccepted || body["queued"] != false {
+		t.Fatalf("webhook = %d %v, want 202 with queued false", code, body)
+	}
+	select {
+	case <-p.ran:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the prefetch never ran")
+	}
 }

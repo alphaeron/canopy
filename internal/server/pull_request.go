@@ -23,6 +23,11 @@ type PullRequest interface {
 	// Recorder). It must not call the platform's API.
 	Info() PullRequestInfo
 
+	// Queue publishes that a review of the pull request is waiting for a
+	// worker, as its status, replacing the earlier one until Start or
+	// Report replaces it in turn. detailsURL is as for Start.
+	Queue(ctx context.Context, detailsURL string) error
+
 	// Start publishes that a review of the pull request is running, as
 	// its status, replacing the earlier one until Report replaces it in
 	// turn. detailsURL, when not empty, is the page showing the review,

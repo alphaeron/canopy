@@ -1,6 +1,9 @@
 package server
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
 
 // PRWebhook is a hosted platform's pull request webhook: the server
 // receives the platform's webhook deliveries through it and gets from each
@@ -41,4 +44,17 @@ type PRWebhook interface {
 	// must not call the platform's API: the pull request does that when
 	// reviewed.
 	PullRequest(event string, body []byte) (PullRequest, bool, error)
+}
+
+// Prefetcher is a PRWebhook that prepares for reviews to come from a
+// verified webhook that starts none, such as a push to a repository's
+// default branch, by reading what those reviews will read into the
+// server's caches, so they start warm. The server runs the work in the
+// background, a bounded number at once (more are dropped), under the
+// server's lifetime, and never waits for it to answer the webhook.
+type Prefetcher interface {
+	// Prefetch returns the work a verified webhook calls for, or false
+	// when it calls for none. Like PullRequest it must not call the
+	// platform's API: the work it returns does.
+	Prefetch(event string, body []byte) (work func(context.Context), ok bool)
 }

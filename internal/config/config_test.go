@@ -457,7 +457,7 @@ func TestReviewQueue(t *testing.T) {
 		want               int
 		wantErr            bool
 	}{
-		{name: "defaults", workers: DefaultReviewWorkers, perWorker: DefaultReviewQueuePerWorker, want: 64},
+		{name: "defaults", workers: DefaultReviewWorkers, perWorker: DefaultReviewQueuePerWorker, want: 256},
 		{name: "at the limit", workers: 4, perWorker: MaxReviewQueue / 4, want: MaxReviewQueue},
 		{name: "over the limit", workers: 4, perWorker: MaxReviewQueue/4 + 1, wantErr: true},
 		{name: "too many workers", workers: MaxReviewQueue + 1, perWorker: 1, wantErr: true},

@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-github/v93/github"
 
 	"github.com/alphaeron/canopy/internal/config"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 	"github.com/alphaeron/canopy/internal/server"
 )
 
@@ -254,5 +255,84 @@ func verifyJWT(t *testing.T, jwt string, key *rsa.PublicKey) {
 	}
 	if claims.Iss != testAppID || claims.Exp <= claims.Iat || claims.Exp-claims.Iat > 600 {
 		t.Errorf("claims = %+v, want issuer %d and a lifetime of at most ten minutes", claims, testAppID)
+	}
+}
+
+// pushEvent is a push of commit to branch of o/r, whose default branch is
+// main, adding and modifying the files given.
+func pushEvent(branch, commit string, added, modified []string) *github.PushEvent {
+	return &github.PushEvent{
+		Ref:          new("refs/heads/" + branch),
+		After:        new(commit),
+		Repo:         &github.PushEventRepository{Name: new("r"), Owner: &github.User{Login: new("o")}, DefaultBranch: new("main")},
+		Commits:      []*github.HeadCommit{{Added: added, Modified: modified}},
+		Installation: &github.Installation{ID: new(int64(5))},
+	}
+}
+
+// TestPushToTheDefaultBranchPrefetches: a push to the default branch caches
+// the pushed commit's tree and the rules files it changed, so a review over
+// that base lists no tree and reads no blob it already has.
+func TestPushToTheDefaultBranchPrefetches(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	fake := &fakeGitHub{trees: map[string]map[string]string{commit: {
+		rulesfile.FileName:         "- \".*\":\n  name: \"Root\"\n",
+		rulesfile.PathInDir("svc"): "- \".*\":\n  name: \"Svc\"\n",
+		"svc/api.go":               "",
+	}}}
+	p, _ := testPRWebhook(t, fake)
+	p.cache = server.NewRepoCache(nil, testLogger())
+	body, err := json.Marshal(pushEvent("main", commit, []string{rulesfile.PathInDir("svc")}, []string{"svc/api.go"}))
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	work, ok := p.Prefetch("push", body)
+	if !ok {
+		t.Fatal("Prefetch = false, want work for a push to the default branch")
+	}
+	work(t.Context())
+	if tree, blob := fake.callCount("tree"), fake.callCount("blob"); tree != 1 || blob != 1 {
+		t.Fatalf("prefetch made %d tree and %d blob requests, want 1 and 1 (only the changed rules file)", tree, blob)
+	}
+
+	in, err := p.installation(5)
+	if err != nil {
+		t.Fatalf("installation: %v", err)
+	}
+	tree := newBaseTree(in.client, "o", "r", commit, in.cache)
+	if _, err := tree.ReadFile(t.Context(), rulesfile.PathInDir("svc")); err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if tree, blob := fake.callCount("tree"), fake.callCount("blob"); tree != 1 || blob != 1 {
+		t.Errorf("after the prefetch, a review made %d tree and %d blob requests in all, want none more", tree, blob)
+	}
+}
+
+// TestPrefetchIgnoresOtherEvents: only a push to the default branch, naming
+// a commit, prefetches.
+func TestPrefetchIgnoresOtherEvents(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	deleted := pushEvent("main", strings.Repeat("0", 40), nil, nil)
+	deleted.Deleted = new(true)
+	tests := map[string]struct {
+		event string
+		body  any
+	}{
+		"another branch":    {"push", pushEvent("feature", commit, nil, nil)},
+		"a deleted branch":  {"push", deleted},
+		"a malformed SHA":   {"push", pushEvent("main", "HEAD", nil, nil)},
+		"a pull request":    {"pull_request", pullRequestEvent("base")},
+		"no default branch": {"push", &github.PushEvent{Ref: new("refs/heads/main"), After: new(commit), Repo: &github.PushEventRepository{Name: new("r"), Owner: &github.User{Login: new("o")}}, Installation: &github.Installation{ID: new(int64(5))}}},
+	}
+	p, _ := testPRWebhook(t, &fakeGitHub{})
+	p.cache = server.NewRepoCache(nil, testLogger())
+	for name, tt := range tests {
+		body, err := json.Marshal(tt.body)
+		if err != nil {
+			t.Fatalf("%s: marshal event: %v", name, err)
+		}
+		if _, ok := p.Prefetch(tt.event, body); ok {
+			t.Errorf("%s: Prefetch = true, want nothing to do", name)
+		}
 	}
 }

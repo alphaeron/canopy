@@ -99,7 +99,7 @@ The runtime application evaluates a change (a GitHub pull request, or the local 
 #### Phase 1: Fetch
 1. List the change's file paths through the platform, counting a renamed file at both its old and new paths. (GitHub: the comparison of the base and head commits the webhook names, which does not carry the files itself; see [Database](server.md#database) for large pull requests. Local: the working tree's status against `HEAD`.)
 2. For each unique file path, systematically map the trajectory from its local leaf directory vertically upward to the root repository level.
-3. Read the `RULES` files along the path sequentially.
+3. Read the `RULES` files along the path sequentially. (GitHub: only these are read from the base commit, so a `RULES` file elsewhere in the repository, even an invalid one, neither costs a request nor affects the review.)
 4. If a rule specifies `ignore_parent_dirs: true`, halt tree traversal immediately.
 
 #### Phase 2: Sift

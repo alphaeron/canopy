@@ -8,7 +8,7 @@ The CLI and the review server read the same configuration, in decreasing precede
 | `serve_addr` | `CANOPY_SERVE_ADDR` | `:8080` | Review server listen address |
 | `review_timeout` | `CANOPY_REVIEW_TIMEOUT` | `50s` | Longest one review may run |
 | `report_timeout` | `CANOPY_REPORT_TIMEOUT` | `30s` | Longest reporting the outcome of a timed-out review may take |
-| `review_workers` | `CANOPY_REVIEW_WORKERS` | `4` | Reviews the server runs at once |
+| `review_workers` | `CANOPY_REVIEW_WORKERS` | `16` | Reviews the server runs at once |
 | `review_queue_per_worker` | `CANOPY_REVIEW_QUEUE_PER_WORKER` | `16` | Pull requests that may wait per worker; beyond that the server answers 503. More webhooks for a pull request already waiting or under review take no more room. `review_workers` × `review_queue_per_worker` may be at most 4096 |
 | `shutdown_timeout` | `CANOPY_SHUTDOWN_TIMEOUT` | `10s` | Longest the server waits for open requests when stopping |
 | `database_url` | `CANOPY_DATABASE_URL` | | Review server's PostgreSQL connection string; unset runs without a database (see [Database](server.md#database)). The server creates its tables at startup. Never logged |

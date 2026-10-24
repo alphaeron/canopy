@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -90,6 +91,24 @@ const (
 	maxDeliveryIDLength = 128
 )
 
+// Queued statuses (see markQueued): how long a review waits for a worker
+// before its pull request shows it queued, how many wait or publish at once
+// (more are skipped, as a queued status only shows the review waiting), and
+// how long each may take. A worker that is free starts a review well within
+// the delay, so an idle server spends no request on it.
+const (
+	queuedMarkDelay   = 500 * time.Millisecond
+	maxQueuedMarks    = 64
+	queuedMarkTimeout = 10 * time.Second
+)
+
+// Bounds on prefetching (see Prefetcher): how many prefetches run at once
+// (more are dropped, as each only warms caches) and for how long each.
+const (
+	maxPrefetches   = 4
+	prefetchTimeout = 2 * time.Minute
+)
+
 // Bounds on each HTTP connection. A webhook's whole body is read before its
 // signature can be checked, so without readTimeout an unauthenticated
 // client sending its body slowly would hold the connection and its buffer
@@ -122,6 +141,9 @@ type Server struct {
 	handler http.Handler
 	reviews *reviews
 	records *parallel.Background // nil without a Recorder
+	marks   *parallel.Background // publishes queued statuses
+	fetches *parallel.Background // prefetches (see Prefetcher)
+	ctx     context.Context      // the server's lifetime, as New was given
 	links   *links               // nil without review pages
 	live    *tracker
 }
@@ -171,8 +193,12 @@ func New(ctx context.Context, opts Options, webhook PRWebhook) (*Server, error) 
 	if opts.Recorder != nil {
 		s.records = parallel.NewBackground(maxRecordWrites, recordWriteTimeout)
 	}
+	s.marks = parallel.NewBackground(maxQueuedMarks, queuedMarkTimeout)
+	s.fetches = parallel.NewBackground(maxPrefetches, prefetchTimeout)
+	s.ctx = ctx
 	s.reviews = newReviews(ctx, opts.Workers, opts.Queue, opts.ReviewTimeout, s.review)
 	s.reviews.dropped = func(j job) { s.live.forget(pageRefOf(j.pr.Info()), j.live) }
+	s.reviews.accepted = s.markQueued
 	return s, nil
 }
 
@@ -180,9 +206,12 @@ func New(ctx context.Context, opts Options, webhook PRWebhook) (*Server, error) 
 func (s *Server) Handler() http.Handler { return s.handler }
 
 // Wait blocks until every review worker has stopped, after the context New
-// was given is done, and the records they started are written.
+// was given is done, and the records, queued statuses, and prefetches
+// started so far are done.
 func (s *Server) Wait() {
 	s.reviews.wait()
+	s.marks.Wait()
+	s.fetches.Wait()
 	s.records.Wait()
 }
 
@@ -312,7 +341,7 @@ func (s *Server) accept(ctx context.Context, p PRWebhook) (*webhookOutput, error
 	}
 	out := &webhookOutput{}
 	if !reviewable {
-		log.Debug("webhook ignored")
+		s.prefetch(p, wh, log)
 		s.recordDelivery(delivery, DeliveryIgnored)
 		return out, nil
 	}
@@ -332,6 +361,33 @@ func (s *Server) accept(ctx context.Context, p PRWebhook) (*webhookOutput, error
 	return out, nil
 }
 
+// prefetch starts the work a webhook that starts no review calls for, when
+// the platform is a Prefetcher, in the background and under the server's
+// lifetime, so stopping the server cancels it.
+func (s *Server) prefetch(p PRWebhook, wh verified, log *slog.Logger) {
+	pf, ok := p.(Prefetcher)
+	if !ok {
+		log.Debug("webhook ignored")
+		return
+	}
+	work, ok := pf.Prefetch(wh.event, wh.body)
+	if !ok {
+		log.Debug("webhook ignored")
+		return
+	}
+	started := s.fetches.Go(func(ctx context.Context) {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		defer context.AfterFunc(s.ctx, cancel)()
+		work(ctx)
+	})
+	if started {
+		log.Debug("prefetching for reviews to come")
+	} else {
+		log.Debug("too many prefetches running; skipped this one")
+	}
+}
+
 // requestOrder records a review of pr being requested, returning its
 // order among every replica's requests, or 0 when it could not be
 // recorded (the review then never reports a pass; see report).
@@ -347,6 +403,44 @@ func (s *Server) requestOrder(ctx context.Context, pr PullRequestInfo, log *slog
 		return 0
 	}
 	return order
+}
+
+// markQueued publishes j's pull request's status as queued in the
+// background if j's review has not started after queuedMarkDelay, so the
+// pull request shows its review waiting while every worker is busy. The
+// scheduler orders it with the key's reviews (reviews.claimMark). It is
+// ordered like start across replicas: with a Recorder, in order with every
+// replica's reports of the pull request, and not at all when j's order is
+// unknown. A queued status that cannot be published (too many are waiting,
+// or publishing failed) is skipped; the review runs regardless.
+func (s *Server) markQueued(j job) {
+	if s.opts.Recorder != nil && j.order == 0 {
+		return
+	}
+	log := s.log.With("component", "server", "platform", j.platform, "key", j.pr.Key())
+	link := s.links.reviewURL(j.pr.Info())
+	s.marks.Go(func(ctx context.Context) {
+		select {
+		case <-time.After(queuedMarkDelay):
+		case <-ctx.Done():
+			return
+		}
+		release, ok := s.reviews.claimMark(j)
+		if !ok {
+			return
+		}
+		defer release()
+		queue := func(ctx context.Context) error { return j.pr.Queue(ctx, link) }
+		var err error
+		if s.opts.Recorder == nil {
+			err = queue(ctx)
+		} else {
+			_, err = s.opts.Recorder.StartInOrder(ctx, j.pr.Info(), j.order, queue)
+		}
+		if err != nil {
+			log.Warn("publishing the review as queued failed", "error", err)
+		}
+	})
 }
 
 // recordDelivery records d, with disposition, in the background.
@@ -365,21 +459,29 @@ func (s *Server) recordDelivery(d DeliveryRecord, disposition string) {
 // review runs one queued review and reports its outcome as the pull
 // request's status, unless a newer review of its key superseded it
 // (current reports false; see reviews), or, with a Recorder, a newer
-// review on any replica reported first. Before it evaluates, it publishes
-// the pull request's status as running (see start). A review that ran out
-// of time still reports, under a fresh deadline; one cancelled because the
-// server is stopping does not, and leaves the status running. With a
-// Recorder, the review is recorded as it starts and ends. Its review page
-// follows it throughout.
+// review on any replica reported first. While it evaluates, it publishes
+// the pull request's status as running (see start), which it waits for
+// before it reports, so the running status never replaces the outcome. A
+// review that ran out of time still reports, under a fresh deadline; one
+// cancelled because the server is stopping does not, and leaves the status
+// running. With a Recorder, the review is recorded as it starts and ends.
+// Its review page follows it throughout.
 func (s *Server) review(ctx context.Context, j job, current func() bool) {
 	log := s.log.With("component", "server", "platform", j.platform, "key", j.pr.Key())
 	started := time.Now()
 	s.live.start(j.live, started)
 	link := s.links.reviewURL(j.pr.Info())
-	id := s.startRecord(ctx, j, log)
-	s.start(ctx, j, link, log)
-	ctx = approval.WithProgress(ctx, func(p approval.Progress) { s.live.progress(j.live, p) })
-	ev := review.Evaluate(ctx, j.pr, s.opts.BlockingLabels, log)
+	// Recording and publishing the start take round trips of their own, so
+	// they run while the review evaluates rather than before it.
+	var (
+		setup sync.WaitGroup
+		id    int64
+	)
+	setup.Go(func() { id = s.startRecord(ctx, j, log) })
+	setup.Go(func() { s.start(ctx, j, link, log) })
+	evalCtx := approval.WithProgress(ctx, func(p approval.Progress) { s.live.progress(j.live, p) })
+	ev := review.Evaluate(evalCtx, j.pr, s.opts.BlockingLabels, log)
+	setup.Wait()
 	end := ReviewEnd{
 		Outcome:  ev.Outcome,
 		Input:    ev.Input,
@@ -411,6 +513,9 @@ func (s *Server) review(ctx context.Context, j job, current func() bool) {
 		log.Info("review cancelled", "error", ctx.Err())
 		return
 	}
+	// The start waited for a queued status being published, unless the
+	// review's context ended first; the outcome must still land after it.
+	waitMarked(reportCtx, j)
 	reportStart := time.Now()
 	s.live.reporting(j.live)
 	sent, superseded, err := s.report(reportCtx, j, ev.Outcome, link, log)
@@ -469,7 +574,13 @@ func (s *Server) report(ctx context.Context, j job, o approval.Outcome, link str
 // this process's reviews of a key run one at a time, newest last, so none
 // starts after a newer one reported. A status that is not published is
 // logged; the review runs regardless.
+//
+// It publishes after any queued status of j's key being published as j
+// started (see reviews.claimMark), so that never replaces it.
 func (s *Server) start(ctx context.Context, j job, link string, log *slog.Logger) {
+	if waitMarked(ctx, j); ctx.Err() != nil {
+		return
+	}
 	publish := func(ctx context.Context) error { return j.pr.Start(ctx, link) }
 	var err error
 	switch {
@@ -482,6 +593,18 @@ func (s *Server) start(ctx context.Context, j job, link string, log *slog.Logger
 	}
 	if err != nil {
 		log.Warn("publishing the review as running failed", "error", err)
+	}
+}
+
+// waitMarked waits until the queued status of j's key being published as j
+// started is published, or ctx is done.
+func waitMarked(ctx context.Context, j job) {
+	if j.marked == nil {
+		return
+	}
+	select {
+	case <-j.marked:
+	case <-ctx.Done():
 	}
 }
 

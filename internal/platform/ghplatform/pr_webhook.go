@@ -1,10 +1,12 @@
 package ghplatform
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +15,9 @@ import (
 	"github.com/google/go-github/v93/github"
 
 	"github.com/alphaeron/canopy/internal/config"
+	"github.com/alphaeron/canopy/internal/logx"
+	"github.com/alphaeron/canopy/internal/parallel"
+	"github.com/alphaeron/canopy/internal/rulesfile"
 	"github.com/alphaeron/canopy/internal/server"
 )
 
@@ -23,6 +28,10 @@ const (
 	eventPullRequest       = "pull_request"
 	eventPullRequestReview = "pull_request_review"
 )
+
+// eventPush is the webhook event a push to a repository's default branch
+// prefetches for (see Prefetch).
+const eventPush = "push"
 
 var (
 	pullRequestActions = []string{"opened", "synchronize", "reopened", "ready_for_review", "edited", "labeled", "unlabeled"}
@@ -44,7 +53,10 @@ type PRWebhook struct {
 	installs map[int64]*installation
 }
 
-var _ server.PRWebhook = (*PRWebhook)(nil)
+var (
+	_ server.PRWebhook  = (*PRWebhook)(nil)
+	_ server.Prefetcher = (*PRWebhook)(nil)
+)
 
 // installation is the client, resolver, and cache of one installation of
 // the app.
@@ -121,7 +133,9 @@ func (p *PRWebhook) WebhookDescription() string {
 		"with the webhook secret. `X-GitHub-Event` names the event. `" + eventPullRequest + "` events (" +
 		strings.Join(pullRequestActions, ", ") + "; `edited` only when the base branch changes) and `" +
 		eventPullRequestReview + "` events (" + strings.Join(reviewActions, ", ") + ") start a review of the " +
-		"pull request, unless it is closed; every other event is acknowledged and ignored."
+		"pull request, unless it is closed. A `" + eventPush + "` to a repository's default branch starts none, but " +
+		"reads the new base revision's tree and changed rules files ahead of the reviews that will read them. " +
+		"Every other event is acknowledged and ignored."
 }
 
 // VerifyWebhook checks the request's X-Hub-Signature-256 against the
@@ -193,6 +207,65 @@ func (p *PRWebhook) PullRequest(event string, body []byte) (server.PullRequest, 
 		return nil, false, err
 	}
 	return newSource(gh, in.client, in.resolver, in.cache, p.log), true, nil
+}
+
+// commitSHA matches a commit SHA as GitHub names it: SHA-1 or SHA-256 hex.
+var commitSHA = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// Prefetch turns a verified push to a repository's default branch, the
+// base branch of most pull requests, into reading the pushed commit's tree
+// and the rules files the push added or changed into the server's cache,
+// so the reviews of pull requests based on it start with them cached.
+// Rules files the push did not touch are cached by their contents already,
+// if a review read them before. Any other event, a deleted branch, and an
+// event missing what it needs call for nothing. It makes no API calls: the
+// work it returns does, and logs its failures, which only cost a review
+// the reads it would have made anyway.
+func (p *PRWebhook) Prefetch(event string, body []byte) (func(context.Context), bool) {
+	if event != eventPush || p.cache == nil {
+		return nil, false
+	}
+	var ev github.PushEvent
+	if err := json.Unmarshal(body, &ev); err != nil {
+		return nil, false
+	}
+	repo := ev.GetRepo()
+	owner, name, commit := repo.GetOwner().GetLogin(), repo.GetName(), ev.GetAfter()
+	if owner == "" {
+		owner = repo.GetOwner().GetName() // push events name the owner either way
+	}
+	branch := repo.GetDefaultBranch()
+	switch {
+	case ev.GetDeleted(), branch == "", ev.GetRef() != "refs/heads/"+branch,
+		owner == "", name == "", !commitSHA.MatchString(commit), ev.GetInstallation().GetID() <= 0:
+		return nil, false
+	}
+	var rules []string
+	for _, c := range ev.Commits {
+		for _, f := range slices.Concat(c.Added, c.Modified) {
+			if rulesfile.IsRulesFile(f) && !slices.Contains(rules, f) {
+				rules = append(rules, f)
+			}
+		}
+	}
+	id := ev.GetInstallation().GetID()
+	return func(ctx context.Context) {
+		log := logx.OrDefault(p.log).With("component", "ghplatform", "repository", owner+"/"+name, "commit", commit)
+		in, err := p.installation(id)
+		if err != nil {
+			log.Warn("prefetch: no client for the installation", "error", err)
+			return
+		}
+		tree := newBaseTree(in.client, owner, name, commit, in.cache)
+		if _, err := tree.list(ctx); err != nil {
+			log.Warn("prefetch: listing the tree failed", "error", err)
+			return
+		}
+		// A rules file the push changed and then removed is not in the
+		// tree; nothing is read for it.
+		parallel.For(len(rules), func(i int) { _, _ = tree.ReadFile(ctx, rules[i]) })
+		log.Debug("prefetch: tree and changed rules files cached", "rules_files", len(rules))
+	}, true
 }
 
 // installation returns the client, resolver, and cache of an installation,

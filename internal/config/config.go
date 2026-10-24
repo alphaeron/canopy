@@ -49,7 +49,8 @@ type Config struct {
 	// to 30 seconds.
 	ReportTimeout time.Duration `mapstructure:"report_timeout"`
 	// ReviewWorkers is how many reviews the review server runs at once;
-	// defaults to 4.
+	// defaults to 16. Reviews mostly wait on the platform, so a worker costs
+	// little while it waits.
 	ReviewWorkers int `mapstructure:"review_workers"`
 	// ReviewQueuePerWorker is how many pull requests may wait per review
 	// worker; defaults to 16. See ReviewQueue for the total.
@@ -132,7 +133,7 @@ const (
 	DefaultServeAddr            = ":8080"
 	DefaultReviewTimeout        = 50 * time.Second
 	DefaultReportTimeout        = 30 * time.Second
-	DefaultReviewWorkers        = 4
+	DefaultReviewWorkers        = 16
 	DefaultReviewQueuePerWorker = 16
 	DefaultShutdownTimeout      = 10 * time.Second
 	DefaultLinkLifetime         = 90 * 24 * time.Hour

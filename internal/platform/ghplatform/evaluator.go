@@ -12,11 +12,12 @@ import (
 )
 
 // newEvaluator is the GitHub platform reading rules from tree and resolving
-// approvers with resolver, so a Source can share its tree's listing with the
-// fetch and a PRWebhook its resolver across reviews. The fetch runs once
+// approvers with resolver, so a Source can share its base tree's listing
+// with the fetch (through applicableRules) and a PRWebhook its resolver
+// across reviews. The fetch runs once
 // per Source (approval.OnceFetcher): the server starts it while it reads the
 // pull request, and the review reuses it (server.PullRequest).
-func newEvaluator(tree *baseTree, resolver *ApproverResolver, log *slog.Logger) *approval.Evaluator {
+func newEvaluator(tree approval.Tree, resolver *ApproverResolver, log *slog.Logger) *approval.Evaluator {
 	return &approval.Evaluator{
 		Fetch:    &approval.OnceFetcher{Fetcher: &approval.TreeFetcher{Tree: tree, Log: log}},
 		Resolver: resolver,

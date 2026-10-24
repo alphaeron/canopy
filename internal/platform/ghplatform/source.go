@@ -114,14 +114,15 @@ func newChanges(files []prFile) *changes {
 // installation's other reviews.
 func newSource(pr *pullRequest, client *github.Client, resolver *ApproverResolver, cache server.CacheScope, log *slog.Logger) *Source {
 	tree := newBaseTree(client, pr.owner, pr.repo, pr.baseSHA, cache)
-	return &Source{
-		pr:        pr,
-		client:    client,
-		tree:      tree,
-		resolver:  resolver,
-		evaluator: newEvaluator(tree, resolver, log),
-		log:       log,
+	s := &Source{
+		pr:       pr,
+		client:   client,
+		tree:     tree,
+		resolver: resolver,
+		log:      log,
 	}
+	s.evaluator = newEvaluator(&applicableRules{tree: tree, changed: s.ChangedFiles}, resolver, log)
+	return s
 }
 
 // pullRequestFrom reads a pull request's identity from a webhook event's
@@ -348,13 +349,18 @@ const (
 //   - Labels: the pull request's labels when the review runs, not as the
 //     webhook reported them: GitHub does not order webhooks, so a label
 //     removed since must not block the pull request.
+//
+// The reviews and the labels are listed concurrently.
 func (r *Source) ReviewInput(ctx context.Context) (approval.ReviewInput, error) {
-	approvers, err := r.approvers(ctx)
-	if err != nil {
-		return approval.ReviewInput{}, err
-	}
-	labels, err := r.labels(ctx)
-	if err != nil {
+	var (
+		wg                      sync.WaitGroup
+		approvers, labels       []string
+		approversErr, labelsErr error
+	)
+	wg.Go(func() { approvers, approversErr = r.approvers(ctx) })
+	wg.Go(func() { labels, labelsErr = r.labels(ctx) })
+	wg.Wait()
+	if err := errors.Join(approversErr, labelsErr); err != nil {
 		return approval.ReviewInput{}, err
 	}
 	return approval.ReviewInput{
@@ -501,8 +507,31 @@ func (r *Source) Key() string {
 	return strings.ToLower(r.pr.owner+"/"+r.pr.repo) + "@" + r.pr.headSHA
 }
 
-// runningTitle is the title of the check run Start creates.
-const runningTitle = "Review running"
+// Titles of the check runs Queue and Start create.
+const (
+	queuedTitle  = "Review queued"
+	runningTitle = "Review running"
+)
+
+// Queue publishes a queued check run named checkName on the pull request's
+// head revision, superseding the earlier report until Start or Report
+// supersedes it in turn. It links detailsURL when it is not empty.
+func (r *Source) Queue(ctx context.Context, detailsURL string) error {
+	run := github.CreateCheckRunOptions{
+		Name:       checkName,
+		HeadSHA:    r.pr.headSHA,
+		Status:     new("queued"),
+		DetailsURL: optional(detailsURL),
+		Output: &github.CheckRunOutput{
+			Title:   new(queuedTitle),
+			Summary: new("The review is waiting to run" + detailsNote(detailsURL) + "."),
+		},
+	}
+	if _, _, err := r.client.Checks.CreateCheckRun(ctx, r.pr.owner, r.pr.repo, run); err != nil {
+		return fmt.Errorf("queue check run on %s: %w", r.pr, err)
+	}
+	return nil
+}
 
 // Start publishes an in-progress check run named checkName on the pull
 // request's head revision, superseding the earlier report until Report
