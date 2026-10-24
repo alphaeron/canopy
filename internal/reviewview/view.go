@@ -29,7 +29,14 @@ import (
 //go:embed review.tmpl
 var reviewTemplate string
 
+// themeCSS is the stylesheet base the documentation site shares; it is our
+// own file, so it is trusted as CSS.
+//
+//go:embed theme.css
+var themeCSS string
+
 var tmpl = template.Must(template.New("page").Funcs(template.FuncMap{
+	"theme":        func() template.CSS { return template.CSS(themeCSS) },
 	"add":          func(a, b int) int { return a + b },
 	"join":         strings.Join,
 	"statusClass":  statusClass,

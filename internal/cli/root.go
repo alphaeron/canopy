@@ -84,9 +84,19 @@ func runRoot(cmd *cobra.Command, args []string) error {
 // Execute runs the command line and exits non-zero when the command fails.
 // Cobra has already printed the error.
 func Execute() {
+	rootCmd.SetArgs(platformArgs(os.Args[1:]))
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// Command returns the root of the command tree, with the help and
+// completion commands cobra otherwise adds only when it executes, so tools
+// such as the documentation generator see every command a user can run.
+func Command() *cobra.Command {
+	rootCmd.InitDefaultHelpCmd()
+	rootCmd.InitDefaultCompletionCmd()
+	return rootCmd
 }
 
 func init() {

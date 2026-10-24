@@ -70,7 +70,7 @@ func run() error {
 	}
 	newPlatform, ok := platforms[name]
 	if !ok {
-		return errors.New("no platform configured: set one platform's settings (see the README's Configuration section)")
+		return errors.New("no platform configured: set one platform's settings (see docs/configuration.md)")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

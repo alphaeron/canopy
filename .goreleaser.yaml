@@ -1,27 +1,42 @@
-# GoReleaser builds the canopy CLI's release (see the README's Releasing
+# GoReleaser builds the canopy CLI's release (see CONTRIBUTING.md's Releasing
 # section): archives, the universal macOS binary, deb/rpm/apk packages, and a
 # snap, published as a draft GitHub release. The Windows MSI and macOS pkg
 # installers are GoReleaser Pro features, so .github/workflows/release.yml
 # builds them from this output and then publishes the release.
+#
+# Each package installs the documentation its platform expects (see
+# docs/install.md): man pages and bash, zsh, and fish completions on Linux and
+# macOS, the PowerShell completion on Windows.
 #
 # The review server (cmd/canopyweb) is released separately.
 version: 2
 
 project_name: canopy
 
+before:
+  hooks:
+    # Man pages and shell completions into build/docs (see internal/docgen).
+    - go run ./internal/docgen -out build/docs -version {{ .Version }} -date {{ .CommitDate }}
+
 builds:
-  - id: canopy
+  - &build
+    id: canopy
     main: ./cmd/canopy
     binary: canopy
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin, windows]
+    goos: [linux, darwin]
     goarch: [amd64, arm64]
     flags:
       - -trimpath
     ldflags:
       - -s -w -X github.com/alphaeron/canopy/internal/cli.version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
+  # The same build for Windows, apart only so its archive carries Windows'
+  # documentation rather than man pages.
+  - <<: *build
+    id: canopy-windows
+    goos: [windows]
 
 # One macOS binary for both Intel and Apple silicon, in place of the two.
 universal_binaries:
@@ -31,11 +46,28 @@ universal_binaries:
 archives:
   - ids: [canopy]
     formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
     files:
       - README.md
+      - src: docs/*.md
+        dst: docs
+      - src: build/docs/man/**/*.gz
+        dst: man
+      - src: build/docs/completions/canopy.bash
+        dst: completions/canopy.bash
+      - src: build/docs/completions/_canopy
+        dst: completions/_canopy
+      - src: build/docs/completions/canopy.fish
+        dst: completions/canopy.fish
+  # scripts/package-msi.ps1 builds the MSI from this zip.
+  - id: canopy-windows
+    ids: [canopy-windows]
+    formats: [zip]
+    files:
+      - README.md
+      - src: docs/*.md
+        dst: docs
+      - src: build/docs/completions/canopy.ps1
+        dst: completions/canopy.ps1
 
 checksum:
   name_template: checksums.txt
@@ -50,6 +82,36 @@ nfpms:
     description: Canopy code review CLI, which decides who must approve a change from RULES files kept in the repository.
     formats: [deb, rpm, apk]
     bindir: /usr/bin
+    contents:
+      - src: build/docs/man/man1/*.gz
+        dst: /usr/share/man/man1/
+        file_info: {mode: 0644}
+      - src: build/docs/man/man5/*.gz
+        dst: /usr/share/man/man5/
+        file_info: {mode: 0644}
+      - src: build/docs/man/man7/*.gz
+        dst: /usr/share/man/man7/
+        file_info: {mode: 0644}
+      - src: build/docs/completions/canopy.bash
+        dst: /usr/share/bash-completion/completions/canopy
+        file_info: {mode: 0644}
+      - src: build/docs/completions/canopy.fish
+        dst: /usr/share/fish/vendor_completions.d/canopy.fish
+        file_info: {mode: 0644}
+      # Debian's zsh reads packaged completions from vendor-completions; Fedora
+      # and Alpine read them from site-functions.
+      - src: build/docs/completions/_canopy
+        dst: /usr/share/zsh/vendor-completions/_canopy
+        packager: deb
+        file_info: {mode: 0644}
+      - src: build/docs/completions/_canopy
+        dst: /usr/share/zsh/site-functions/_canopy
+        packager: rpm
+        file_info: {mode: 0644}
+      - src: build/docs/completions/_canopy
+        dst: /usr/share/zsh/site-functions/_canopy
+        packager: apk
+        file_info: {mode: 0644}
     deb:
       fields:
         Bugs: https://github.com/alphaeron/canopy/issues
@@ -69,6 +131,10 @@ snapcrafts:
     apps:
       canopy:
         command: canopy
+        # The generated bash completion (see the before hook), which
+        # GoReleaser copies into the snap at the same path. A snap cannot add
+        # man pages to the host's manual.
+        completer: build/docs/completions/canopy.bash
 
 release:
   github:

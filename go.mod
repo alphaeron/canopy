@@ -8,11 +8,13 @@ require (
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/cpuguy83/go-md2man/v2 v2.0.6
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-git/go-git/v6 v6.0.0-beta.1
 	github.com/google/go-github/v93 v93.0.0
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/russross/blackfriday/v2 v2.1.0
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10

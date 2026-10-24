@@ -1,7 +1,10 @@
 <!--
   WiX source for the canopy CLI's Windows installer, built by
   scripts/package-msi.ps1. It installs canopy.exe under Program Files and adds
-  that directory to the system PATH.
+  that directory to the system PATH, with the PowerShell completion script in
+  its completions folder. Windows has no manual to install pages into: help is
+  `canopy /?`, `canopy -?`, or `canopy help`, and the documentation is the
+  site linked from the installed apps list.
 
   UpgradeCode identifies the product across versions so a newer MSI replaces
   an older one: never change it.
@@ -14,7 +17,7 @@
 
     <!-- Links shown in Windows' installed apps list. -->
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/alphaeron/canopy" />
-    <Property Id="ARPHELPLINK" Value="https://github.com/alphaeron/canopy/issues" />
+    <Property Id="ARPHELPLINK" Value="https://alphaeron.github.io/canopy/" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="Canopy">
@@ -23,11 +26,17 @@
           <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Part="last"
                        Action="set" System="yes" Permanent="no" />
         </Component>
+        <Directory Id="CompletionsFolder" Name="completions">
+          <Component Id="PowerShellCompletion">
+            <File Source="$(var.BinDir)\completions\canopy.ps1" KeyPath="yes" />
+          </Component>
+        </Directory>
       </Directory>
     </StandardDirectory>
 
     <Feature Id="Main">
       <ComponentRef Id="CanopyExe" />
+      <ComponentRef Id="PowerShellCompletion" />
     </Feature>
   </Package>
 </Wix>

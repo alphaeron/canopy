@@ -33,8 +33,8 @@ import (
 // plain values read from the configuration file and the prefixed
 // environment variables, where environment wins over file and file wins over
 // defaults. Each hosted platform has its own section, so adding a platform
-// adds a section rather than top-level keys. Every key is documented in the
-// README's "Configuration" section so the same table serves deployment of
+// adds a section rather than top-level keys. Every key is documented in
+// docs/configuration.md, so the same table serves deployment of
 // the review server.
 type Config struct {
 	// Verbose selects debug-level structured logging; false selects info.

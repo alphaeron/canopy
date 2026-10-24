@@ -1,0 +1,47 @@
+/*
+ * theme.css: the Canopy palette, type, and page base, shared by the review
+ * page (review.tmpl) and the documentation site (internal/docgen). Change a
+ * token here and both follow.
+ */
+:root {
+  color-scheme: dark;
+  --bg: #0d1312;
+  --panel: #121b19;
+  --panel-raised: #182320;
+  --panel-soft: #101816;
+  --line: #2b3b35;
+  --line-bright: #496056;
+  --ink: #edf4ed;
+  --muted: #9aaca1;
+  --faint: #687a70;
+  --mint: #a8efb9;
+  --mint-deep: #153a2b;
+  --acid: #d9ff70;
+  --amber: #ffc078;
+  --amber-deep: #412c1c;
+  --red: #ff8f85;
+  --red-deep: #431f20;
+  --blue: #92d5e7;
+  /* Deliberately local-only stacks: the pages make no font/network requests. */
+  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --sans: 'Avenir Next', Avenir, 'Segoe UI', 'Liberation Sans', sans-serif;
+  --display: 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+  --radius: 9px;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); scroll-behavior: smooth; }
+body {
+  margin: 0; color: var(--ink); font: 14px/1.5 var(--sans);
+  background:
+    radial-gradient(ellipse at 83% -10%, rgba(102, 157, 106, .13), transparent 40rem),
+    linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px), var(--bg);
+  background-size: auto, 36px 36px, 36px 36px, auto;
+}
+button, input, select { font: inherit; }
+.sr-only { position:absolute !important; width:1px !important; height:1px !important; padding:0 !important; margin:-1px !important; overflow:hidden !important; clip:rect(0,0,0,0) !important; white-space:nowrap !important; border:0 !important; }
+button, select, input { color: var(--ink); }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible {
+  outline: 2px solid var(--acid); outline-offset: 3px;
+}
+a { color: var(--acid); }

@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Canopy decides who must approve a change from small RULES files that live beside the code they cover.">
+  <title>Canopy · Modular code review rules</title>
+  <style>
+    {{ .Theme }}
+    .wrap { width:min(1180px, calc(100% - 32px)); margin:0 auto; }
+    .top { display:flex; align-items:center; gap:22px; padding:20px 0; border-bottom:1px solid var(--line); }
+    .brand { display:flex; align-items:center; gap:10px; color:var(--muted); font:600 11px/1 var(--mono); letter-spacing:.13em; text-transform:uppercase; text-decoration:none; }
+    .brand-mark { display:grid; place-items:center; width:26px; height:26px; border:1px solid var(--acid); color:var(--acid); border-radius:6px 6px 6px 1px; font-size:14px; }
+    .top nav { display:flex; gap:18px; margin-left:auto; }
+    .top nav a { color:var(--muted); font-size:13px; text-decoration:none; }
+    .top nav a:hover { color:var(--ink); }
+    .eyebrow { margin:0 0 12px; color:var(--acid); font:500 10px var(--mono); letter-spacing:.17em; text-transform:uppercase; }
+    .hero { display:grid; grid-template-columns:minmax(0,1.05fr) minmax(0,1fr); gap:48px; align-items:center; padding:72px 0 64px; }
+    h1 { margin:0; font:500 clamp(38px,5.6vw,68px)/1.02 var(--display); letter-spacing:-.03em; }
+    h1 em { color:var(--acid); font-style:normal; }
+    .lede { max-width:56ch; margin:22px 0 0; color:var(--muted); font-size:17px; line-height:1.6; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:30px; }
+    .button { padding:10px 16px; border:1px solid var(--line-bright); border-radius:7px; color:var(--ink); font:500 13px var(--sans); text-decoration:none; }
+    .button:hover { border-color:var(--acid); color:var(--acid); }
+    .button.primary { border-color:var(--acid); background:var(--acid); color:#10170f; }
+    .button.primary:hover { background:transparent; color:var(--acid); }
+    .panel { border:1px solid var(--line); border-radius:var(--radius); background:rgba(18,27,25,.88); overflow:hidden; }
+    .panel-head { display:flex; justify-content:space-between; padding:9px 14px; border-bottom:1px solid var(--line); color:var(--faint); font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase; }
+    .panel pre { margin:0; padding:14px 16px; overflow-x:auto; color:#d4e6d8; font:12.5px/1.6 var(--mono); }
+    .hero .panel + .panel { margin-top:14px; }
+    .c { color:var(--faint); }
+    .k { color:var(--blue); }
+    .s { color:var(--mint); }
+    .p { color:var(--acid); }
+    .warn { color:var(--amber); }
+    .ok { color:var(--mint); }
+    section { padding:64px 0; border-top:1px solid var(--line); }
+    h2 { margin:0 0 14px; font:500 clamp(28px,3.4vw,40px)/1.1 var(--display); letter-spacing:-.02em; }
+    .section-lede { max-width:64ch; margin:0 0 32px; color:var(--muted); font-size:16px; line-height:1.6; }
+    .compare { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    .compare .panel { padding:22px 24px; }
+    .compare h3 { margin:0 0 14px; font:500 11px var(--mono); letter-spacing:.14em; text-transform:uppercase; }
+    .compare .them h3 { color:var(--faint); }
+    .compare .us { border-color:var(--line-bright); border-top:2px solid var(--acid); }
+    .compare .us h3 { color:var(--acid); }
+    .compare ul { display:grid; gap:12px; margin:0; padding:0; list-style:none; }
+    .compare li { display:grid; grid-template-columns:18px 1fr; gap:8px; line-height:1.5; }
+    .compare .them li { color:var(--muted); }
+    .compare .them li::before { content:'–'; color:var(--faint); }
+    .compare .us li::before { content:'↳'; color:var(--acid); }
+    .features { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:14px; }
+    .feature { padding:20px 22px; }
+    .feature h3 { margin:0 0 8px; font-size:15px; }
+    .feature p { margin:0; color:var(--muted); line-height:1.55; }
+    .feature code, .compare code, .lede code, .section-lede code, .commands span code { padding:1px 5px; border:1px solid var(--line); border-radius:4px; background:var(--panel-soft); font:12px var(--mono); }
+    .cli { display:grid; grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr); gap:48px; align-items:start; }
+    .commands { margin:0; padding:0; list-style:none; }
+    .commands li { display:grid; grid-template-columns:250px minmax(0,1fr); gap:4px 18px; padding:11px 18px; border-bottom:1px solid var(--line); }
+    .commands li:last-child { border-bottom:0; }
+    .commands > li > code { color:var(--acid); font:12.5px var(--mono); }
+    .commands span { color:var(--muted); }
+    .not-ai { display:grid; grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr); gap:48px; align-items:start; }
+    .not-ai h2 em { color:var(--acid); font-style:normal; }
+    .points { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .point { padding:18px 20px; border-left:2px solid var(--acid); }
+    .point h3 { margin:0 0 6px; font:500 11px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--acid); }
+    .point p { margin:0; color:var(--muted); line-height:1.55; }
+    .cta { text-align:center; }
+    .cta .actions { justify-content:center; }
+    .foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; padding:22px 0 40px; border-top:1px solid var(--line); color:var(--faint); font:11px var(--mono); }
+    .foot a { color:var(--muted); }
+    @media (max-width: 920px) {
+      .hero, .not-ai, .cli { grid-template-columns:minmax(0,1fr); gap:32px; }
+      .hero { padding-top:48px; }
+      .features { grid-template-columns:1fr 1fr; }
+    }
+    @media (max-width: 640px) {
+      .top nav { gap:12px; }
+      .compare, .features, .points { grid-template-columns:minmax(0,1fr); }
+      .commands li { grid-template-columns:minmax(0,1fr); }
+      section { padding:48px 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">↳</span>Canopy</a>
+      <nav aria-label="Site">
+        <a href="overview.html">Docs</a>
+        <a href="install.html">Install</a>
+        <a href="{{ .Repo }}">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <div class="hero">
+        <div>
+          <p class="eyebrow">Code review approval rules</p>
+          <h1>Approval rules as <em>modular</em> as your code.</h1>
+          <p class="lede">Canopy decides who must approve a change from small <code>RULES</code> files that live beside the code they cover. There's no central ownership file for every team to fight over, no settings page to keep in sync, and no engine locked to one host.</p>
+          <div class="actions">
+            <a class="button primary" href="install.html">Get started</a>
+            <a class="button" href="overview.html">Read the docs</a>
+            <a class="button" href="{{ .Repo }}">View on GitHub</a>
+          </div>
+        </div>
+        <div>
+          <div class="panel">
+            <div class="panel-head"><span>svc/api/RULES</span><span>yaml</span></div>
+            <pre><span class="c"># Go files under svc/api/ need the root's approvals and these</span>
+- <span class="s">'.*\.go'</span>:
+    <span class="k">combine_strategy</span>: union
+    <span class="k">approvers</span>:
+      - <span class="k">target</span>: alice
+        <span class="k">required_count</span>: 1
+      - <span class="k">target</span>: bob
+        <span class="k">required_count</span>: 1</pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span>terminal</span><span>exit 1</span></div>
+            <pre><span class="p">$</span> canopy review svc/api/main.go --author carol --approver alice
+File             Status             Requires
+svc/api/main.go  <span class="warn">missing approvers</span>  maria 0/1, alice 1/1, bob 0/1
+Overall: <span class="warn">missing approvers</span>
+Outcome: pending: 1 file awaits approval (bob, maria)</pre>
+          </div>
+        </div>
+      </div>
+
+      <section aria-labelledby="modular">
+        <p class="eyebrow">Modular, not monolithic</p>
+        <h2 id="modular">Ownership belongs with the code, not in one big file.</h2>
+        <p class="section-lede">Most code review tooling is monolithic: one ownership file, or one settings page, evaluated by an engine that only runs on one host. Canopy splits the rules up the way your codebase is already split up.</p>
+        <div class="compare">
+          <div class="panel them">
+            <h3>Monolithic tooling</h3>
+            <ul>
+              <li><span>One ownership file at the root that every team edits.</span></li>
+              <li><span>Rules in a hosting platform's settings, changed outside code review.</span></li>
+              <li><span>Nested patterns override each other: the last match wins.</span></li>
+              <li><span>One engine on one host, with no command line: you only see it run once a pull request is open.</span></li>
+            </ul>
+          </div>
+          <div class="panel us">
+            <h3>Canopy</h3>
+            <ul>
+              <li><span>A <code>RULES</code> file in any directory, owned by the team that owns that directory.</span></li>
+              <li><span>Rules change through pull requests like any code, and a pull request can't change its own rules.</span></li>
+              <li><span>Each rule chooses how it combines with the rules above it: <code>union</code>, <code>override</code>, or <code>intersect</code>.</span></li>
+              <li><span>The same engine in a complete CLI and on the server, with each hosting platform plugged in through small interfaces.</span></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="features">
+        <p class="eyebrow">What you get</p>
+        <h2 id="features">Small pieces that compose.</h2>
+        <p class="section-lede">Each part does one job and can be understood, tested, and replaced on its own.</p>
+        <div class="features">
+          <div class="panel feature">
+            <h3>Rules per directory</h3>
+            <p>Teams own the <code>RULES</code> files for their own directories. Rules cascade to subdirectories unless a rule says otherwise.</p>
+          </div>
+          <div class="panel feature">
+            <h3>Composable inheritance</h3>
+            <p>Add to parent rules, replace them, or keep only the approvers both share. Stop inheritance entirely with <code>ignore_parent_dirs</code>.</p>
+          </div>
+          <div class="panel feature">
+            <h3>Preview before you push</h3>
+            <p><code>canopy review</code> runs the server's algorithm on your working tree. It exits zero only when the review would pass.</p>
+          </div>
+          <div class="panel feature">
+            <h3>Every decision explained</h3>
+            <p>Each pull request gets a review page tracing every file through rules file, rule, and approver target.</p>
+          </div>
+          <div class="panel feature">
+            <h3>Fails closed</h3>
+            <p>Proposed <code>RULES</code> files are validated before they can merge. A rule that can't be satisfied fails the review instead of quietly passing.</p>
+          </div>
+          <div class="panel feature">
+            <h3>Pluggable platforms</h3>
+            <p>The review algorithm never depends on the host. GitHub is supported today, and each platform implements the same contract.</p>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="cli">
+        <div class="cli">
+          <div>
+            <p class="eyebrow">A complete CLI</p>
+            <h2 id="cli">Every part of the rules, from your terminal.</h2>
+            <p class="section-lede">Other code review tools give you a file format and a pull request check, and nothing to run yourself. Canopy comes with a full command line: write rules, inspect them, measure them, and run the real review before you push.</p>
+            <p class="section-lede">Every command prints JSON with <code>--json</code> for scripts and CI, opens an interactive TUI when run on its own, and installs with man pages and shell completions.</p>
+          </div>
+          <div class="panel">
+            <ul class="commands">
+              <li><code>canopy init</code><span>Create a <code>RULES</code> file, optionally with its first rule</span></li>
+              <li><code>canopy rules add · edit · remove</code><span>Change rules without hand-editing YAML</span></li>
+              <li><code>canopy rules list · files · get</code><span>See every rule, every rules file, or the rules for a path</span></li>
+              <li><code>canopy match</code><span>Which rules cover which files, for the whole tree or just your changes</span></li>
+              <li><code>canopy coverage</code><span>How much of the repository the rules cover</span></li>
+              <li><code>canopy validate</code><span>Check <code>RULES</code> files exactly as the review server will</span></li>
+              <li><code>canopy review</code><span>The full review on your working tree; its exit status is the verdict</span></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="not-ai">
+        <div class="not-ai">
+          <div>
+            <p class="eyebrow">No AI</p>
+            <h2 id="not-ai">Not AI. <em>Rules.</em></h2>
+            <p class="section-lede">Canopy doesn't guess who should review your code, and it never reads your code to decide. It applies the rules your teams wrote, exactly as written, every time.</p>
+          </div>
+          <div class="points">
+            <div class="point">
+              <h3>Deterministic</h3>
+              <p>The same rules and the same approvals always give the same verdict.</p>
+            </div>
+            <div class="point">
+              <h3>Explainable</h3>
+              <p>Every requirement traces back to a rules file, a rule, and an approver target.</p>
+            </div>
+            <div class="point">
+              <h3>Private</h3>
+              <p>Your code is never sent to a model. Decisions use only file paths, the rules that cover them, and who approved.</p>
+            </div>
+            <div class="point">
+              <h3>Accountable</h3>
+              <p>People approve changes. Canopy only checks that the right people did.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta" aria-labelledby="start">
+        <h2 id="start">Put the rules where the code is.</h2>
+        <p class="section-lede" style="margin-left:auto;margin-right:auto">Install the CLI, add a <code>RULES</code> file, and preview your first review in minutes.</p>
+        <div class="actions">
+          <a class="button primary" href="install.html">Install Canopy</a>
+          <a class="button" href="rules.html">Write your first RULES file</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span>Canopy {{ .Version }}</span>
+      <span><a href="overview.html">Docs</a> · <a href="install.html">Install</a> · <a href="{{ .Repo }}">GitHub</a></span>
+    </footer>
+  </div>
+</body>
+</html>

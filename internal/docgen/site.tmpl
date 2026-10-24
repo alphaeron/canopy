@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  {{- with .Base }}
+  <base href="{{ . }}">
+  {{- end }}
+  <title>{{ .Page.Title }} · Canopy docs</title>
+  <style>
+    {{ .Theme }}
+    .top { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:18px; padding:12px max(16px, calc((100% - 1320px) / 2)); border-bottom:1px solid var(--line); background:rgba(13,19,18,.92); backdrop-filter:blur(8px); }
+    .brand { display:flex; align-items:center; gap:10px; color:var(--muted); font:600 11px/1 var(--mono); letter-spacing:.13em; text-transform:uppercase; text-decoration:none; }
+    .brand-mark { display:grid; place-items:center; width:26px; height:26px; border:1px solid var(--acid); color:var(--acid); border-radius:6px 6px 6px 1px; font-size:14px; }
+    .top-link { color:var(--muted); font-size:13px; text-decoration:none; }
+    .top-link:hover { color:var(--ink); }
+    .top-end { display:flex; align-items:center; gap:14px; margin-left:auto; }
+    .version { padding:3px 7px; border:1px solid var(--line); border-radius:4px; color:var(--faint); font:10px var(--mono); }
+    .search { position:relative; width:min(340px, 40vw); }
+    .search input { width:100%; padding:7px 34px 7px 11px; border:1px solid var(--line); border-radius:6px; background:#0a100e; font-size:13px; }
+    .search input::placeholder { color:var(--faint); }
+    .search kbd { position:absolute; right:8px; top:6px; padding:1px 6px; border:1px solid var(--line-bright); border-radius:4px; color:var(--faint); font:11px var(--mono); }
+    .search ul { position:absolute; top:calc(100% + 6px); left:0; width:min(480px, 90vw); max-height:70vh; margin:0; padding:6px; overflow-y:auto; list-style:none; border:1px solid var(--line-bright); border-radius:var(--radius); background:var(--panel-raised); box-shadow:0 16px 40px rgba(0,0,0,.45); }
+    .search li a { display:grid; gap:2px; padding:8px 10px; border-radius:6px; color:var(--ink); text-decoration:none; }
+    .search li[aria-selected="true"] a, .search li a:hover { background:rgba(217,255,112,.07); }
+    .sr-title { font-size:13px; font-weight:600; }
+    .sr-group { color:var(--acid); font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase; }
+    .sr-snippet { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+    .sr-empty { padding:10px; color:var(--muted); font-size:13px; }
+    .site { display:grid; grid-template-columns:220px minmax(0,1fr) 200px; gap:40px; width:min(1320px, calc(100% - 32px)); margin:0 auto; padding:28px 0 64px; }
+    .side, .toc { position:sticky; top:76px; align-self:start; max-height:calc(100vh - 100px); overflow-y:auto; }
+    .nav-group { margin:0 0 20px; }
+    .nav-group h2, .toc h2 { margin:0 0 8px; color:var(--acid); font:500 10px var(--mono); letter-spacing:.17em; text-transform:uppercase; }
+    .nav-group ul, .toc ul { margin:0; padding:0; list-style:none; }
+    .nav-group a, .toc a { display:block; padding:4px 10px; border-left:1px solid var(--line); color:var(--muted); font-size:13px; text-decoration:none; overflow-wrap:anywhere; }
+    .nav-group a:hover, .toc a:hover { color:var(--ink); border-color:var(--line-bright); }
+    .nav-group a[aria-current="page"] { color:var(--acid); border-color:var(--acid); }
+    .toc .toc-3 a { padding-left:22px; font-size:12px; }
+    .doc { min-width:0; }
+    .doc h1, .doc h2 { font-family:var(--display); font-weight:500; letter-spacing:-.015em; }
+    .doc h1 { margin:0 0 18px; font-size:clamp(30px,4vw,44px); line-height:1.05; }
+    .doc h2 { margin:40px 0 12px; padding-top:14px; border-top:1px solid var(--line); font-size:26px; line-height:1.15; scroll-margin-top:70px; }
+    .doc h3 { margin:28px 0 8px; font-size:17px; scroll-margin-top:70px; }
+    .doc h4, .doc h5, .doc h6 { margin:22px 0 6px; color:var(--muted); font-size:14px; }
+    .doc p, .doc li { max-width:78ch; }
+    .doc code { padding:1px 5px; border:1px solid var(--line); border-radius:4px; background:var(--panel-soft); color:#d4e6d8; font:12.5px var(--mono); }
+    .doc pre { padding:14px 16px; border:1px solid var(--line); border-radius:var(--radius); background:#0a100e; overflow-x:auto; }
+    .doc pre code { padding:0; border:0; background:none; font-size:12.5px; line-height:1.55; }
+    .doc table { display:block; max-width:100%; margin:14px 0; border-collapse:collapse; overflow-x:auto; font-size:13px; }
+    .doc th, .doc td { padding:7px 11px; border:1px solid var(--line); text-align:left; vertical-align:top; }
+    .doc th { background:var(--panel-raised); color:var(--muted); font:500 11px var(--mono); letter-spacing:.06em; text-transform:uppercase; }
+    .doc tr:nth-child(even) td { background:rgba(18,27,25,.55); }
+    .page-meta { margin-top:40px; color:var(--faint); font-size:12px; }
+    .page-meta a { color:var(--muted); }
+    .pager { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; padding-top:16px; border-top:1px solid var(--line); }
+    .pager a { display:grid; gap:3px; padding:12px 14px; border:1px solid var(--line); border-radius:var(--radius); color:var(--ink); text-decoration:none; }
+    .pager a:hover { border-color:var(--acid); }
+    .pager .next { grid-column:2; text-align:right; }
+    .pager span { color:var(--faint); font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase; }
+    .foot { margin-top:32px; color:var(--faint); font:11px var(--mono); }
+    @media (max-width: 1100px) {
+      .site { grid-template-columns:220px minmax(0,1fr); }
+      .toc { display:none; }
+    }
+    @media (max-width: 820px) {
+      .top { flex-wrap:wrap; gap:10px 14px; }
+      .search { order:3; width:100%; }
+      .search kbd { display:none; }
+      .site { grid-template-columns:minmax(0,1fr); gap:20px; padding-top:20px; }
+      .side { position:static; max-height:none; padding-bottom:16px; border-bottom:1px solid var(--line); }
+      .nav-group ul { display:flex; flex-wrap:wrap; gap:4px; }
+      .nav-group a { border:1px solid var(--line); border-radius:5px; }
+      .pager { grid-template-columns:1fr; }
+      .pager .next { grid-column:1; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">↳</span>Canopy</a>
+    <a class="top-link" href="overview.html">Docs</a>
+    <div class="search" id="search" role="search" hidden>
+      <input id="search-input" type="search" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" role="combobox" aria-controls="search-results" aria-expanded="false" aria-autocomplete="list">
+      <kbd aria-hidden="true">/</kbd>
+      <ul id="search-results" role="listbox" aria-label="Search results" hidden></ul>
+    </div>
+    <div class="top-end">
+      <span class="version">{{ .Version }}</span>
+      <a class="top-link" href="{{ .Repo }}">GitHub</a>
+    </div>
+  </header>
+  <div class="site">
+    <nav class="side" aria-label="Documentation">
+      {{- range .Nav }}
+      <section class="nav-group">
+        <h2>{{ .Name }}</h2>
+        <ul>
+          {{- range .Pages }}
+          <li><a href="{{ .Slug }}.html"{{ if eq .Slug $.Page.Slug }} aria-current="page"{{ end }}>{{ .Title }}</a></li>
+          {{- end }}
+        </ul>
+      </section>
+      {{- end }}
+    </nav>
+    <main class="doc">
+      {{ .Page.Body }}
+      {{- if .Page.Edit }}
+      <p class="page-meta"><a href="{{ .Page.Edit }}">Edit this page on GitHub</a></p>
+      {{- else if eq .Page.Group "CLI reference" }}
+      <p class="page-meta">Generated from the command definitions in <a href="{{ .Repo }}/tree/main/internal/cli">internal/cli</a>; the command's <code>--help</code> prints the same.</p>
+      {{- end }}
+      {{- if or .Prev .Next }}
+      <nav class="pager" aria-label="Previous and next page">
+        {{- with .Prev }}
+        <a class="prev" href="{{ .Slug }}.html"><span>← Previous</span>{{ .Title }}</a>
+        {{- end }}
+        {{- with .Next }}
+        <a class="next" href="{{ .Slug }}.html"><span>Next →</span>{{ .Title }}</a>
+        {{- end }}
+      </nav>
+      {{- end }}
+      <footer class="foot">Canopy {{ .Version }}</footer>
+    </main>
+    <aside class="toc" aria-label="On this page">
+      {{- with .Page.TOC }}
+      <h2>On this page</h2>
+      <ul>
+        {{- range . }}
+        <li class="toc-{{ .Level }}"><a href="#{{ .ID }}">{{ .Text }}</a></li>
+        {{- end }}
+      </ul>
+      {{- end }}
+    </aside>
+  </div>
+  <script src="search.js" defer></script>
+</body>
+</html>

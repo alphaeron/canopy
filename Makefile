@@ -1,4 +1,4 @@
-.PHONY: test e2e cover cover-html fmt lint vulncheck smoke smoke-serve deadcode doc doc-all doc-serve release-check snapshot
+.PHONY: test e2e cover cover-html fmt lint vulncheck smoke smoke-serve deadcode doc doc-all doc-serve docs release-check snapshot
 
 test:
 	@go test -v ./...
@@ -54,6 +54,11 @@ doc-all:
 doc-serve:
 	@echo "Serving docs at http://$(DOC_ADDR)/github.com/alphaeron/canopy"
 	@go run golang.org/x/pkgsite/cmd/pkgsite@$(PKGSITE_VERSION) -http=$(DOC_ADDR) .
+
+# docs builds the user documentation into build/docs (see internal/docgen):
+# man pages, shell completions, and the site (open build/docs/site/index.html).
+docs:
+	@go run ./internal/docgen -out build/docs
 
 # GoReleaser (see .goreleaser.yaml) builds the CLI's release artifacts.
 GORELEASER_VERSION ?= latest

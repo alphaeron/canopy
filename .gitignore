@@ -23,3 +23,6 @@
 # vendor/
 # GoReleaser output
 dist/
+
+# Generated documentation (make docs, internal/docgen)
+build/

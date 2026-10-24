@@ -179,7 +179,7 @@ type PullRequest interface {
 - **`Start`**: publish that a review is running, in a state of its own, under the same name
   `Report` uses, so the next report replaces it (GitHub: an in-progress check run). The server
   calls it before it evaluates.
-- **`detailsURL`**: the review page (see the top-level README's "Review pages"), or `""` when
+- **`detailsURL`**: the review page (see "Review pages" in docs/server.md), or `""` when
   the server serves none. `Start` and `Report` link the status to it when it is set (GitHub: the
   check run's details URL, and a note at the end of its summary).
 - **`Report`**: publish `o` as the pull request's status, replacing the earlier one (one name per
@@ -262,11 +262,11 @@ The steps use GitLab as the example.
 
    Environment variables (`CANOPY_GITLAB_TOKEN`, ...) are bound automatically from the struct tags.
    Give the section `Enabled()` and `Validate()` as `config.GitHub` has, add its name to
-   `Config.SelectedPlatform`, and add each key to the Configuration table in the top-level README.
+   `Config.SelectedPlatform`, and add each key to the table in docs/configuration.md.
    Never log secret values.
 8. **Pass the contract**: see below.
 9. **Document it**: add a row to the table above, and the platform's specifics (where files come
-   from, target syntax) to the "Change Evaluation" section of the top-level README.
+   from, target syntax) to the "Change Evaluation" section of docs/review.md.
 
 ## Testing: the contract
 
