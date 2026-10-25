@@ -22,6 +22,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 # One deployment at a time; a newer push supersedes a waiting one.
 concurrency:
